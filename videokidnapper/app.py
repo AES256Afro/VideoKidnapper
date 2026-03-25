@@ -47,12 +47,10 @@ class App(ctk.CTk):
 
         self.tabview.add("Trim Video")
         self.tabview.add("URL Download")
-        self.tabview.add("KoolaidGospel")
         self.tabview.add("Debug")
 
         from videokidnapper.ui.trim_tab import TrimTab
         from videokidnapper.ui.url_tab import UrlTab
-        from videokidnapper.ui.koolaid_tab import KoolaidTab
         from videokidnapper.ui.debug_tab import DebugTab
 
         # Debug tab first so it captures logs from other tabs during init
@@ -64,9 +62,6 @@ class App(ctk.CTk):
 
         self.url_tab = UrlTab(self.tabview.tab("URL Download"), self)
         self.url_tab.pack(fill="both", expand=True)
-
-        self.koolaid_tab = KoolaidTab(self.tabview.tab("KoolaidGospel"), self)
-        self.koolaid_tab.pack(fill="both", expand=True)
 
     def _show_ffmpeg_warning(self):
         frame = ctk.CTkFrame(self, fg_color="transparent")
