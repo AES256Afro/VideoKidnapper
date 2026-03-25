@@ -1,17 +1,64 @@
 # VideoKidnapper
 
-A modern desktop tool for creating GIFs and video clips with text overlays from local video files or YouTube URLs.
+A modern dark-themed desktop tool for creating GIFs and video clips with text overlays from local video files or YouTube URLs.
 
-## Features
+![Trim Video Tab](assets/screenshots/trim_video.png)
 
-- **Video Trimming** - Load any video file, set start/end points with a dual-handle slider, and export as GIF or MP4
-- **YouTube Downloads** - Paste a YouTube URL, download the video, trim and export clips
-- **Text Overlay Layers** - Add multiple text layers with per-layer timing, fonts, colors, and positions
-- **Text Style Presets** - Subtitle (with background box), Title (large centered), Watermark (small corner), Custom
-- **Quality Presets** - Choose from Low, Medium, High, or Ultra quality presets
-- **Modern Dark UI** - Clean, dark-themed interface built with CustomTkinter
-- **Debug Log** - Built-in debug tab for troubleshooting
-- **Auto-Export** - All files save to your Downloads folder with timestamped names
+---
+
+## Tabs & Features
+
+### Trim Video
+
+![Trim Video](assets/screenshots/trim_video.png)
+
+- Open any local video file (MP4, MKV, AVI, MOV, WebM, FLV, WMV)
+- Frame preview with canvas-based video player
+- Dual-handle range slider for precise start/end point selection
+- Manual timestamp entry fields (`HH:MM:SS.mmm` format)
+- Real-time duration display
+- Collapsible **Text Layers** panel for adding text overlays
+- Quality preset selector (Low / Medium / High / Ultra)
+- Export format toggle (GIF or MP4)
+- One-click export to Downloads folder
+
+### URL Download
+
+![URL Download](assets/screenshots/url_download.png)
+
+- Paste any YouTube URL and click **Download**
+- Download progress bar with status updates
+- Auto-detects FFmpeg for video+audio stream merging
+- Once downloaded, full trimming workflow identical to Trim Video tab
+- Dual-handle timeline slider with start/end timestamp controls
+- Collapsible **Text Layers** panel for overlays
+- Quality and format selection with one-click export
+
+### Debug
+
+![Debug](assets/screenshots/debug.png)
+
+- Live debug log capturing all stdout/stderr output
+- Timestamped entries with `[INFO]` and `[ERROR]` tags
+- Monospace console-style display
+- Auto-scroll toggle to follow latest output
+- Clear button to reset the log
+- Useful for diagnosing download errors, FFmpeg issues, or export failures
+
+---
+
+## Text Layers
+
+Both the **Trim Video** and **URL Download** tabs include a collapsible text overlay system:
+
+- Add unlimited text layers, each independently configurable
+- **Style presets:** Subtitle (white on semi-transparent black box), Title (large centered), Watermark (small corner), Custom
+- Per-layer controls: font family, font size, text color (8 presets), position (7 positions)
+- **Per-layer timing slider** controls exactly when each text appears and disappears
+- Background box toggle for subtitle-style rendering
+- Remove individual layers with the X button
+
+---
 
 ## Quality Presets
 
@@ -21,6 +68,8 @@ A modern desktop tool for creating GIFs and video clips with text overlays from 
 | Medium | 15  | 720px     | 128        | CRF 23        |
 | High   | 24  | 1080px    | 256        | CRF 18        |
 | Ultra  | 30  | Native    | 256        | CRF 15        |
+
+---
 
 ## Requirements
 
@@ -50,29 +99,6 @@ A modern desktop tool for creating GIFs and video clips with text overlays from 
    ```bash
    python main.py
    ```
-
-## Usage
-
-### Trim Video Mode
-1. Click **Open Video File** and select a video
-2. Use the dual-handle slider or type timestamps to set start/end points
-3. Expand **Text Layers** to add text overlays with per-layer timing
-4. Select quality preset and export format (GIF or MP4)
-5. Click **Export** - file saves to your Downloads folder
-
-### URL Download Mode
-1. Paste a YouTube URL and click **Download**
-2. Once downloaded, set start/end points on the timeline
-3. Add text layers if desired
-4. Select quality preset and export format
-5. Click **Export** - file saves to your Downloads folder
-
-### Text Layers
-- Click **+ Text Layers** to expand the panel
-- Click **+ Add Text Layer** to add a layer
-- Choose a style preset: **Subtitle**, **Title**, **Watermark**, or **Custom**
-- Set font, size, color, and position per layer
-- Use the per-layer timing slider to control when each layer appears
 
 ## Export Naming
 
