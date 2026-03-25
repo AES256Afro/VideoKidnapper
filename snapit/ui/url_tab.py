@@ -1,3 +1,4 @@
+import sys
 import threading
 
 import customtkinter as ctk
@@ -172,6 +173,7 @@ class UrlTab(ctk.CTkFrame):
             if result["error"] == "cancelled":
                 self.status_label.configure(text="Download cancelled", text_color="gray")
             else:
+                print(f"Download error: {result['error']}", file=sys.stderr)
                 self.status_label.configure(
                     text=f"Error: {result['error'][:80]}", text_color="#e84a1a",
                 )
