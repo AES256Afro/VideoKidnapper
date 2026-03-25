@@ -47,15 +47,20 @@ class App(ctk.CTk):
 
         self.tabview.add("Trim Video")
         self.tabview.add("Screen Record")
+        self.tabview.add("URL Download")
 
         from snapit.ui.trim_tab import TrimTab
         from snapit.ui.record_tab import RecordTab
+        from snapit.ui.url_tab import UrlTab
 
         self.trim_tab = TrimTab(self.tabview.tab("Trim Video"), self)
         self.trim_tab.pack(fill="both", expand=True)
 
         self.record_tab = RecordTab(self.tabview.tab("Screen Record"), self)
         self.record_tab.pack(fill="both", expand=True)
+
+        self.url_tab = UrlTab(self.tabview.tab("URL Download"), self)
+        self.url_tab.pack(fill="both", expand=True)
 
     def _show_ffmpeg_warning(self):
         frame = ctk.CTkFrame(self, fg_color="transparent")

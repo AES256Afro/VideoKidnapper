@@ -18,4 +18,6 @@ APP_VERSION = "1.0.0"
 WINDOW_SIZE = "1000x700"
 MIN_WINDOW_SIZE = (800, 600)
 
+TEMP_DIR = Path.home() / ".snapit_temp"
+
 THEME_COLOR = "#1a73e8"
