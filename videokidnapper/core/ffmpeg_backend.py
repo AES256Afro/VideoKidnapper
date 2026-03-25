@@ -6,8 +6,8 @@ import tempfile
 import threading
 from pathlib import Path
 
-from snapit.config import PRESETS
-from snapit.utils.ffmpeg_check import find_ffmpeg, find_ffprobe
+from videokidnapper.config import PRESETS
+from videokidnapper.utils.ffmpeg_check import find_ffmpeg, find_ffprobe
 
 _ffmpeg = None
 _ffprobe = None
@@ -105,7 +105,7 @@ def _parse_progress(process, duration, callback, cancel_event):
 
 
 def _build_drawtext_filter(layer):
-    from snapit.ui.text_layers import _find_font_path
+    from videokidnapper.ui.text_layers import _find_font_path
     text = layer["text"].replace("'", "\u2019").replace(":", "\\:")
     font_path = _find_font_path(layer.get("font", "Arial"))
     # FFmpeg on Windows needs forward slashes and escaped colons in paths

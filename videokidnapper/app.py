@@ -1,7 +1,7 @@
 import customtkinter as ctk
 
-from snapit.config import APP_NAME, APP_VERSION, WINDOW_SIZE, MIN_WINDOW_SIZE
-from snapit.utils.ffmpeg_check import check_ffmpeg
+from videokidnapper.config import APP_NAME, APP_VERSION, WINDOW_SIZE, MIN_WINDOW_SIZE
+from videokidnapper.utils.ffmpeg_check import check_ffmpeg
 
 
 class App(ctk.CTk):
@@ -49,9 +49,9 @@ class App(ctk.CTk):
         self.tabview.add("URL Download")
         self.tabview.add("Debug")
 
-        from snapit.ui.trim_tab import TrimTab
-        from snapit.ui.url_tab import UrlTab
-        from snapit.ui.debug_tab import DebugTab
+        from videokidnapper.ui.trim_tab import TrimTab
+        from videokidnapper.ui.url_tab import UrlTab
+        from videokidnapper.ui.debug_tab import DebugTab
 
         # Debug tab first so it captures logs from other tabs during init
         self.debug_tab = DebugTab(self.tabview.tab("Debug"), self)
@@ -74,12 +74,12 @@ class App(ctk.CTk):
         icon_label.pack(pady=(0, 10))
 
         msg = (
-            "SnapIt requires FFmpeg to process video and create GIFs.\n\n"
+            "VideoKidnapper requires FFmpeg to process video and create GIFs.\n\n"
             "Please install FFmpeg:\n"
             "1. Download from https://www.gyan.dev/ffmpeg/builds/\n"
             "2. Extract and add the bin/ folder to your system PATH\n"
             "   OR place ffmpeg.exe in assets/ffmpeg/bin/ next to this project\n"
-            "3. Restart SnapIt"
+            "3. Restart VideoKidnapper"
         )
         msg_label = ctk.CTkLabel(
             frame, text=msg,

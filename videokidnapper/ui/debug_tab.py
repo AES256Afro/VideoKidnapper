@@ -69,7 +69,7 @@ class DebugTab(ctk.CTkFrame):
         self.log_text.configure(state="disabled")
 
         # Add startup message
-        self.add_log("SnapIt Debug Log started", "INFO")
+        self.add_log("VideoKidnapper Debug Log started", "INFO")
 
     def _install_log_capture(self):
         sys.stdout = LogCapture(sys.__stdout__, self.add_log, "INFO")

@@ -1,4 +1,4 @@
-from snapit.core.ffmpeg_backend import extract_frame
+from videokidnapper.core.ffmpeg_backend import extract_frame
 
 _cache = {}
 
