@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""SnapIt - Screen & Video GIF/Clip Creator"""
+"""VideoKidnapper - Video GIF/Clip Creator with Text Overlays"""
 
-from snapit.app import App
+from videokidnapper.app import App
 
 
 def main():

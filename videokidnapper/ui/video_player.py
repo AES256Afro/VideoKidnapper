@@ -2,7 +2,7 @@ import tkinter as tk
 import customtkinter as ctk
 from PIL import Image, ImageTk
 
-from snapit.core.preview import get_frame_at
+from videokidnapper.core.preview import get_frame_at
 
 
 class VideoPlayer(ctk.CTkFrame):

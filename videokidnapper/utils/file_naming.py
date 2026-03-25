@@ -1,11 +1,11 @@
 from datetime import datetime
 from pathlib import Path
-from snapit.config import DOWNLOADS_DIR
+from videokidnapper.config import DOWNLOADS_DIR
 
 
 def generate_export_path(mode, extension):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_name = f"SnapIt_{mode}_{timestamp}"
+    base_name = f"VidKid_{mode}_{timestamp}"
     ext = extension.lower().lstrip(".")
     output = DOWNLOADS_DIR / f"{base_name}.{ext}"
     counter = 1

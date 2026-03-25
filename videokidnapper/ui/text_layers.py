@@ -3,8 +3,8 @@ import tkinter.font as tkfont
 
 import customtkinter as ctk
 
-from snapit.config import TEXT_STYLES, POSITION_MAP, TEXT_COLORS
-from snapit.ui.widgets import RangeSlider
+from videokidnapper.config import TEXT_STYLES, POSITION_MAP, TEXT_COLORS
+from videokidnapper.ui.widgets import RangeSlider
 
 
 def _get_system_fonts():
@@ -160,7 +160,7 @@ class TextLayerWidget(ctk.CTkFrame):
         )
         self.time_slider.pack(side="left", fill="x", expand=True, padx=(5, 5))
 
-        from snapit.utils.time_format import seconds_to_hms
+        from videokidnapper.utils.time_format import seconds_to_hms
         self.time_label = ctk.CTkLabel(
             row5,
             text=f"0s - {seconds_to_hms(self.video_duration)}",
@@ -204,7 +204,7 @@ class TextLayerWidget(ctk.CTkFrame):
             self.color_var.set("Black")
 
     def _on_time_change(self, start, end):
-        from snapit.utils.time_format import seconds_to_hms
+        from videokidnapper.utils.time_format import seconds_to_hms
         self.time_label.configure(text=f"{seconds_to_hms(start)} - {seconds_to_hms(end)}")
 
     def _on_remove(self):

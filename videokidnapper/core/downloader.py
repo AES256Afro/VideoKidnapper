@@ -2,8 +2,8 @@ import os
 import re
 import threading
 
-from snapit.config import TEMP_DIR
-from snapit.utils.ffmpeg_check import find_ffmpeg
+from videokidnapper.config import TEMP_DIR
+from videokidnapper.utils.ffmpeg_check import find_ffmpeg
 
 
 def _ensure_temp_dir():

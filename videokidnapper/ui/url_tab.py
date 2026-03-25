@@ -1,45 +1,72 @@
+import sys
 import threading
-from tkinter import filedialog
 
 import customtkinter as ctk
 
-from snapit.config import PRESETS, SUPPORTED_VIDEO_EXTENSIONS, EXPORT_FORMATS
-from snapit.core.ffmpeg_backend import get_video_info, trim_to_video, trim_to_gif
-from snapit.core.preview import clear_cache
-from snapit.ui.export_dialog import ExportDialog
-from snapit.ui.text_layers import TextLayersPanel
-from snapit.ui.video_player import VideoPlayer
-from snapit.ui.widgets import RangeSlider, TimestampEntry
-from snapit.utils.file_naming import generate_export_path
-from snapit.utils.time_format import seconds_to_hms, hms_to_seconds
+from videokidnapper.config import PRESETS, EXPORT_FORMATS
+from videokidnapper.core.downloader import download_video, get_video_info_from_url, cleanup_temp
+from videokidnapper.core.ffmpeg_backend import get_video_info, trim_to_video, trim_to_gif
+from videokidnapper.core.preview import clear_cache
+from videokidnapper.ui.export_dialog import ExportDialog
+from videokidnapper.ui.text_layers import TextLayersPanel
+from videokidnapper.ui.video_player import VideoPlayer
+from videokidnapper.ui.widgets import RangeSlider, TimestampEntry
+from videokidnapper.utils.file_naming import generate_export_path
+from videokidnapper.utils.time_format import seconds_to_hms, hms_to_seconds
 
 
-class TrimTab(ctk.CTkFrame):
+class UrlTab(ctk.CTkFrame):
     def __init__(self, master, app, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
         self.app = app
         self.video_path = None
         self.video_info = None
+        self._download_cancel = threading.Event()
 
         self._build_ui()
 
     def _build_ui(self):
-        # Top controls
-        top = ctk.CTkFrame(self, fg_color="transparent")
-        top.pack(fill="x", padx=10, pady=(10, 5))
+        # URL input section
+        url_frame = ctk.CTkFrame(self, corner_radius=10)
+        url_frame.pack(fill="x", padx=10, pady=(10, 5))
 
-        self.open_btn = ctk.CTkButton(
-            top, text="  Open Video File", width=180, height=36,
-            font=ctk.CTkFont(size=13, weight="bold"),
-            command=self._open_file,
+        url_header = ctk.CTkLabel(
+            url_frame, text="YouTube URL",
+            font=ctk.CTkFont(size=16, weight="bold"),
         )
-        self.open_btn.pack(side="left")
+        url_header.pack(anchor="w", padx=15, pady=(12, 5))
 
-        self.file_label = ctk.CTkLabel(
-            top, text="No file loaded",
+        input_row = ctk.CTkFrame(url_frame, fg_color="transparent")
+        input_row.pack(fill="x", padx=15, pady=(0, 5))
+
+        self.url_entry = ctk.CTkEntry(
+            input_row, placeholder_text="Paste YouTube URL here...",
+            font=ctk.CTkFont(size=13), height=36,
+        )
+        self.url_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        self.url_entry.bind("<Return>", lambda e: self._download())
+
+        self.download_btn = ctk.CTkButton(
+            input_row, text="  Download", width=140, height=36,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color="#e84a1a", hover_color="#c43e15",
+            command=self._download,
+        )
+        self.download_btn.pack(side="right")
+
+        # Download status
+        status_row = ctk.CTkFrame(url_frame, fg_color="transparent")
+        status_row.pack(fill="x", padx=15, pady=(0, 8))
+
+        self.status_label = ctk.CTkLabel(
+            status_row, text="Enter a YouTube URL and click Download",
             font=ctk.CTkFont(size=12), text_color="gray",
         )
-        self.file_label.pack(side="left", padx=15)
+        self.status_label.pack(side="left")
+
+        self.download_progress = ctk.CTkProgressBar(url_frame, width=350, height=8)
+        self.download_progress.pack(fill="x", padx=15, pady=(0, 12))
+        self.download_progress.set(0)
 
         # Video preview
         self.player = VideoPlayer(self)
@@ -109,27 +136,75 @@ class TrimTab(ctk.CTkFrame):
         )
         self.export_btn.pack(side="right")
 
-    def _open_file(self):
-        exts = " ".join(f"*{e}" for e in SUPPORTED_VIDEO_EXTENSIONS)
-        path = filedialog.askopenfilename(
-            title="Open Video File",
-            filetypes=[("Video files", exts), ("All files", "*.*")],
-        )
+    def _download(self):
+        url = self.url_entry.get().strip()
+        if not url:
+            self.status_label.configure(text="Please enter a URL", text_color="#e84a1a")
+            return
+
+        self._download_cancel.clear()
+        self.download_btn.configure(state="disabled", text="  Downloading...")
+        self.url_entry.configure(state="disabled")
+        self.export_btn.configure(state="disabled")
+        self.status_label.configure(text="Fetching video info...", text_color="gray")
+        self.download_progress.set(0)
+
+        def run_download():
+            def progress_cb(value, text=""):
+                if self.winfo_exists():
+                    self.after(0, self._update_download_progress, value, text)
+
+            result = download_video(
+                url,
+                progress_callback=progress_cb,
+                cancel_event=self._download_cancel,
+            )
+
+            if self.winfo_exists():
+                self.after(0, self._on_download_complete, result)
+
+        threading.Thread(target=run_download, daemon=True).start()
+
+    def _update_download_progress(self, value, text):
+        self.download_progress.set(value)
+        if text:
+            self.status_label.configure(text=text)
+
+    def _on_download_complete(self, result):
+        self.download_btn.configure(state="normal", text="  Download")
+        self.url_entry.configure(state="normal")
+
+        if result.get("error"):
+            if result["error"] == "cancelled":
+                self.status_label.configure(text="Download cancelled", text_color="gray")
+            else:
+                print(f"Download error: {result['error']}", file=sys.stderr)
+                self.status_label.configure(
+                    text=f"Error: {result['error'][:80]}", text_color="#e84a1a",
+                )
+            self.download_progress.set(0)
+            return
+
+        path = result.get("path")
+        title = result.get("title", "Unknown")
+
         if not path:
+            self.status_label.configure(text="Error: No file downloaded", text_color="#e84a1a")
             return
 
         self.video_path = path
+        self.download_progress.set(1.0)
+
         try:
             self.video_info = get_video_info(path)
         except Exception as e:
-            self.file_label.configure(text=f"Error: {e}", text_color="#e84a1a")
+            self.status_label.configure(text=f"Error reading video: {e}", text_color="#e84a1a")
             return
 
-        name = path.split("/")[-1].split("\\")[-1]
         dur = self.video_info["duration"]
         res = f"{self.video_info['width']}x{self.video_info['height']}"
-        self.file_label.configure(
-            text=f"{name}  |  {res}  |  {seconds_to_hms(dur)}",
+        self.status_label.configure(
+            text=f"{title}  |  {res}  |  {seconds_to_hms(dur)}",
             text_color="white",
         )
 
@@ -180,7 +255,7 @@ class TrimTab(ctk.CTkFrame):
         preset = self.quality_var.get()
         fmt = self.format_var.get()
         ext = "gif" if fmt == "GIF" else "mp4"
-        output_path = str(generate_export_path("trim", ext))
+        output_path = str(generate_export_path("url", ext))
         layers = self.text_layers.get_all_layers()
 
         dialog = ExportDialog(self, title=f"Exporting {fmt}...")
@@ -212,3 +287,8 @@ class TrimTab(ctk.CTkFrame):
                     dialog.after(0, dialog.export_failed, f"Error: {e}")
 
         threading.Thread(target=run_export, daemon=True).start()
+
+    def destroy(self):
+        self._download_cancel.set()
+        cleanup_temp()
+        super().destroy()

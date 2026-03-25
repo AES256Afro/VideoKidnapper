@@ -1,4 +1,4 @@
-# SnapIt
+# VideoKidnapper
 
 A modern desktop tool for creating GIFs and video clips with text overlays from local video files or YouTube URLs.
 
@@ -31,8 +31,8 @@ A modern desktop tool for creating GIFs and video clips with text overlays from 
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/AES256Afro/SnapIt.git
-   cd SnapIt
+   git clone https://github.com/AES256Afro/VideoKidnapper.git
+   cd VideoKidnapper
    ```
 
 2. **Install Python dependencies:**
@@ -46,7 +46,7 @@ A modern desktop tool for creating GIFs and video clips with text overlays from 
    - Add the `bin/` folder to your system PATH
    - Or place `ffmpeg.exe` and `ffprobe.exe` in `assets/ffmpeg/bin/` within this project
 
-4. **Run SnapIt:**
+4. **Run VideoKidnapper:**
    ```bash
    python main.py
    ```
@@ -76,9 +76,9 @@ A modern desktop tool for creating GIFs and video clips with text overlays from 
 
 ## Export Naming
 
-Files are saved as: `SnapIt_{mode}_{YYYYMMDD}_{HHMMSS}.{ext}`
+Files are saved as: `VidKid_{mode}_{YYYYMMDD}_{HHMMSS}.{ext}`
 
-Example: `SnapIt_trim_20260324_143022.gif`
+Example: `VidKid_trim_20260324_143022.gif`
 
 ## Tech Stack
 
