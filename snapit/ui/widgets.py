@@ -1,3 +1,4 @@
+import tkinter as tk
 import customtkinter as ctk
 
 
@@ -15,8 +16,9 @@ class RangeSlider(ctk.CTkFrame):
         self._handle_radius = 8
         self._track_height = 6
 
-        self.canvas = ctk.CTkCanvas(
-            self, height=50, bg=self._apply_appearance_mode(("gray92", "gray17")),
+        bg_color = "#2b2b2b" if ctk.get_appearance_mode() == "Dark" else "#e8e8e8"
+        self.canvas = tk.Canvas(
+            self, height=50, bg=bg_color,
             highlightthickness=0, cursor="hand2",
         )
         self.canvas.pack(fill="x", expand=True, padx=5, pady=5)
@@ -24,11 +26,7 @@ class RangeSlider(ctk.CTkFrame):
         self.canvas.bind("<ButtonPress-1>", self._on_press)
         self.canvas.bind("<B1-Motion>", self._on_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
-        self.canvas.bind("<Configure>", self._draw)
-
-    def _apply_appearance_mode(self, colors):
-        mode = ctk.get_appearance_mode()
-        return colors[1] if mode == "Dark" else colors[0]
+        self.canvas.bind("<Configure>", self._render_slider)
 
     def _val_to_x(self, val):
         w = self.canvas.winfo_width()
@@ -45,7 +43,7 @@ class RangeSlider(ctk.CTkFrame):
         val = self.from_ + (x - margin) / usable * (self.to - self.from_)
         return max(self.from_, min(self.to, val))
 
-    def _draw(self, event=None):
+    def _render_slider(self, event=None):
         self.canvas.delete("all")
         w = self.canvas.winfo_width()
         h = self.canvas.winfo_height()
@@ -107,7 +105,7 @@ class RangeSlider(ctk.CTkFrame):
             self._start_val = min(val, self._end_val - 0.01)
         else:
             self._end_val = max(val, self._start_val + 0.01)
-        self._draw()
+        self._render_slider()
         if self.command:
             self.command(self._start_val, self._end_val)
 
@@ -119,12 +117,12 @@ class RangeSlider(ctk.CTkFrame):
         self.to = to
         self._start_val = from_
         self._end_val = to
-        self._draw()
+        self._render_slider()
 
     def set_values(self, start, end):
         self._start_val = max(self.from_, min(start, self.to))
         self._end_val = max(self.from_, min(end, self.to))
-        self._draw()
+        self._render_slider()
 
     def get_values(self):
         return self._start_val, self._end_val

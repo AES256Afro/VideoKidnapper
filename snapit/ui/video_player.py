@@ -1,3 +1,4 @@
+import tkinter as tk
 import customtkinter as ctk
 from PIL import Image, ImageTk
 
@@ -15,7 +16,7 @@ class VideoPlayer(ctk.CTkFrame):
         self._photo = None
 
         # Preview canvas
-        self.canvas = ctk.CTkCanvas(
+        self.canvas = tk.Canvas(
             self, bg="#1a1a2e", highlightthickness=0, cursor="crosshair",
         )
         self.canvas.pack(fill="both", expand=True, padx=10, pady=10)
