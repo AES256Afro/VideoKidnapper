@@ -1,7 +1,9 @@
 import os
+import re
 import threading
 
 from snapit.config import TEMP_DIR
+from snapit.utils.ffmpeg_check import find_ffmpeg
 
 
 def _ensure_temp_dir():
@@ -27,6 +29,9 @@ def download_video(url, progress_callback=None, cancel_event=None):
         elif d["status"] == "finished" and progress_callback:
             progress_callback(0.95, "Processing download...")
 
+    ffmpeg_path = find_ffmpeg()
+    ffmpeg_dir = str(ffmpeg_path.parent) if ffmpeg_path else None
+
     opts = {
         "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "outtmpl": os.path.join(str(TEMP_DIR), "%(title).80s.%(ext)s"),
@@ -36,6 +41,8 @@ def download_video(url, progress_callback=None, cancel_event=None):
         "no_warnings": True,
         "noplaylist": True,
     }
+    if ffmpeg_dir:
+        opts["ffmpeg_location"] = ffmpeg_dir
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -53,10 +60,11 @@ def download_video(url, progress_callback=None, cancel_event=None):
                 if os.path.exists(mp4_path):
                     result["path"] = mp4_path
     except Exception as e:
-        if "cancelled" in str(e).lower():
+        err_msg = re.sub(r"\x1b\[[0-9;]*m", "", str(e))  # strip ANSI codes
+        if "cancelled" in err_msg.lower():
             result["error"] = "cancelled"
         else:
-            result["error"] = str(e)
+            result["error"] = err_msg
 
     return result
 

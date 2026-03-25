@@ -48,10 +48,16 @@ class App(ctk.CTk):
         self.tabview.add("Trim Video")
         self.tabview.add("Screen Record")
         self.tabview.add("URL Download")
+        self.tabview.add("Debug")
 
         from snapit.ui.trim_tab import TrimTab
         from snapit.ui.record_tab import RecordTab
         from snapit.ui.url_tab import UrlTab
+        from snapit.ui.debug_tab import DebugTab
+
+        # Debug tab first so it captures logs from other tabs during init
+        self.debug_tab = DebugTab(self.tabview.tab("Debug"), self)
+        self.debug_tab.pack(fill="both", expand=True)
 
         self.trim_tab = TrimTab(self.tabview.tab("Trim Video"), self)
         self.trim_tab.pack(fill="both", expand=True)
