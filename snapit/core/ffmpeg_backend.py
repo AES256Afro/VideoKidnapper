@@ -104,8 +104,47 @@ def _parse_progress(process, duration, callback, cancel_event):
             callback(progress)
 
 
+def _build_drawtext_filter(layer):
+    from snapit.ui.text_layers import _find_font_path
+    text = layer["text"].replace("'", "\u2019").replace(":", "\\:")
+    font_path = _find_font_path(layer.get("font", "Arial"))
+    # FFmpeg on Windows needs forward slashes and escaped colons in paths
+    font_path = font_path.replace("\\", "/").replace(":", "\\:")
+    fontsize = layer.get("fontsize", 24)
+    fontcolor = layer.get("fontcolor", "white")
+    pos_expr = layer.get("position", "(w-tw)/2:h-th-20")
+    x_expr, y_expr = pos_expr.split(":", 1)
+    start_t = layer.get("start", 0)
+    end_t = layer.get("end", 999999)
+
+    parts = [
+        f"drawtext=text='{text}'",
+        f"fontfile='{font_path}'",
+        f"fontsize={fontsize}",
+        f"fontcolor={fontcolor}",
+        f"x={x_expr}",
+        f"y={y_expr}",
+        f"enable='between(t,{start_t},{end_t})'",
+    ]
+
+    if layer.get("box"):
+        boxcolor = layer.get("boxcolor", "black@0.6")
+        boxborderw = layer.get("boxborderw", 8)
+        parts.append("box=1")
+        parts.append(f"boxcolor={boxcolor}")
+        parts.append(f"boxborderw={boxborderw}")
+
+    return ":".join(parts)
+
+
+def _build_text_filters(text_layers):
+    if not text_layers:
+        return []
+    return [_build_drawtext_filter(layer) for layer in text_layers]
+
+
 def trim_to_video(input_path, start, end, preset_name, output_path,
-                   progress_callback=None, cancel_event=None):
+                   text_layers=None, progress_callback=None, cancel_event=None):
     preset = PRESETS[preset_name]
     duration = end - start
     info = get_video_info(input_path)
@@ -114,6 +153,7 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
     scale = _build_scale_filter(preset_name, info["width"])
     if scale:
         filters.append(scale)
+    filters.extend(_build_text_filters(text_layers))
 
     cmd = [
         _get_ffmpeg(), "-y",
@@ -141,7 +181,7 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
 
 
 def trim_to_gif(input_path, start, end, preset_name, output_path,
-                 progress_callback=None, cancel_event=None):
+                 text_layers=None, progress_callback=None, cancel_event=None):
     preset = PRESETS[preset_name]
     duration = end - start
     info = get_video_info(input_path)
@@ -151,6 +191,7 @@ def trim_to_gif(input_path, start, end, preset_name, output_path,
     scale = _build_scale_filter(preset_name, info["width"])
     if scale:
         filters.append(scale)
+    filters.extend(_build_text_filters(text_layers))
     filter_str = ",".join(filters)
 
     # Pass 1: generate palette

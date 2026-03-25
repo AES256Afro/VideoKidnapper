@@ -8,6 +8,7 @@ from snapit.core.downloader import download_video, get_video_info_from_url, clea
 from snapit.core.ffmpeg_backend import get_video_info, trim_to_video, trim_to_gif
 from snapit.core.preview import clear_cache
 from snapit.ui.export_dialog import ExportDialog
+from snapit.ui.text_layers import TextLayersPanel
 from snapit.ui.video_player import VideoPlayer
 from snapit.ui.widgets import RangeSlider, TimestampEntry
 from snapit.utils.file_naming import generate_export_path
@@ -102,6 +103,10 @@ class UrlTab(ctk.CTkFrame):
             font=ctk.CTkFont(size=12), text_color="gray",
         )
         self.duration_label.pack(side="left")
+
+        # Text layers panel (collapsible)
+        self.text_layers = TextLayersPanel(self)
+        self.text_layers.pack(fill="x", padx=10, pady=5)
 
         # Export controls
         export_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -208,6 +213,7 @@ class UrlTab(ctk.CTkFrame):
         self.start_entry.set_value(seconds_to_hms(0))
         self.end_entry.set_value(seconds_to_hms(dur))
         self._update_duration_label(0, dur)
+        self.text_layers.set_duration(dur)
 
         self.player.load_video(path, dur)
         self.export_btn.configure(state="normal")
@@ -250,6 +256,7 @@ class UrlTab(ctk.CTkFrame):
         fmt = self.format_var.get()
         ext = "gif" if fmt == "GIF" else "mp4"
         output_path = str(generate_export_path("url", ext))
+        layers = self.text_layers.get_all_layers()
 
         dialog = ExportDialog(self, title=f"Exporting {fmt}...")
 
@@ -262,11 +269,13 @@ class UrlTab(ctk.CTkFrame):
                 if fmt == "GIF":
                     result = trim_to_gif(
                         self.video_path, start, end, preset, output_path,
+                        text_layers=layers,
                         progress_callback=progress_cb, cancel_event=dialog.cancel_event,
                     )
                 else:
                     result = trim_to_video(
                         self.video_path, start, end, preset, output_path,
+                        text_layers=layers,
                         progress_callback=progress_cb, cancel_event=dialog.cancel_event,
                     )
                 if result and dialog.winfo_exists():
