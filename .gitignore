@@ -17,3 +17,12 @@ temp_frames/
 .vscode/
 *.swp
 *.swo
+
+# IDE/AI agent caches - prevent secret leakage
+.claude/
+.codex/
+.copilot/
+.cursor/
+.gemini/
+.antigravity/
+
