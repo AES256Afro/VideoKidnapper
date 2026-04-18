@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-04-18
+
+### Changed
+
+- **License: relicensed from GPL-3.0 to Apache License 2.0.** Releases tagged at or before `v1.0.0` remain available under GPL-3.0; Apache-2.0 applies to `v1.1.0` and every later commit on `main`. Motivation: permissive licensing is better aligned with the project's goals of broad adoption, corporate-friendly use, and the option of layering proprietary services or premium features on top in the future without copyleft friction.
+
+### Fixed
+
+- **Drag-to-position drift under preset scaling.** The video filter chain was reordered from `crop → rotate → scale → speed → drawtext` to `aspect-crop → crop → rotate → speed → drawtext → scale`, so custom text positions (and fontsize) are now interpreted in source-frame pixels and render at exactly the location the preview shows. Previously, a drag to `(960, 540)` on a 1080p source with the Medium preset landed at pixel `960` of a 720-wide export — well past the right edge.
+
+### Added
+
+- **Click-and-drag text positioning** on the preview canvas. Hover a text layer to see a move cursor, drag to reposition. A new **Custom (drag)** entry in the position dropdown activates automatically when you drag; picking any preset snaps the layer back to that anchor.
+
 ## [1.0.0] — 2026-04-18
 
 First public release. The overhaul that turned the project from a YouTube-only GIF maker into a multi-platform clip studio.
@@ -61,4 +75,5 @@ First public release. The overhaul that turned the project from a YouTube-only G
 
 - 124 tests covering URL platform detection, share-intent URL construction, ffmpeg filter math (crop clamping, aspect-crop, fade-alpha expression, hardware encoder picking and probing), settings persistence + schema migration, SRT parser, size estimator, LRU cache, and the DnD payload parser.
 
+[1.1.0]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.1.0
 [1.0.0]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.0.0
