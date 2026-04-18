@@ -14,3 +14,8 @@ tkinterdnd2>=0.3.0
 imageio-ffmpeg>=0.5.0
 sounddevice>=0.4.6
 numpy>=1.24
+
+# Optional — enables Whisper auto-captions. Downloads a ~75 MB model
+# the first time it runs. Core app works without it; the
+# "🗣 Auto-captions" button shows an install hint when missing.
+# faster-whisper>=1.0.0

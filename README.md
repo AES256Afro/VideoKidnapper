@@ -16,6 +16,7 @@ A dark-themed desktop tool for trimming videos, downloading clips from the open 
 - **Thumbnail strip** above the timeline — click any thumb to seek; the selected range is outlined in accent
 - **Snap-to-guides** when dragging text — horizontal / vertical center, padded edges, and peer-layer edges snap with dashed guide lines
 - **SRT import** — drop an SRT/VTT file to auto-populate time-synced text layers
+- **Whisper auto-captions** — one click transcribes the current trim range and imports the captions as text layers (requires optional [`faster-whisper`](https://github.com/guillaumekln/faster-whisper))
 - **Crop by click-drag** on the preview canvas, or pick an aspect-ratio preset (1:1, 9:16, 16:9, 4:5, 3:4)
 - **Export options** — speed (0.25×–4×), rotate, mute, audio-only MP3, text fade in/out
 - **Hardware encoding** — auto-probes NVENC / QuickSync / VideoToolbox / AMF and falls back cleanly to libx264
