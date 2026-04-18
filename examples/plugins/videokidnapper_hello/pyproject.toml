@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
+#
+# Minimal pyproject.toml for a VideoKidnapper plugin. Install from the
+# repo root with:
+#
+#   pip install -e examples/plugins/videokidnapper_hello
+#
+# Then launch VideoKidnapper — a new "✦  Hello" tab appears.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "videokidnapper-hello"
+version = "0.1.0"
+description = "Reference plugin demonstrating the VideoKidnapper plugin API."
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Christopher Courtney" }]
+
+# Host app is the only dep. Plugins never have to pin customtkinter /
+# Pillow / etc. themselves — the host brings those in.
+dependencies = [
+    "videokidnapper>=1.1.0",
+]
+
+# Entry point that VideoKidnapper discovers at startup. The left-hand
+# name is arbitrary (shown in the plugins list); the right-hand value
+# is "<module>:<object>" where <object> is a Plugin class or instance.
+[project.entry-points."videokidnapper.plugins"]
+hello = "videokidnapper_hello:HelloPlugin"
+
+[tool.setuptools]
+packages = ["videokidnapper_hello"]

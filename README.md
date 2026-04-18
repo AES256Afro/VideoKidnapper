@@ -28,6 +28,7 @@ A dark-themed desktop tool for trimming videos, downloading clips from the open 
 - **Keyboard shortcuts** — Space play · J/L ±1s · I/O set in-out · Ctrl+E export · Ctrl+O open file
 - **Setup dialog** auto-installs missing prerequisites (FFmpeg portable + pip packages) or opens an elevated terminal with the right commands
 - **CLI mode** — `python main.py --url ... --start 10 --end 25 --format GIF`
+- **Plugin system** — third-party packages can add tabs and lifecycle hooks via the `videokidnapper.plugins` entry-point group; see [`docs/PLUGINS.md`](docs/PLUGINS.md) for the API
 - **Light / dark themes**
 
 ---
