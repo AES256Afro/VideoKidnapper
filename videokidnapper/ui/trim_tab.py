@@ -12,7 +12,8 @@ import customtkinter as ctk
 
 from videokidnapper.config import PRESETS, SUPPORTED_VIDEO_EXTENSIONS, EXPORT_FORMATS
 from videokidnapper.core.ffmpeg_backend import (
-    concat_clips, frames_to_video, get_video_info, trim_to_gif, trim_to_video,
+    concat_clips_with_transition, frames_to_video,
+    get_video_info, trim_to_gif, trim_to_video,
 )
 from videokidnapper.core.preview import clear_cache
 from videokidnapper.core.screen_capture import record_screen
@@ -809,7 +810,15 @@ class TrimTab(ctk.CTkScrollableFrame):
                 combined = str(generate_export_path(
                     "trim_concat", ext, base_dir=output_dir,
                 ))
-                merged = concat_clips(produced, combined)
+                # Pick transition from Export Options. "cut" stays on the
+                # fast lossless concat demuxer path; anything else re-
+                # encodes via filter_complex xfade + acrossfade.
+                transition = options.get("concat_transition", "cut")
+                trans_dur = options.get("concat_transition_duration", 0.5)
+                merged = concat_clips_with_transition(
+                    produced, combined,
+                    transition=transition, duration=trans_dur,
+                )
                 if merged:
                     final_path = str(merged)
                     for p in produced:
