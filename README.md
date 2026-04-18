@@ -12,6 +12,9 @@ A dark-themed desktop tool for trimming videos, downloading clips from the open 
 - **Batch URL queue** — paste many links, download sequentially, pick one to edit
 - **Pixel-accurate text overlays** — preview matches export (fontsize, position, box padding all match ffmpeg's output)
 - **Multi-range trimming** — queue N clips from one source, export individually or concatenate into one file
+- **Undo / redo** — Ctrl+Z / Ctrl+Y across text-layer edits, crop, trim range, and queued ranges (50-step history)
+- **Thumbnail strip** above the timeline — click any thumb to seek; the selected range is outlined in accent
+- **Snap-to-guides** when dragging text — horizontal / vertical center, padded edges, and peer-layer edges snap with dashed guide lines
 - **SRT import** — drop an SRT/VTT file to auto-populate time-synced text layers
 - **Crop by click-drag** on the preview canvas, or pick an aspect-ratio preset (1:1, 9:16, 16:9, 4:5, 3:4)
 - **Export options** — speed (0.25×–4×), rotate, mute, audio-only MP3, text fade in/out
@@ -130,6 +133,8 @@ When a hardware encoder is available, CRF maps to the right flag per encoder (`-
 | **L** | Seek +1s |
 | **I** | Set in-point at current frame |
 | **O** | Set out-point at current frame |
+| **Ctrl+Z** | Undo (text-layer edits, crop, trim range, queued ranges) |
+| **Ctrl+Y** / **Ctrl+Shift+Z** | Redo |
 | **Ctrl+E** | Export |
 | **Ctrl+O** | Open video file |
 | **Ctrl+V** | Paste URL (URL tab) |

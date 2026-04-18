@@ -185,7 +185,8 @@ class App(ctk.CTk):
         self.status_bar = Toast(self)
         self.status_bar.pack(fill="x", side="bottom")
         self.status_bar.show(
-            "Ready · Space play · J/L step · I/O set in-out · Ctrl+E export",
+            "Ready · Space play · J/L step · I/O set in-out · "
+            "Ctrl+Z/Y undo/redo · Ctrl+E export",
             "success",
         )
 
@@ -223,6 +224,12 @@ class App(ctk.CTk):
         # the dispatcher; this binding only fires when focus is elsewhere.
         self.bind_all("<Control-v>", lambda e: self._shortcut(e, "keyboard_paste_url"))
         self.bind_all("<Control-V>", lambda e: self._shortcut(e, "keyboard_paste_url"))
+        # Undo / redo. `<Control-Z>` fires on Ctrl+Shift+Z; pair with
+        # `<Control-y>` so users coming from any editor convention work.
+        self.bind_all("<Control-z>",       lambda e: self._shortcut(e, "keyboard_undo"))
+        self.bind_all("<Control-Shift-Z>", lambda e: self._shortcut(e, "keyboard_redo"))
+        self.bind_all("<Control-y>",       lambda e: self._shortcut(e, "keyboard_redo"))
+        self.bind_all("<Control-Y>",       lambda e: self._shortcut(e, "keyboard_redo"))
 
     def _editing_in_entry(self, event):
         widget = event.widget

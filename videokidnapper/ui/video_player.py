@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 from videokidnapper.core.preview import get_frame_at
 from videokidnapper.ui import theme as T
+from videokidnapper.utils.snap import apply_snap, build_targets
 
 
 class VideoPlayer(ctk.CTkFrame):
@@ -445,17 +446,76 @@ class VideoPlayer(ctk.CTkFrame):
         if not src:
             return
         dx, dy = self._text_drag_offset
-        new_x = max(0, int(src[0] - dx))
-        new_y = max(0, int(src[1] - dy))
+        new_x = int(src[0] - dx)
+        new_y = int(src[1] - dy)
+
+        # Snap against frame center / padded edges / peer-layer edges.
+        snapped_x, snapped_y, hits = self._snap_to_guides(new_x, new_y)
+        snapped_x = max(0, snapped_x)
+        snapped_y = max(0, snapped_y)
+        self._draw_snap_guides(hits)
+
         if self._text_position_cb:
             try:
-                self._text_position_cb(self._dragging_text_index, new_x, new_y)
+                self._text_position_cb(
+                    self._dragging_text_index, snapped_x, snapped_y,
+                )
             except Exception:
                 pass
 
     def _on_text_release(self, _event):
         self._dragging_text_index = None
         self.canvas.configure(cursor="crosshair")
+        self.canvas.delete("snap")
+
+    def _snap_to_guides(self, new_x, new_y):
+        """Apply snap-math against the current set of peer layer bboxes.
+
+        Returns ``(snapped_x, snapped_y, hits)`` where ``hits`` is the
+        list the caller uses to draw guide lines. The dragged layer
+        itself is excluded from peer targets so it can't snap to its
+        own edges.
+        """
+        if not self._last_frame_rect:
+            return new_x, new_y, []
+        _ox, _oy, _dw, _dh, fw, fh = self._last_frame_rect
+        dragged_idx = self._dragging_text_index
+
+        # Size of the dragged layer's bbox (source-pixel space). Take
+        # it from the last render so it reflects the current fontsize.
+        tw = th = 0
+        for idx, x1, y1, x2, y2 in self._text_bboxes:
+            if idx == dragged_idx:
+                tw, th = x2 - x1, y2 - y1
+                break
+        if tw <= 0 or th <= 0:
+            return new_x, new_y, []
+
+        others = [b for b in self._text_bboxes if b[0] != dragged_idx]
+        targets = build_targets(fw, fh, others, edge_pad=20)
+        return apply_snap(new_x, new_y, tw, th, targets, threshold=8)
+
+    def _draw_snap_guides(self, hits):
+        """Overlay dashed guide lines on the canvas for active snap axes."""
+        self.canvas.delete("snap")
+        if not hits or not self._last_frame_rect:
+            return
+        ox, oy, dw, dh, fw, fh = self._last_frame_rect
+        for hit in hits:
+            if hit.axis == "x":
+                # Source-pixel x → canvas x via the same linear map used
+                # for clicks. Draw a vertical line across the frame.
+                cx = ox + hit.position * dw / fw
+                self.canvas.create_line(
+                    cx, oy, cx, oy + dh,
+                    fill=T.ACCENT, width=1, dash=(4, 3), tags="snap",
+                )
+            else:
+                cy = oy + hit.position * dh / fh
+                self.canvas.create_line(
+                    ox, cy, ox + dw, cy,
+                    fill=T.ACCENT, width=1, dash=(4, 3), tags="snap",
+                )
 
     # ------------------------------------------------------------------
     # Crop overlay
