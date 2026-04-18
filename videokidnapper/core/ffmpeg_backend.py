@@ -317,13 +317,27 @@ def _build_text_filters(text_layers, fade=0.0):
 
 
 def _assemble_video_filters(preset_name, info, text_layers, options):
-    """Order matters: crop → rotate → scale → speed → text.
+    """Build the video filter chain in the right order.
 
-    Crop is applied in source coordinates so it must come first. Scale is
-    after rotate so `preset['width']` is measured on the final framing.
+    Order: (aspect-crop) → crop → rotate → speed → drawtext → scale.
+
+    ``drawtext`` MUST come before ``scale`` so fontsize and x/y are
+    interpreted in source-frame pixels — that's what the UI preview uses,
+    so exports match 1:1. If ``scale`` came first (the old order), then on
+    a 1920×1080 source with Medium preset (→720-wide), a custom position
+    of ``x=960:y=540`` would land at pixel 960 of a 720-wide frame and
+    overshoot the right edge.
     """
     filters = []
     options = options or {}
+
+    # Aspect preset is a second crop; `_build_aspect_crop` itself defers
+    # to any explicit crop, so putting aspect first is harmless.
+    aspect = options.get("aspect_preset")
+    if aspect and aspect != "Source":
+        f = _build_aspect_crop(aspect, info, options.get("crop"))
+        if f:
+            filters.append(f)
 
     f = _build_crop_filter(options.get("crop"), info)
     if f:
@@ -333,22 +347,17 @@ def _assemble_video_filters(preset_name, info, text_layers, options):
     if f:
         filters.append(f)
 
-    f = _build_scale_filter(preset_name, info["width"])
-    if f:
-        filters.append(f)
-
     f = _build_speed_filter(options.get("speed"))
     if f:
         filters.append(f)
 
+    # Drawtext at source-coord resolution — matches the preview exactly.
     filters.extend(_build_text_filters(text_layers, fade=options.get("text_fade", 0.0)))
 
-    aspect = options.get("aspect_preset")
-    if aspect and aspect != "Source":
-        crop_filter = _build_aspect_crop(aspect, info, options.get("crop"))
-        if crop_filter:
-            # Insert right after any explicit crop so the final framing wins.
-            filters.insert(0, crop_filter)
+    # Scale LAST so text and frame are resized together.
+    f = _build_scale_filter(preset_name, info["width"])
+    if f:
+        filters.append(f)
 
     return filters
 

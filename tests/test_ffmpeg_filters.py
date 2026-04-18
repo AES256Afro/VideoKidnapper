@@ -47,3 +47,30 @@ def test_crop_clamps_tiny():
     # w=0 is invalid; builder should clamp to at least 2
     out = _build_crop_filter({"x": 0, "y": 0, "w": 0, "h": 0}, info)
     assert out.startswith("crop=2:2:")
+
+
+def test_drawtext_runs_before_scale():
+    """Drag-to-position only matches the preview if drawtext is applied
+    before scale. A 1080p → 720p preset change must not shift text.
+    """
+    from videokidnapper.core.ffmpeg_backend import _assemble_video_filters
+
+    info = {"width": 1920, "height": 1080}
+    layer = {
+        "text": "hi", "font": "Arial", "fontsize": 24,
+        "fontcolor": "white", "position": "960:540",
+        "box": False, "start": 0, "end": 5,
+    }
+    filters = _assemble_video_filters(
+        "Medium", info, [layer], {"aspect_preset": "Source"},
+    )
+    drawtext_idx = next(i for i, f in enumerate(filters) if f.startswith("drawtext"))
+    scale_idx = next(
+        (i for i, f in enumerate(filters) if f.startswith("scale=")), -1,
+    )
+    # scale is only present when source > preset width (1920 > 720 here).
+    assert scale_idx != -1
+    assert drawtext_idx < scale_idx, (
+        f"drawtext@{drawtext_idx} must come before scale@{scale_idx} — "
+        "custom positions are in source-pixel coords."
+    )
