@@ -669,6 +669,26 @@ class UrlTab(ctk.CTkScrollableFrame):
         """URL tab has no 'open file' — focus the URL entry instead."""
         self.url_entry.focus_set()
 
+    def keyboard_paste_url(self):
+        """Ctrl+V on the URL tab: paste clipboard contents into the URL entry.
+
+        Only fires when focus ISN'T already in an entry (App's entry-
+        guard handles that), so Tk's normal paste-inside-entry is
+        preserved. If the clipboard looks like a URL we also kick off
+        the typing-handler so the platform chip lights up immediately.
+        """
+        try:
+            data = self.clipboard_get()
+        except Exception:
+            return
+        if not data:
+            return
+        data = data.strip()
+        self.url_entry.delete(0, "end")
+        self.url_entry.insert(0, data)
+        self.url_entry.focus_set()
+        self._on_url_typed(None)
+
     # ------------------------------------------------------------------
     def _gather_ranges(self):
         ranges = list(self.range_queue.get_ranges())
