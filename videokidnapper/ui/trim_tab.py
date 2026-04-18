@@ -101,6 +101,11 @@ class TrimTab(ctk.CTkScrollableFrame):
         self.player.pack(fill="x", padx=12, pady=6)
         self.player.pack_propagate(False)
         self.player.set_text_layers_provider(self._current_text_layers)
+        # Click-drag on the preview moves the active layer. The panel owns
+        # the widget state, so we forward via its set_layer_position entry.
+        self.player.set_text_position_callback(
+            lambda i, x, y: self.text_layers.set_layer_position(i, x, y),
+        )
 
         # Waveform + timeline card
         timeline_card = ctk.CTkFrame(
@@ -234,7 +239,9 @@ class TrimTab(ctk.CTkScrollableFrame):
 
     # ------------------------------------------------------------------
     def _current_text_layers(self):
-        return self.text_layers.get_all_layers(include_empty=False)
+        # include_empty keeps the list index aligned with panel.layers so
+        # the VideoPlayer's hit-test can call back with the right widget index.
+        return self.text_layers.get_all_layers(include_empty=True)
 
     def _on_text_layers_changed(self):
         self.player.refresh_overlay()

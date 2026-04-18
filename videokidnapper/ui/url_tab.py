@@ -185,6 +185,10 @@ class UrlTab(ctk.CTkScrollableFrame):
         self.player.pack(fill="x", padx=12, pady=6)
         self.player.pack_propagate(False)
         self.player.set_text_layers_provider(self._current_text_layers)
+        # Click-drag on the preview moves the active layer.
+        self.player.set_text_position_callback(
+            lambda i, x, y: self.text_layers.set_layer_position(i, x, y),
+        )
 
         timeline_card = ctk.CTkFrame(
             self, fg_color=T.BG_SURFACE,
@@ -320,7 +324,9 @@ class UrlTab(ctk.CTkScrollableFrame):
     # Text layers / player helpers
     # ------------------------------------------------------------------
     def _current_text_layers(self):
-        return self.text_layers.get_all_layers(include_empty=False)
+        # include_empty keeps indices aligned with panel.layers so the
+        # VideoPlayer hit-test can call back with the right widget index.
+        return self.text_layers.get_all_layers(include_empty=True)
 
     def _on_text_layers_changed(self):
         self.player.refresh_overlay()

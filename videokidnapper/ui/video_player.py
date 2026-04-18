@@ -47,6 +47,13 @@ class VideoPlayer(ctk.CTkFrame):
         self._crop_change_cb = None
         self._last_frame_rect = None  # (cx, cy, dw, dh, fw, fh) for mapping canvas↔source
 
+        # Text-layer drag state. `_text_bboxes` is rebuilt on each overlay
+        # render so hit-testing uses the exact rendered position.
+        self._text_bboxes = []        # [(index, src_x1, src_y1, src_x2, src_y2)]
+        self._dragging_text_index = None
+        self._text_drag_offset = (0, 0)  # (src dx, src dy) from click to text origin
+        self._text_position_cb = None    # callback(index, src_x, src_y)
+
         self.canvas = tk.Canvas(
             self,
             bg=T.BG_BASE,
@@ -56,14 +63,14 @@ class VideoPlayer(ctk.CTkFrame):
         self.canvas.pack(fill="both", expand=True, padx=10, pady=10)
 
         self.canvas.bind("<Configure>", self._on_resize)
-        if on_empty_click:
-            self.canvas.bind("<Button-1>", self._maybe_empty_click)
 
-        # Crop bindings — also fire during normal use, but no-op unless
-        # crop mode is active.
-        self.canvas.bind("<ButtonPress-1>", self._on_crop_press, add="+")
-        self.canvas.bind("<B1-Motion>",     self._on_crop_drag,  add="+")
-        self.canvas.bind("<ButtonRelease-1>", self._on_crop_release, add="+")
+        # Single dispatcher per event — routes into empty-click, crop, or
+        # text-drag depending on state. Keeps the precedence explicit and
+        # avoids multiple overlapping bindings fighting each other.
+        self.canvas.bind("<ButtonPress-1>",   self._on_canvas_press)
+        self.canvas.bind("<B1-Motion>",       self._on_canvas_drag)
+        self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
+        self.canvas.bind("<Motion>",          self._on_canvas_hover)
 
         self._register_dnd()
         self._draw_placeholder()
@@ -185,6 +192,42 @@ class VideoPlayer(ctk.CTkFrame):
         if self.video_path is None and self._on_empty_click:
             self._on_empty_click()
 
+    # ------------------------------------------------------------------
+    # Unified canvas event dispatcher — empty-click → crop → text drag.
+    # ------------------------------------------------------------------
+    def _on_canvas_press(self, event):
+        if self.video_path is None:
+            self._maybe_empty_click(event)
+            return
+        if self._crop_mode:
+            self._on_crop_press(event)
+            return
+        idx = self._hit_test_text(event.x, event.y)
+        if idx is not None:
+            self._begin_text_drag(idx, event)
+
+    def _on_canvas_drag(self, event):
+        if self._crop_mode and self._crop_drag_start is not None:
+            self._on_crop_drag(event)
+            return
+        if self._dragging_text_index is not None:
+            self._on_text_drag(event)
+
+    def _on_canvas_release(self, event):
+        if self._crop_mode:
+            self._on_crop_release(event)
+            return
+        if self._dragging_text_index is not None:
+            self._on_text_release(event)
+
+    def _on_canvas_hover(self, event):
+        # Cursor feedback: hand when hovering over a draggable text layer,
+        # crosshair otherwise (leave crop-mode cursor alone).
+        if self._crop_mode or not self.video_path:
+            return
+        idx = self._hit_test_text(event.x, event.y)
+        self.canvas.configure(cursor="fleur" if idx is not None else "crosshair")
+
     def _on_resize(self, _event=None):
         if self.video_path:
             self.show_frame(self.current_time)
@@ -261,7 +304,11 @@ class VideoPlayer(ctk.CTkFrame):
         draw = ImageDraw.Draw(overlay)
         w, h = overlay.size
 
-        for layer in layers:
+        # Rebuild the bbox table every time so hit-testing stays in sync with
+        # whatever's actually on screen.
+        self._text_bboxes = []
+
+        for idx, layer in enumerate(layers):
             text = (layer.get("text") or "").strip()
             if not text:
                 continue
@@ -297,6 +344,13 @@ class VideoPlayer(ctk.CTkFrame):
 
             color = _parse_color(layer.get("fontcolor", "white"))
             draw.text((x, y), text, fill=color, font=font)
+
+            # Record the hit-test bbox in source-pixel space; include the
+            # box border so users can grab the edge comfortably.
+            pad = int(layer.get("boxborderw", 8)) if layer.get("box") else 2
+            self._text_bboxes.append(
+                (idx, x - pad, y - pad, x + tw + pad, y + th + pad),
+            )
 
         return overlay.convert("RGB")
 
@@ -346,6 +400,60 @@ class VideoPlayer(ctk.CTkFrame):
             self.stop()
             return
         self._play_after_id = self.after(self._PLAY_MS, self._tick)
+
+    # ------------------------------------------------------------------
+    # Text-layer drag
+    # ------------------------------------------------------------------
+    def set_text_position_callback(self, callback):
+        """Register ``callback(index, src_x, src_y)`` to persist drags."""
+        self._text_position_cb = callback
+
+    def _hit_test_text(self, canvas_x, canvas_y):
+        """Return the layer index whose rendered bbox contains the click.
+
+        Top-most (last-drawn) wins when layers overlap. Returns ``None`` if
+        the click isn't on any text.
+        """
+        if not self._text_bboxes:
+            return None
+        src = self._canvas_to_source(canvas_x, canvas_y)
+        if not src:
+            return None
+        sx, sy = src
+        for idx, x1, y1, x2, y2 in reversed(self._text_bboxes):
+            if x1 <= sx <= x2 and y1 <= sy <= y2:
+                return idx
+        return None
+
+    def _begin_text_drag(self, idx, event):
+        src = self._canvas_to_source(event.x, event.y)
+        if not src:
+            return
+        bbox = next((b for b in self._text_bboxes if b[0] == idx), None)
+        if bbox is None:
+            return
+        _, x1, y1, _, _ = bbox
+        self._dragging_text_index = idx
+        # Offset from click to text origin, in source pixels.
+        self._text_drag_offset = (src[0] - x1, src[1] - y1)
+        self.canvas.configure(cursor="fleur")
+
+    def _on_text_drag(self, event):
+        src = self._canvas_to_source(event.x, event.y)
+        if not src:
+            return
+        dx, dy = self._text_drag_offset
+        new_x = max(0, int(src[0] - dx))
+        new_y = max(0, int(src[1] - dy))
+        if self._text_position_cb:
+            try:
+                self._text_position_cb(self._dragging_text_index, new_x, new_y)
+            except Exception:
+                pass
+
+    def _on_text_release(self, _event):
+        self._dragging_text_index = None
+        self.canvas.configure(cursor="crosshair")
 
     # ------------------------------------------------------------------
     # Crop overlay
@@ -462,6 +570,12 @@ def _pos_map(pad):
 
 def _resolve_position(pos_expr, w, h, tw, th, pad=20):
     """Approximate ffmpeg's drawtext position expressions for preview only."""
+    # Custom positions stored as raw pixel coords ``"<x>:<y>"`` — handle them
+    # first so the preset pattern-matching below never swallows them.
+    numeric = _parse_numeric_position(pos_expr)
+    if numeric is not None:
+        return numeric
+
     pos_map = _pos_map(pad)
     # ffmpeg expressions we build look like "(w-tw)/2:h-th-20" — pattern-match
     # against each one so positions stay accurate regardless of the pad value.
@@ -480,6 +594,24 @@ def _resolve_position(pos_expr, w, h, tw, th, pad=20):
     if "w-tw-20" in pos_expr and "h-th-20" in pos_expr:
         return pos_map["bottom_right"](w, h, tw, th)
     return pos_map["bottom_center"](w, h, tw, th)
+
+
+def _parse_numeric_position(pos_expr):
+    """Return ``(int_x, int_y)`` if ``pos_expr`` is a plain ``"<x>:<y>"`` pair.
+
+    Returns ``None`` for anything that contains an ffmpeg variable or function
+    (``w``, ``h``, ``tw``, ``th``, parentheses, arithmetic operators), so preset
+    expressions keep flowing through the pattern-matched branches.
+    """
+    if not pos_expr or ":" not in pos_expr:
+        return None
+    parts = pos_expr.split(":", 1)
+    if len(parts) != 2:
+        return None
+    try:
+        return int(float(parts[0])), int(float(parts[1]))
+    except ValueError:
+        return None
 
 
 _NAMED_COLORS = {
