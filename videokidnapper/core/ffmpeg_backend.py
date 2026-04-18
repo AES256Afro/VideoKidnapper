@@ -270,6 +270,53 @@ def _build_speed_filter(speed):
     return f"setpts={pts_ratio:.4f}*PTS"
 
 
+def _build_eq_filter(options):
+    """Build an ffmpeg ``eq=`` color-grade filter from Export Options.
+
+    Reads four keys from ``options`` and omits the filter entirely
+    when every value is neutral — avoids the cost of a needless
+    per-pixel pass for the common "no color tweak" case.
+
+    ffmpeg eq parameter ranges (from the docs):
+      - ``brightness`` : -1.0 to 1.0, neutral 0.0
+      - ``contrast``   : -1000.0 to 1000.0, neutral 1.0
+      - ``saturation`` : 0.0 to 3.0, neutral 1.0
+      - ``gamma``      : 0.1 to 10.0, neutral 1.0
+
+    We clamp each input to a sane subset and round to 3 decimals so
+    the emitted filter-graph string stays short and diffable.
+    """
+    if not options:
+        return None
+    try:
+        b = float(options.get("color_brightness", 0.0) or 0.0)
+        c = float(options.get("color_contrast",   1.0) or 1.0)
+        s = float(options.get("color_saturation", 1.0) or 1.0)
+        g = float(options.get("color_gamma",      1.0) or 1.0)
+    except (TypeError, ValueError):
+        return None
+    # Clamp into the UI's exposed ranges — a stray -99999 from a
+    # corrupted settings file should still produce a valid filter.
+    b = max(-1.0, min(1.0, b))
+    c = max(0.1, min(3.0, c))
+    s = max(0.0, min(3.0, s))
+    g = max(0.1, min(3.0, g))
+
+    neutral = (
+        abs(b) < 0.001
+        and abs(c - 1.0) < 0.001
+        and abs(s - 1.0) < 0.001
+        and abs(g - 1.0) < 0.001
+    )
+    if neutral:
+        return None
+
+    return (
+        f"eq=brightness={b:.3f}:contrast={c:.3f}:"
+        f"saturation={s:.3f}:gamma={g:.3f}"
+    )
+
+
 def _build_audio_speed(speed):
     """Audio atempo supports 0.5–2.0; chain it for more extreme values."""
     try:
@@ -379,6 +426,13 @@ def _assemble_video_filters(preset_name, info, text_layers, options):
         filters.append(f)
 
     f = _build_rotate_filter(options.get("rotate"))
+    if f:
+        filters.append(f)
+
+    # Color grade (eq=) runs after the geometric ops but before speed —
+    # keeps the per-pixel pass working on already-cropped / rotated
+    # frames and avoids interaction with setpts.
+    f = _build_eq_filter(options)
     if f:
         filters.append(f)
 

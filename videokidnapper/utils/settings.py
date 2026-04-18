@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 _SETTINGS_PATH = Path.home() / ".videokidnapper_settings.json"
-_CURRENT_SCHEMA = 2
+_CURRENT_SCHEMA = 3
 
 # In-process lock for the read-modify-write cycle. Two export threads
 # finishing at the same moment both did `data = _read(); data[k] = v;
@@ -44,6 +44,11 @@ _DEFAULTS = {
     "text_fade":        0.0,             # seconds
     "hw_encoder":       "auto",          # "auto" | "off" | specific encoder
     "history":          [],              # list[dict]: recent exports
+    # Color grade (ffmpeg eq= filter). Neutral values below mean "no op".
+    "color_brightness": 0.0,             # [-1.0, 1.0], neutral 0.0
+    "color_contrast":   1.0,             # [0.1, 3.0],  neutral 1.0
+    "color_saturation": 1.0,             # [0.0, 3.0],  neutral 1.0
+    "color_gamma":      1.0,             # [0.1, 3.0],  neutral 1.0
 }
 
 _HISTORY_MAX = 25
@@ -69,6 +74,14 @@ def _migrate(data):
         data.setdefault("hw_encoder", "auto")
         data.setdefault("history", [])
         version = 2
+    if version < 3:
+        # Schema 3: added color grade (brightness / contrast / saturation /
+        # gamma). All neutral by default so existing users see no change.
+        data.setdefault("color_brightness", 0.0)
+        data.setdefault("color_contrast", 1.0)
+        data.setdefault("color_saturation", 1.0)
+        data.setdefault("color_gamma", 1.0)
+        version = 3
     data["_version"] = version
     return data
 
