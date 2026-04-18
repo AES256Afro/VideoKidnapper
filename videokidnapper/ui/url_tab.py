@@ -15,7 +15,8 @@ from videokidnapper.core.downloader import (
     cleanup_temp, detect_platform, download_video,
 )
 from videokidnapper.core.ffmpeg_backend import (
-    concat_clips, get_video_info, trim_to_gif, trim_to_video,
+    concat_clips_with_transition, get_video_info,
+    trim_to_gif, trim_to_video,
 )
 from videokidnapper.core.preview import clear_cache
 from videokidnapper.ui import theme as T
@@ -768,7 +769,12 @@ class UrlTab(ctk.CTkScrollableFrame):
                 combined = str(generate_export_path(
                     "url_concat", ext, base_dir=output_dir,
                 ))
-                merged = concat_clips(produced, combined)
+                transition = options.get("concat_transition", "cut")
+                trans_dur = options.get("concat_transition_duration", 0.5)
+                merged = concat_clips_with_transition(
+                    produced, combined,
+                    transition=transition, duration=trans_dur,
+                )
                 if merged:
                     final_path = str(merged)
                     for p in produced:

@@ -49,6 +49,10 @@ _DEFAULTS = {
     "color_contrast":   1.0,             # [0.1, 3.0],  neutral 1.0
     "color_saturation": 1.0,             # [0.0, 3.0],  neutral 1.0
     "color_gamma":      1.0,             # [0.1, 3.0],  neutral 1.0
+    # Concat transition between queued ranges. "cut" preserves the fast
+    # lossless concat demuxer path; anything else forces re-encode.
+    "concat_transition":          "cut",
+    "concat_transition_duration": 0.5,    # seconds
 }
 
 _HISTORY_MAX = 25
@@ -76,11 +80,14 @@ def _migrate(data):
         version = 2
     if version < 3:
         # Schema 3: added color grade (brightness / contrast / saturation /
-        # gamma). All neutral by default so existing users see no change.
+        # gamma), plus concat transition (kind + duration). All neutral /
+        # "cut" defaults so existing users see no behavior change.
         data.setdefault("color_brightness", 0.0)
         data.setdefault("color_contrast", 1.0)
         data.setdefault("color_saturation", 1.0)
         data.setdefault("color_gamma", 1.0)
+        data.setdefault("concat_transition", "cut")
+        data.setdefault("concat_transition_duration", 0.5)
         version = 3
     data["_version"] = version
     return data

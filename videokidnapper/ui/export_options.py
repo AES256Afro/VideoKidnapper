@@ -23,6 +23,18 @@ ASPECT_CHOICES = ["Source", "1:1", "9:16", "16:9", "4:5", "3:4"]
 FADE_CHOICES = ["Off", "0.25s", "0.5s", "1s"]
 HW_CHOICES = ["auto", "off"]
 
+# Concat transitions: UI label ↔ ffmpeg_backend transition key.
+# "cut" preserves the fast lossless concat-demuxer path; every other
+# value forces a re-encode via filter_complex xfade.
+TRANSITION_CHOICES = [
+    ("Cut",               "cut"),
+    ("Crossfade",         "crossfade"),
+    ("Fade to black",     "fadeblack"),
+    ("Fade to white",     "fadewhite"),
+]
+TRANSITION_LABEL_TO_KEY = dict(TRANSITION_CHOICES)
+TRANSITION_KEY_TO_LABEL = {k: label for label, k in TRANSITION_CHOICES}
+
 
 def _speed_to_float(label):
     try:
@@ -86,6 +98,14 @@ class ExportOptionsPanel(ctk.CTkFrame):
         self.contrast_var   = ctk.DoubleVar(value=float(settings.get("color_contrast", 1.0)))
         self.saturation_var = ctk.DoubleVar(value=float(settings.get("color_saturation", 1.0)))
         self.gamma_var      = ctk.DoubleVar(value=float(settings.get("color_gamma", 1.0)))
+        # Concat transition between queued ranges (ignored unless concat=on).
+        _tr_key = settings.get("concat_transition", "cut")
+        self.transition_var = ctk.StringVar(
+            value=TRANSITION_KEY_TO_LABEL.get(_tr_key, "Cut"),
+        )
+        self.transition_duration_var = ctk.DoubleVar(
+            value=float(settings.get("concat_transition_duration", 0.5)),
+        )
 
         self._build_ui()
 
@@ -229,6 +249,43 @@ class ExportOptionsPanel(ctk.CTkFrame):
             command=self._reset_color,
         ).pack()
 
+        # --- Row: Concat transition (only meaningful when Concat is on)
+        row4 = ctk.CTkFrame(self.body, fg_color="transparent")
+        row4.pack(fill="x", padx=12, pady=(4, 10))
+
+        self._menu_label(row4, "Concat transition")
+        self._menu(
+            row4, self.transition_var,
+            [label for label, _k in TRANSITION_CHOICES], width=150,
+        ).pack(side="left", padx=(0, 10))
+
+        self._menu_label(row4, "Duration")
+        self.transition_dur_menu = ctk.CTkOptionMenu(
+            row4,
+            variable=ctk.StringVar(value=f"{self.transition_duration_var.get():.2g}s"),
+            values=["0.25s", "0.5s", "1s", "1.5s"],
+            width=80,
+            fg_color=T.BG_RAISED, button_color=T.BG_HOVER,
+            button_hover_color=T.BG_ACTIVE, text_color=T.TEXT,
+            dropdown_fg_color=T.BG_RAISED, dropdown_text_color=T.TEXT,
+            corner_radius=T.RADIUS_SM,
+            command=self._on_transition_duration_change,
+        )
+        self.transition_dur_menu.pack(side="left")
+
+        ctk.CTkLabel(
+            row4,
+            text="(only applies when Concat queued ranges is on)",
+            font=T.font(T.SIZE_XS), text_color=T.TEXT_DIM,
+        ).pack(side="left", padx=(10, 0))
+
+    def _on_transition_duration_change(self, value):
+        try:
+            self.transition_duration_var.set(float(value.rstrip("s")))
+        except ValueError:
+            self.transition_duration_var.set(0.5)
+        self._save()
+
     def _menu_label(self, parent, text):
         ctk.CTkLabel(
             parent, text=text,
@@ -298,19 +355,23 @@ class ExportOptionsPanel(ctk.CTkFrame):
 
     def _save(self, *_):
         settings.update({
-            "output_folder":   self.output_folder_var.get(),
-            "speed":           _speed_to_float(self.speed_var.get()),
-            "rotate":          _rotate_to_int(self.rotate_var.get()),
-            "mute_audio":      bool(self.mute_var.get()),
-            "audio_only":      bool(self.audio_only_var.get()),
-            "aspect_preset":   self.aspect_var.get(),
-            "concat_ranges":   bool(self.concat_var.get()),
-            "text_fade":       _fade_to_seconds(self.fade_var.get()),
-            "hw_encoder":      self.hw_var.get(),
+            "output_folder":    self.output_folder_var.get(),
+            "speed":            _speed_to_float(self.speed_var.get()),
+            "rotate":           _rotate_to_int(self.rotate_var.get()),
+            "mute_audio":       bool(self.mute_var.get()),
+            "audio_only":       bool(self.audio_only_var.get()),
+            "aspect_preset":    self.aspect_var.get(),
+            "concat_ranges":    bool(self.concat_var.get()),
+            "text_fade":        _fade_to_seconds(self.fade_var.get()),
+            "hw_encoder":       self.hw_var.get(),
             "color_brightness": round(float(self.brightness_var.get()), 3),
             "color_contrast":   round(float(self.contrast_var.get()),   3),
             "color_saturation": round(float(self.saturation_var.get()), 3),
             "color_gamma":      round(float(self.gamma_var.get()),      3),
+            "concat_transition":
+                TRANSITION_LABEL_TO_KEY.get(self.transition_var.get(), "cut"),
+            "concat_transition_duration":
+                round(float(self.transition_duration_var.get()), 2),
         })
         if self._on_change:
             self._on_change()
@@ -331,6 +392,11 @@ class ExportOptionsPanel(ctk.CTkFrame):
             "color_contrast":   float(self.contrast_var.get()),
             "color_saturation": float(self.saturation_var.get()),
             "color_gamma":      float(self.gamma_var.get()),
+            # Concat transition — used by trim_tab's export path to pick
+            # between concat_clips and concat_clips_with_transition.
+            "concat_transition":
+                TRANSITION_LABEL_TO_KEY.get(self.transition_var.get(), "cut"),
+            "concat_transition_duration": float(self.transition_duration_var.get()),
         }
 
     def get_output_folder(self):
