@@ -229,7 +229,9 @@ The project's authors and contributors do not endorse or encourage violation of 
 
 ## License
 
-Licensed under the **GNU General Public License v3.0** — see [LICENSE](LICENSE) for the full text.
+Licensed under the **Apache License, Version 2.0** — see [LICENSE](LICENSE) for the full text.
+
+> **Note on historic releases.** The `v1.0.0` tag and earlier were published under the GNU General Public License v3.0 and remain available under GPLv3. Apache-2.0 applies to `v1.1.0` and every later commit on `main`.
 
 VideoKidnapper depends on several third-party projects with their own licenses:
 

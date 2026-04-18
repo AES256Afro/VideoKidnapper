@@ -1,6 +1,6 @@
 # Third-party notices
 
-VideoKidnapper itself is licensed under GPL-3.0 (see [LICENSE](LICENSE)).
+VideoKidnapper itself is licensed under the **Apache License, Version 2.0** (see [LICENSE](LICENSE)). Releases tagged at or before `v1.0.0` were published under GPL-3.0 and remain available under that license; Apache-2.0 applies to `v1.1.0` and later.
 
 It depends on the following third-party projects. Their licenses are reproduced at their respective upstream repositories.
 
