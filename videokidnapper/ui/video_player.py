@@ -2,10 +2,23 @@
 # SPDX-License-Identifier: Apache-2.0
 """Video preview canvas with Play/Pause, live text-layer overlay, and DnD.
 
-Playback is frame-scrub based (re-runs ffmpeg per tick) rather than true
-decode — the frame cache makes repeated seeks cheap. It targets ~8 fps,
-plenty for previewing trims. For glitch-free full-rate playback we'd need
-PyAV or imageio-ffmpeg, which is out of scope.
+Two playback modes coexist:
+
+- **Real-time A/V playback** via ``core.playback.AudioVideoPlayer`` when
+  the optional ``imageio-ffmpeg`` + ``sounddevice`` + ``numpy`` deps are
+  available. Audio is decoded to PCM and played through the OS sound
+  device; video frames come from a persistent ``ffmpeg`` pipe and are
+  synced to the audio clock. This is what users actually want — Play
+  now sounds like Play.
+
+- **Frame-scrub fallback** at ~8 fps when any of those deps is missing.
+  The original behavior: re-run ffmpeg per tick, cache frames in the
+  LRU, no audio. The core app still works on a bare ``pip install``.
+
+The code branches on :func:`core.playback.is_available` once in
+``play()``; ``stop()`` handles both modes so keyboard nudges, slider
+moves, and the Stop button all behave the same regardless of which
+path started the playback.
 """
 
 import tkinter as tk
@@ -13,6 +26,7 @@ import tkinter as tk
 import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
+from videokidnapper.core import playback
 from videokidnapper.core.preview import get_frame_at
 from videokidnapper.ui import theme as T
 from videokidnapper.utils.snap import apply_snap, build_targets
@@ -42,6 +56,9 @@ class VideoPlayer(ctk.CTkFrame):
         self._playing = False
         self._play_after_id = None
         self._play_end = None
+        # Real-time A/V player (None until play() creates one).
+        self._av_player = None
+        self._av_time_after_id = None
 
         # Crop state: a rect in SOURCE pixel coords, or None when disabled.
         self._crop_mode = False
@@ -382,7 +399,14 @@ class VideoPlayer(ctk.CTkFrame):
             self.current_time = start
         self._play_end = end if end is not None else self.duration
         self._playing = True
-        self._tick()
+
+        # Prefer real-time A/V playback when the optional deps are
+        # installed. Falls through to the scrub loop on ImportError or
+        # on the audio-device-missing path inside AudioVideoPlayer.
+        if playback.is_available():
+            self._start_av_playback(start or 0.0, self._play_end)
+        else:
+            self._tick()
 
     def stop(self):
         self._playing = False
@@ -392,6 +416,102 @@ class VideoPlayer(ctk.CTkFrame):
             except Exception:
                 pass
             self._play_after_id = None
+        # A/V player cleanup — safe to call even when one isn't running.
+        if self._av_player is not None:
+            try:
+                self._av_player.stop()
+            except Exception:
+                pass
+            self._av_player = None
+        if self._av_time_after_id is not None:
+            try:
+                self.after_cancel(self._av_time_after_id)
+            except Exception:
+                pass
+            self._av_time_after_id = None
+
+    # ------------------------------------------------------------------
+    # Real-time A/V playback branch
+    # ------------------------------------------------------------------
+    def _start_av_playback(self, start, end):
+        """Launch an AudioVideoPlayer and wire its frame output to the canvas."""
+        def on_frame(img, ts):
+            # Called from the video decode thread — marshal to Tk main.
+            if not self.winfo_exists():
+                return
+            self.after(0, self._av_render_frame, img, ts)
+
+        def on_finished(reason):
+            if not self.winfo_exists():
+                return
+            self.after(0, self._av_on_finished, reason)
+
+        try:
+            self._av_player = playback.AudioVideoPlayer(
+                self.video_path,
+                render_callback=on_frame,
+                on_finished=on_finished,
+            )
+            self._av_player.play(start=start, end=end)
+        except Exception:
+            # Construction failed (bad path, missing deps at runtime).
+            # Fall back to the scrub loop so the Play button still works.
+            self._av_player = None
+            self._tick()
+            return
+        # Poll the A/V clock a few times a second so ``current_time``
+        # stays in sync — keyboard-nudge / slider-mark reads it, and we
+        # don't want those reading a stale value while playback runs.
+        self._av_poll_time()
+
+    def _av_render_frame(self, img, ts):
+        """Main-thread render path for a frame produced by AudioVideoPlayer."""
+        if not self._playing or self._av_player is None:
+            return
+        self.current_time = ts
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        if cw < 10 or ch < 10:
+            return
+        fw, fh = img.size
+        scale = min(cw / fw, ch / fh)
+        new_w = max(1, int(fw * scale))
+        new_h = max(1, int(fh * scale))
+        # Match the scrub path: composite overlays onto the source-sized
+        # frame, then resize. Keeps preview-matches-export alignment.
+        composited = self._apply_text_overlay(img, ts)
+        rendered = composited.resize((new_w, new_h), Image.LANCZOS)
+        self._photo = ImageTk.PhotoImage(rendered)
+        self.canvas.delete("frame")
+        self.canvas.create_image(
+            cw // 2, ch // 2, image=self._photo, tags="frame",
+        )
+        self._last_frame_rect = (
+            cw // 2 - new_w // 2, ch // 2 - new_h // 2, new_w, new_h, fw, fh,
+        )
+        self._draw_crop_overlay()
+
+    def _av_poll_time(self):
+        """Mirror the A/V player's clock into ``self.current_time``."""
+        if self._av_player is None or not self._playing:
+            return
+        try:
+            self.current_time = self._av_player.current_time()
+        except Exception:
+            pass
+        # 200ms is fine for the external consumers (keyboard nudge, etc.)
+        self._av_time_after_id = self.after(200, self._av_poll_time)
+
+    def _av_on_finished(self, reason):
+        """Tear down when the A/V player reports end-of-clip or stop."""
+        self._playing = False
+        self._av_player = None
+        if self._av_time_after_id is not None:
+            try:
+                self.after_cancel(self._av_time_after_id)
+            except Exception:
+                pass
+            self._av_time_after_id = None
 
     def _tick(self):
         if not self._playing:
