@@ -1,13 +1,15 @@
 import sys
-import io
 import threading
 from datetime import datetime
 
 import customtkinter as ctk
 
+from videokidnapper.ui import theme as T
+from videokidnapper.ui.theme import button
+
 
 class LogCapture:
-    """Captures stdout/stderr and forwards to a callback while preserving original output."""
+    """Forwards writes to the original stream and a callback."""
 
     def __init__(self, original, callback, tag="INFO"):
         self.original = original
@@ -26,6 +28,14 @@ class LogCapture:
 
 
 class DebugTab(ctk.CTkFrame):
+    _LEVEL_COLORS = {
+        "INFO":    T.ACCENT_GLOW,
+        "WARN":    T.WARN,
+        "WARNING": T.WARN,
+        "ERROR":   T.DANGER,
+        "DEBUG":   T.TEXT_DIM,
+    }
+
     def __init__(self, master, app, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
         self.app = app
@@ -36,40 +46,77 @@ class DebugTab(ctk.CTkFrame):
         self._install_log_capture()
 
     def _build_ui(self):
-        # Header with controls
-        header = ctk.CTkFrame(self, fg_color="transparent")
-        header.pack(fill="x", padx=10, pady=(10, 5))
+        # Header card
+        header = ctk.CTkFrame(
+            self, fg_color=T.BG_SURFACE,
+            border_width=1, border_color=T.BORDER,
+            corner_radius=T.RADIUS_LG,
+        )
+        header.pack(fill="x", padx=12, pady=(12, 6))
+
+        inner = ctk.CTkFrame(header, fg_color="transparent")
+        inner.pack(fill="x", padx=14, pady=10)
+
+        title_col = ctk.CTkFrame(inner, fg_color="transparent")
+        title_col.pack(side="left")
 
         ctk.CTkLabel(
-            header, text="Debug Log",
-            font=ctk.CTkFont(size=16, weight="bold"),
-        ).pack(side="left")
+            title_col, text="Debug Console",
+            font=T.font(T.SIZE_XL, "bold"),
+            text_color=T.TEXT,
+        ).pack(anchor="w")
 
-        self.clear_btn = ctk.CTkButton(
-            header, text="Clear", width=80, height=30,
-            fg_color="#444", hover_color="#555",
-            command=self._clear_logs,
+        ctk.CTkLabel(
+            title_col, text="Captures stdout + stderr with level coloring",
+            font=T.font(T.SIZE_SM),
+            text_color=T.TEXT_DIM,
+        ).pack(anchor="w")
+
+        self.clear_btn = button(
+            inner, "Clear", variant="secondary",
+            width=80, height=30, command=self._clear_logs,
         )
         self.clear_btn.pack(side="right", padx=(5, 0))
 
         self.autoscroll_var = ctk.BooleanVar(value=True)
         self.autoscroll_cb = ctk.CTkCheckBox(
-            header, text="Auto-scroll", variable=self.autoscroll_var,
-            font=ctk.CTkFont(size=12),
+            inner, text="Auto-scroll",
+            variable=self.autoscroll_var,
+            font=T.font(T.SIZE_MD),
+            text_color=T.TEXT_MUTED,
+            fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
+            border_color=T.BORDER_STRONG,
         )
         self.autoscroll_cb.pack(side="right", padx=10)
 
-        # Log display
-        self.log_text = ctk.CTkTextbox(
-            self, font=ctk.CTkFont(family="Consolas", size=12),
-            fg_color="#1a1a2e", text_color="#cccccc",
-            corner_radius=8, wrap="word",
+        # Log body
+        body = ctk.CTkFrame(
+            self, fg_color=T.BG_BASE,
+            border_width=1, border_color=T.BORDER,
+            corner_radius=T.RADIUS_LG,
         )
-        self.log_text.pack(fill="both", expand=True, padx=10, pady=(5, 10))
+        body.pack(fill="both", expand=True, padx=12, pady=(6, 12))
+
+        self.log_text = ctk.CTkTextbox(
+            body,
+            font=T.font(T.SIZE_MD, mono=True),
+            fg_color=T.BG_BASE,
+            text_color=T.TEXT_MUTED,
+            corner_radius=T.RADIUS_MD,
+            wrap="word",
+            border_width=0,
+        )
+        self.log_text.pack(fill="both", expand=True, padx=6, pady=6)
+
+        # Register color tags on the underlying Tk Text widget
+        tk_text = self.log_text._textbox
+        for level, color in self._LEVEL_COLORS.items():
+            tk_text.tag_configure(f"level_{level}", foreground=color)
+        tk_text.tag_configure("timestamp", foreground=T.TEXT_DIM)
+
         self.log_text.configure(state="disabled")
 
-        # Add startup message
-        self.add_log("VideoKidnapper Debug Log started", "INFO")
+        self.add_log("VideoKidnapper debug console ready", "INFO")
 
     def _install_log_capture(self):
         sys.stdout = LogCapture(sys.__stdout__, self.add_log, "INFO")
@@ -78,15 +125,19 @@ class DebugTab(ctk.CTkFrame):
     def add_log(self, message, tag="INFO"):
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         with self._lock:
-            entry = f"[{timestamp}] [{tag}] {message}"
+            entry = (timestamp, tag, message)
             self._logs.append(entry)
 
         if self.winfo_exists():
-            self.after(0, self._append_to_display, entry, tag)
+            self.after(0, self._append_to_display, timestamp, tag, message)
 
-    def _append_to_display(self, entry, tag):
+    def _append_to_display(self, timestamp, tag, message):
+        tk_text = self.log_text._textbox
         self.log_text.configure(state="normal")
-        self.log_text.insert("end", entry + "\n")
+        tk_text.insert("end", f"[{timestamp}] ", ("timestamp",))
+        level_tag = f"level_{tag}" if tag in self._LEVEL_COLORS else "level_INFO"
+        tk_text.insert("end", f"[{tag:5s}] ", (level_tag,))
+        tk_text.insert("end", f"{message}\n")
         self.log_text.configure(state="disabled")
 
         if self.autoscroll_var.get():
