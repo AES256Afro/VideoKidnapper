@@ -81,6 +81,11 @@ class ExportOptionsPanel(ctk.CTkFrame):
         self.concat_var = ctk.BooleanVar(value=settings.get("concat_ranges", False))
         self.fade_var   = ctk.StringVar(value=_seconds_to_fade_label(settings.get("text_fade", 0.0)))
         self.hw_var     = ctk.StringVar(value=settings.get("hw_encoder", "auto"))
+        # Color grade — persisted as floats, rendered as sliders.
+        self.brightness_var = ctk.DoubleVar(value=float(settings.get("color_brightness", 0.0)))
+        self.contrast_var   = ctk.DoubleVar(value=float(settings.get("color_contrast", 1.0)))
+        self.saturation_var = ctk.DoubleVar(value=float(settings.get("color_saturation", 1.0)))
+        self.gamma_var      = ctk.DoubleVar(value=float(settings.get("color_gamma", 1.0)))
 
         self._build_ui()
 
@@ -173,6 +178,57 @@ class ExportOptionsPanel(ctk.CTkFrame):
         self._menu_label(row3, "HW encoder")
         self._menu(row3, self.hw_var, HW_CHOICES, width=90).pack(side="left")
 
+        # --- Row: Color grade (brightness / contrast / saturation / gamma)
+        # Four sliders in a 2×2 grid so the row isn't 1200px wide on small
+        # windows. Neutral values compile to no filter in ffmpeg_backend.
+        color_row = ctk.CTkFrame(self.body, fg_color="transparent")
+        color_row.pack(fill="x", padx=12, pady=(4, 10))
+
+        ctk.CTkLabel(
+            color_row, text="Color",
+            font=T.font(T.SIZE_MD, "bold"),
+            text_color=T.TEXT_MUTED, width=120, anchor="w",
+        ).grid(row=0, column=0, rowspan=2, sticky="nw")
+
+        # (label, var, from_, to_, default, col, row)
+        sliders = [
+            ("Brightness", self.brightness_var, -0.5, 0.5, 0.0, 1, 0),
+            ("Contrast",   self.contrast_var,    0.5, 2.0, 1.0, 2, 0),
+            ("Saturation", self.saturation_var,  0.0, 2.0, 1.0, 1, 1),
+            ("Gamma",      self.gamma_var,       0.5, 2.0, 1.0, 2, 1),
+        ]
+        self._color_value_labels = {}
+        for label, var, lo, hi, default, col, row in sliders:
+            cell = ctk.CTkFrame(color_row, fg_color="transparent")
+            cell.grid(row=row, column=col, sticky="ew", padx=(0, 16), pady=2)
+            ctk.CTkLabel(
+                cell, text=label,
+                font=T.font(T.SIZE_SM),
+                text_color=T.TEXT_MUTED, width=80, anchor="w",
+            ).pack(side="left")
+            slider = ctk.CTkSlider(
+                cell, from_=lo, to=hi, variable=var, width=140,
+                progress_color=T.ACCENT, button_color=T.ACCENT,
+                button_hover_color=T.ACCENT_HOVER, fg_color=T.BG_RAISED,
+                command=lambda _v, lab=label, dv=default: self._on_color_slide(lab, dv),
+            )
+            slider.pack(side="left", padx=(0, 4))
+            value_label = ctk.CTkLabel(
+                cell, text=self._fmt_slider_value(var.get(), default),
+                font=T.font(T.SIZE_XS, mono=True),
+                text_color=T.TEXT_DIM, width=40, anchor="w",
+            )
+            value_label.pack(side="left")
+            self._color_value_labels[label] = (value_label, var, default)
+
+        # "Reset" chip — snap everything back to neutral in one click.
+        reset_col = ctk.CTkFrame(color_row, fg_color="transparent")
+        reset_col.grid(row=0, column=3, rowspan=2, sticky="n", padx=(8, 0))
+        button(
+            reset_col, "Reset", variant="ghost", width=70, height=26,
+            command=self._reset_color,
+        ).pack()
+
     def _menu_label(self, parent, text):
         ctk.CTkLabel(
             parent, text=text,
@@ -219,17 +275,42 @@ class ExportOptionsPanel(ctk.CTkFrame):
             else:
                 subprocess.Popen(["xdg-open", folder])
 
+    def _fmt_slider_value(self, value, default):
+        """Format a color-slider value for the inline number readout."""
+        if abs(value - default) < 0.005:
+            return "—"   # visually indicate neutral / no-op
+        return f"{value:+.2f}" if default == 0.0 else f"{value:.2f}"
+
+    def _on_color_slide(self, label, default):
+        """Update the value readout and persist; debounce at set() level."""
+        lbl, var, default = self._color_value_labels[label]
+        lbl.configure(text=self._fmt_slider_value(var.get(), default))
+        self._save()
+
+    def _reset_color(self):
+        self.brightness_var.set(0.0)
+        self.contrast_var.set(1.0)
+        self.saturation_var.set(1.0)
+        self.gamma_var.set(1.0)
+        for label, (lbl, var, default) in self._color_value_labels.items():
+            lbl.configure(text=self._fmt_slider_value(var.get(), default))
+        self._save()
+
     def _save(self, *_):
         settings.update({
-            "output_folder":  self.output_folder_var.get(),
-            "speed":          _speed_to_float(self.speed_var.get()),
-            "rotate":         _rotate_to_int(self.rotate_var.get()),
-            "mute_audio":     bool(self.mute_var.get()),
-            "audio_only":     bool(self.audio_only_var.get()),
-            "aspect_preset":  self.aspect_var.get(),
-            "concat_ranges":  bool(self.concat_var.get()),
-            "text_fade":      _fade_to_seconds(self.fade_var.get()),
-            "hw_encoder":     self.hw_var.get(),
+            "output_folder":   self.output_folder_var.get(),
+            "speed":           _speed_to_float(self.speed_var.get()),
+            "rotate":          _rotate_to_int(self.rotate_var.get()),
+            "mute_audio":      bool(self.mute_var.get()),
+            "audio_only":      bool(self.audio_only_var.get()),
+            "aspect_preset":   self.aspect_var.get(),
+            "concat_ranges":   bool(self.concat_var.get()),
+            "text_fade":       _fade_to_seconds(self.fade_var.get()),
+            "hw_encoder":      self.hw_var.get(),
+            "color_brightness": round(float(self.brightness_var.get()), 3),
+            "color_contrast":   round(float(self.contrast_var.get()),   3),
+            "color_saturation": round(float(self.saturation_var.get()), 3),
+            "color_gamma":      round(float(self.gamma_var.get()),      3),
         })
         if self._on_change:
             self._on_change()
@@ -245,6 +326,11 @@ class ExportOptionsPanel(ctk.CTkFrame):
             "text_fade":     _fade_to_seconds(self.fade_var.get()),
             "hw_encoder":    self.hw_var.get(),
             "crop":          settings.get("crop"),
+            # Color grade — consumed by ffmpeg_backend._build_eq_filter.
+            "color_brightness": float(self.brightness_var.get()),
+            "color_contrast":   float(self.contrast_var.get()),
+            "color_saturation": float(self.saturation_var.get()),
+            "color_gamma":      float(self.gamma_var.get()),
         }
 
     def get_output_folder(self):
