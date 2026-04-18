@@ -69,6 +69,9 @@ class TextLayerWidget(ctk.CTkFrame):
         self.on_move = on_move
         self._fonts = None
         self._custom_color = None  # hex string if user picked a custom color
+        # When the user drags the layer on the preview we store the source-
+        # pixel coords here. Selecting a preset from the dropdown clears it.
+        self._custom_position = None  # {"x": int, "y": int} or None
 
         self._build_ui()
 
@@ -175,9 +178,12 @@ class TextLayerWidget(ctk.CTkFrame):
 
         ctk.CTkLabel(row3, text="Position:", font=ctk.CTkFont(size=11)).pack(side="left")
         self.position_var = ctk.StringVar(value="Bottom Center")
+        # Custom is selected automatically when the user drags the text on
+        # the preview; picking any preset clears the custom override.
         self.position_menu = ctk.CTkOptionMenu(
             row3, variable=self.position_var,
-            values=list(POSITION_MAP.keys()), width=130,
+            values=list(POSITION_MAP.keys()) + ["Custom (drag)"], width=150,
+            command=self._on_position_choice,
         )
         self.position_menu.pack(side="left", padx=(2, 0))
 
@@ -261,6 +267,21 @@ class TextLayerWidget(ctk.CTkFrame):
             else:
                 self.color_var.set("White")
 
+    def _on_position_choice(self, value):
+        # Picking any preset clears the drag-custom override. Selecting
+        # "Custom (drag)" directly is a hint to drag — leave state alone.
+        if value != "Custom (drag)":
+            self._custom_position = None
+
+    def set_custom_position(self, source_x, source_y):
+        """Called from the VideoPlayer drag handler to persist a position."""
+        self._custom_position = {"x": int(source_x), "y": int(source_y)}
+        if self.position_var.get() != "Custom (drag)":
+            self.position_var.set("Custom (drag)")
+
+    def has_custom_position(self):
+        return self._custom_position is not None
+
     def _on_remove(self):
         if self.on_remove:
             self.on_remove(self)
@@ -291,8 +312,16 @@ class TextLayerWidget(ctk.CTkFrame):
             fontcolor = self._custom_color
         else:
             fontcolor = TEXT_COLORS.get(color_name, "white")
-        position = self.position_var.get()
-        pos_expr = POSITION_MAP.get(position, "(w-tw)/2:h-th-20")
+
+        # Custom-drag overrides every preset. We emit the position as the
+        # raw "<x>:<y>" pair ffmpeg accepts as numeric coordinates; the
+        # preview resolver recognises this form too.
+        if self._custom_position:
+            cx, cy = self._custom_position["x"], self._custom_position["y"]
+            pos_expr = f"{cx}:{cy}"
+        else:
+            pos_name = self.position_var.get()
+            pos_expr = POSITION_MAP.get(pos_name, "(w-tw)/2:h-th-20")
 
         try:
             fontsize = int(self.size_var.get())
@@ -316,13 +345,25 @@ class TextLayerWidget(ctk.CTkFrame):
         self.font_var.set(data.get("font", "Arial"))
         self.size_var.set(str(data.get("fontsize", 24)))
         self.box_var.set(bool(data.get("box", True)))
-        # Position back-translated from expression to friendly name if known.
+        # Position: match a preset name, fall back to numeric custom, else default.
         pos_expr = data.get("position", "(w-tw)/2:h-th-20")
         friendly = next(
             (k for k, v in POSITION_MAP.items() if v == pos_expr),
-            "Bottom Center",
+            None,
         )
-        self.position_var.set(friendly)
+        if friendly:
+            self._custom_position = None
+            self.position_var.set(friendly)
+        else:
+            # Try numeric "<x>:<y>" form.
+            try:
+                parts = pos_expr.split(":", 1)
+                cx, cy = int(float(parts[0])), int(float(parts[1]))
+                self._custom_position = {"x": cx, "y": cy}
+                self.position_var.set("Custom (drag)")
+            except (ValueError, IndexError):
+                self._custom_position = None
+                self.position_var.set("Bottom Center")
         # Color: accept named or custom hex.
         color = data.get("fontcolor", "white")
         if isinstance(color, str) and color.startswith("#"):
@@ -509,6 +550,12 @@ class TextLayersPanel(ctk.CTkFrame):
             if include_empty or data["text"].strip():
                 result.append(data)
         return result
+
+    def set_layer_position(self, index, source_x, source_y):
+        """Drag callback entry point — forwarded from VideoPlayer."""
+        if 0 <= index < len(self.layers):
+            self.layers[index].set_custom_position(source_x, source_y)
+            self._notify_change()
 
     def clear_layers(self):
         for layer in self.layers:
