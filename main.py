@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 AES256Afro <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 """VideoKidnapper — GUI by default; any CLI flag routes to headless mode."""
 
 import argparse

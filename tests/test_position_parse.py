@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 AES256Afro <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 """Tests for numeric custom-position parsing used by drag-to-position."""
 
 from videokidnapper.ui.video_player import (

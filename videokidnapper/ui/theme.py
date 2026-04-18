@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 AES256Afro <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 """Centralized design tokens for VideoKidnapper.
 
 Tokens are selected once at import time from the dark or light palette

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 AES256Afro <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 from videokidnapper.utils.github_update import is_newer
 
 
