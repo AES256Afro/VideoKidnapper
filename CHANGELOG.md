@@ -4,18 +4,28 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+- **PyPI package.** `pip install videokidnapper` (core) or `pip install "videokidnapper[dnd]"` (+ drag-and-drop) now works. Installs a `videokidnapper` console script that launches the GUI (or the CLI with any flag). FFmpeg is still an external prereq — the in-app **⚙ Setup** dialog handles portable install on Windows.
+- **`.github/workflows/release.yml`** — tag push matching `v*.*.*` builds an sdist + wheel, publishes to PyPI via Trusted Publishing (OIDC — no API token in repo secrets), and attaches the same artifacts to the GitHub Release. Tag→version mismatch fails the build before publish, so a mis-tagged release can't ship.
+- **`--version` CLI flag** — `videokidnapper --version` prints the installed version.
+- **`ProbeError` exception** in `ffmpeg_backend.py` — narrow, catchable type for ffprobe failures that still deserve user-facing surfacing.
+- **`keyboard_paste_url()` on `UrlTab`** — dispatched by the new Ctrl+V binding.
+- **`_WRITE_LOCK` in `utils/settings.py`** — module-level lock guarding every read-modify-write path.
+
+### Changed
+
+- **`videokidnapper/__init__.py` is now the single source of truth for version.** `config.APP_VERSION` re-exports `__version__`, and `pyproject.toml` uses `tool.setuptools.dynamic` to read the same attribute — one bump, everything agrees.
+- **`main()` moved from repo-root `main.py` into `videokidnapper/cli.py`** so it's importable as a package attribute (required by the console-script entry point). Root `main.py` stays as a thin shim — `python main.py …` from a clone still works unchanged.
+- **README install section** documents the PyPI path as option A and keeps the clone-based path as option B.
+
 ### Fixed
 
 - **ffprobe crash on bad / truncated files.** `get_video_info` used to call `json.loads(result.stdout)` with no try/except and no return-code check — a corrupt file, a killed ffprobe, or a missing binary raised an uncaught `JSONDecodeError` / `FileNotFoundError` into the Tk event loop. Now wrapped in a new `ProbeError` with a human-readable reason for every failure mode (bad output, non-zero exit, timeout, binary not on PATH); callers already catch the old generic-Exception path so this is wire-compatible.
 - **UI freeze on stalled URLs.** `get_video_info_from_url` invoked `yt_dlp.YoutubeDL.extract_info` with no timeout — a stalled CDN could hang the caller indefinitely. Now runs on a worker thread with a soft 20-second timeout (caller-overridable), returning `{"error": "timed out after Ns"}` instead of hanging. Also sets yt-dlp's own `socket_timeout` to half the outer timeout so individual network reads don't stretch past our bound.
 - **Settings file corruption under concurrent writes.** `~/.videokidnapper_settings.json` was written with a plain `open(..., "w") + json.dump` — two exports finishing simultaneously could interleave read-modify-write cycles and one would clobber the other's update (regularly observed as "lost history entry after batch download"). The write path now holds an in-process lock across the full read-modify-write and writes via tempfile + `os.replace` for atomicity at the filesystem level. `add_history_entry` is locked too so batch-download history survives concurrent exports.
 - **Ctrl+V paste-URL shortcut was documented but not wired.** README + URL-tab placeholder told users Ctrl+V pastes into the URL field, but no binding existed. Now actually works: Ctrl+V outside of an entry pastes the clipboard into the URL entry and triggers the platform-detect chip; Ctrl+V inside an entry keeps native text-field paste (via the existing entry-focus guard).
-
-### Added
-
-- **`ProbeError` exception** in `ffmpeg_backend.py` — narrow, catchable type for ffprobe failures that still deserve user-facing surfacing.
-- **`keyboard_paste_url()` on `UrlTab`** — dispatched by the new Ctrl+V binding.
-- **`_WRITE_LOCK` in `utils/settings.py`** — module-level lock guarding every read-modify-write path.
+- **Version drift:** `videokidnapper/__init__.py` had `__version__ = "1.0.0"` while `config.APP_VERSION` was `"1.1.0"`. Both now resolve to `"1.1.0"`.
 
 ## [1.1.0] — 2026-04-18
 

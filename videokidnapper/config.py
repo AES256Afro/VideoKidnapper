@@ -29,7 +29,10 @@ SUPPORTED_PLATFORMS = {
 }
 
 APP_NAME = "VideoKidnapper"
-APP_VERSION = "1.1.0"
+# Version is owned by `videokidnapper/__init__.py` so pyproject.toml
+# (dynamic version) and the runtime agree. Do not hard-code it here.
+from videokidnapper import __version__  # noqa: E402
+APP_VERSION = __version__
 WINDOW_SIZE = "1000x700"
 MIN_WINDOW_SIZE = (680, 480)
 
