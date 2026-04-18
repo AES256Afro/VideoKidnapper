@@ -18,6 +18,8 @@ All notable changes to this project are documented here. The format is based on 
 - **`app.register_tab(display_name, factory, glyph=...)`** — stable plugin API for adding a tab.
 - **`app.plugins`** — list of `DiscoveredPlugin` namedtuples for introspection.
 - **Example plugin** at `examples/plugins/videokidnapper_hello/` + developer docs at `docs/PLUGINS.md`. Plugins are free to adopt any license (MIT, GPL, proprietary) — the entry-point mechanism is packaging-level, not source-level, so Apache-2.0 doesn't infect.
+- **Real-time in-app video + audio playback.** The Play button now decodes the video through a persistent `imageio-ffmpeg` subprocess and streams the audio track as PCM through `sounddevice`, synced to an audio-mastered clock. Replaces the previous 8-fps frame-scrub loop that had no sound (which is why the "Play in System Player" workaround existed). Optional deps — the core install is untouched, and users who skip the extras automatically get the old scrub behavior as a graceful fallback.
+- **`videokidnapper/core/playback.py`** — new module with `AudioVideoPlayer` (threaded audio + video decode with audio-as-master sync), `AudioClock` (unit-testable sync math isolated from I/O), and `is_available()` (checks the three optional deps: `imageio-ffmpeg`, `sounddevice`, `numpy`). Silent clips fall back to a `time.monotonic()` clock so video never stalls waiting for audio that doesn't exist.
 - **PyPI package.** `pip install videokidnapper` (core) or `pip install "videokidnapper[dnd]"` (+ drag-and-drop) now works. Installs a `videokidnapper` console script that launches the GUI (or the CLI with any flag). FFmpeg is still an external prereq — the in-app **⚙ Setup** dialog handles portable install on Windows.
 - **`.github/workflows/release.yml`** — tag push matching `v*.*.*` builds an sdist + wheel, publishes to PyPI via Trusted Publishing (OIDC — no API token in repo secrets), and attaches the same artifacts to the GitHub Release. Tag→version mismatch fails the build before publish, so a mis-tagged release can't ship.
 - **`--version` CLI flag** — `videokidnapper --version` prints the installed version.
@@ -28,6 +30,9 @@ All notable changes to this project are documented here. The format is based on 
 ### Changed
 
 - **Status-bar hint** now mentions Ctrl+Z / Ctrl+Y alongside the existing shortcuts.
+- **`VideoPlayer.play()`** branches at call time: if `playback.is_available()` the threaded A/V player runs; otherwise the original scrub loop does. `stop()` handles both modes uniformly so keyboard nudges, slider moves, and the Stop button work identically regardless of which path started playback.
+- **`requirements.txt`** documents the three optional playback deps under a commented "Optional" block; core dependency list unchanged.
+- **README** Highlights reflect the real-time A/V playback; "Play in System Player" stays listed as a fallback rather than the only audio-sync option.
 - **`videokidnapper/__init__.py` is now the single source of truth for version.** `config.APP_VERSION` re-exports `__version__`, and `pyproject.toml` uses `tool.setuptools.dynamic` to read the same attribute — one bump, everything agrees.
 - **`main()` moved from repo-root `main.py` into `videokidnapper/cli.py`** so it's importable as a package attribute (required by the console-script entry point). Root `main.py` stays as a thin shim — `python main.py …` from a clone still works unchanged.
 - **README install section** documents the PyPI path as option A and keeps the clone-based path as option B.
