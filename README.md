@@ -22,7 +22,8 @@ A dark-themed desktop tool for trimming videos, downloading clips from the open 
 - **Screen recording** — capture your monitor and drop the result straight into the trim workflow
 - **Share to platform** — one click copies the exported file to clipboard and opens the compose page on YouTube, Instagram, Bluesky, X, Reddit, or Facebook
 - **Drag-and-drop** video files onto the preview (requires [`tkinterdnd2`](https://pypi.org/project/tkinterdnd2/))
-- **Play in System Player** — audio-synced playback in your default player; in-app preview is frame-scrub
+- **Real-time in-app playback with audio** — `imageio-ffmpeg` + `sounddevice` decode video frames and PCM audio into an audio-mastered playback loop. Falls back to an 8-fps frame-scrub preview when the optional deps aren't installed.
+- **Play in System Player** — still available as a fallback route, with full OS-player features
 - **Live waveform** above the timeline
 - **History tab** — recent exports with Open / Reveal actions
 - **Keyboard shortcuts** — Space play · J/L ±1s · I/O set in-out · Ctrl+E export · Ctrl+O open file
