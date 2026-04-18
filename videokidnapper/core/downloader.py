@@ -159,31 +159,64 @@ def _friendly_error(msg, platform):
     return msg
 
 
-def get_video_info_from_url(url):
+_PROBE_TIMEOUT_SECONDS = 20
+
+
+def get_video_info_from_url(url, timeout=_PROBE_TIMEOUT_SECONDS):
+    """Probe a URL for video metadata without downloading.
+
+    yt-dlp's ``extract_info`` has no native timeout knob, so we run it
+    on a worker thread and impose a soft timeout from the outside. A
+    stalled URL (dead CDN, rate-limiter eating the connection) would
+    otherwise freeze the calling UI thread indefinitely — and in the
+    batch-download panel, a single bad URL could stop the whole queue.
+
+    Returns ``{"error": ...}`` on timeout or probe failure; otherwise
+    a dict with ``title`` / ``duration`` / ``uploader`` / ``thumbnail``
+    / ``platform``.
+    """
     import yt_dlp
 
     opts = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
+        "socket_timeout": max(5, int(timeout / 2)),
         "http_headers": {"User-Agent": _DEFAULT_UA},
     }
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            if info.get("entries"):
-                entries = [e for e in info["entries"] if e]
-                if entries:
-                    info = entries[0]
-            return {
-                "title": info.get("title", "Unknown"),
-                "duration": info.get("duration", 0),
-                "uploader": info.get("uploader", "Unknown"),
-                "thumbnail": info.get("thumbnail"),
-                "platform": detect_platform(url),
-            }
-    except Exception as e:
-        return {"error": str(e)}
+
+    result_box = {}
+
+    def worker():
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if info.get("entries"):
+                    entries = [e for e in info["entries"] if e]
+                    if entries:
+                        info = entries[0]
+                result_box["ok"] = {
+                    "title": info.get("title", "Unknown"),
+                    "duration": info.get("duration", 0),
+                    "uploader": info.get("uploader", "Unknown"),
+                    "thumbnail": info.get("thumbnail"),
+                    "platform": detect_platform(url),
+                }
+        except Exception as exc:
+            result_box["error"] = str(exc)
+
+    t = threading.Thread(target=worker, name="yt-dlp-probe", daemon=True)
+    t.start()
+    t.join(timeout)
+
+    if t.is_alive():
+        # yt-dlp is still running. Daemon thread will be reaped on
+        # process exit; we can't kill it from the outside, so we just
+        # stop waiting. The caller gets a clear timeout signal.
+        return {"error": f"timed out after {timeout}s probing {url}"}
+    if "error" in result_box:
+        return {"error": result_box["error"]}
+    return result_box.get("ok", {"error": "unknown probe failure"})
 
 
 def cleanup_temp():

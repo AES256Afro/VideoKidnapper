@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **ffprobe crash on bad / truncated files.** `get_video_info` used to call `json.loads(result.stdout)` with no try/except and no return-code check — a corrupt file, a killed ffprobe, or a missing binary raised an uncaught `JSONDecodeError` / `FileNotFoundError` into the Tk event loop. Now wrapped in a new `ProbeError` with a human-readable reason for every failure mode (bad output, non-zero exit, timeout, binary not on PATH); callers already catch the old generic-Exception path so this is wire-compatible.
+- **UI freeze on stalled URLs.** `get_video_info_from_url` invoked `yt_dlp.YoutubeDL.extract_info` with no timeout — a stalled CDN could hang the caller indefinitely. Now runs on a worker thread with a soft 20-second timeout (caller-overridable), returning `{"error": "timed out after Ns"}` instead of hanging. Also sets yt-dlp's own `socket_timeout` to half the outer timeout so individual network reads don't stretch past our bound.
+- **Settings file corruption under concurrent writes.** `~/.videokidnapper_settings.json` was written with a plain `open(..., "w") + json.dump` — two exports finishing simultaneously could interleave read-modify-write cycles and one would clobber the other's update (regularly observed as "lost history entry after batch download"). The write path now holds an in-process lock across the full read-modify-write and writes via tempfile + `os.replace` for atomicity at the filesystem level. `add_history_entry` is locked too so batch-download history survives concurrent exports.
+- **Ctrl+V paste-URL shortcut was documented but not wired.** README + URL-tab placeholder told users Ctrl+V pastes into the URL field, but no binding existed. Now actually works: Ctrl+V outside of an entry pastes the clipboard into the URL entry and triggers the platform-detect chip; Ctrl+V inside an entry keeps native text-field paste (via the existing entry-focus guard).
+
+### Added
+
+- **`ProbeError` exception** in `ffmpeg_backend.py` — narrow, catchable type for ffprobe failures that still deserve user-facing surfacing.
+- **`keyboard_paste_url()` on `UrlTab`** — dispatched by the new Ctrl+V binding.
+- **`_WRITE_LOCK` in `utils/settings.py`** — module-level lock guarding every read-modify-write path.
+
 ## [1.1.0] — 2026-04-18
 
 ### Changed
