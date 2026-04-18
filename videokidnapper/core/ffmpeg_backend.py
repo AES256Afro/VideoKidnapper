@@ -312,8 +312,8 @@ def _build_drawtext_filter(layer, fade=0.0):
 def _build_text_filters(text_layers, fade=0.0):
     if not text_layers:
         return []
-    return [_build_drawtext_filter(l, fade=fade)
-            for l in text_layers if l.get("text", "").strip()]
+    return [_build_drawtext_filter(layer, fade=fade)
+            for layer in text_layers if layer.get("text", "").strip()]
 
 
 def _assemble_video_filters(preset_name, info, text_layers, options):
