@@ -1,0 +1,65 @@
+name: Bug report
+description: Something isn't working — download fails, export crashes, UI glitch, etc.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. The **Debug** tab inside VideoKidnapper captures ffmpeg / yt-dlp output with level-colored tags — the full log there is gold for debugging, please paste it below.
+
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "Windows 11 / macOS 14.4 / Ubuntu 24.04"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12.2"
+    validations:
+      required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: Commit / version
+      placeholder: "git rev-parse --short HEAD, or v1.0.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open URL Download tab
+        2. Paste <url>
+        3. Click Download → works
+        4. Click Export → fails with...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: debug_log
+    attributes:
+      label: Debug tab output
+      description: Open the Debug tab and copy the relevant lines (especially any `[ERROR]` lines).
+      render: shell
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else?
+      description: Is the URL public or gated? Does it happen with other videos? Screenshots welcome.

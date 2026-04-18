@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/AES256Afro/VideoKidnapper/security/advisories/new
+    about: Report security issues privately — see SECURITY.md.
+  - name: yt-dlp extractor breakage (YouTube / IG / etc.)
+    url: https://github.com/yt-dlp/yt-dlp/issues
+    about: Platform extractor bugs should be reported upstream to yt-dlp.
