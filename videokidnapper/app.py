@@ -35,9 +35,12 @@ class App(ctk.CTk):
             self._show_setup_landing()
             return
 
+        self.plugins = []   # [DiscoveredPlugin] — populated by _load_plugins
+
         self._build_ui()
         self._bind_keyboard_shortcuts()
         self._install_exception_handler()
+        self._load_plugins()
         self._maybe_check_for_update()
 
     # ------------------------------------------------------------------
@@ -272,6 +275,98 @@ class App(ctk.CTk):
         link = getattr(self, "_update_link", None)
         if link:
             webbrowser.open(link)
+
+    # ------------------------------------------------------------------
+    # Plugin API
+    # ------------------------------------------------------------------
+    def register_tab(self, display_name, factory, glyph="◆"):
+        """Append a tab contributed by a plugin.
+
+        Parameters
+        ----------
+        display_name : str
+            Shown on the tab's segmented button. Kept short — CTkTabview
+            centers the label and long strings wrap awkwardly.
+        factory : callable
+            ``factory(parent_frame) -> widget``. The widget is packed
+            fill="both", expand=True inside the tab's frame.
+        glyph : str
+            Single-character icon prefix. Defaults to a diamond so
+            plugin tabs are visually distinct from built-in tabs.
+
+        Returns the widget produced by ``factory``, or ``None`` if the
+        factory raised (the failure is logged to the Debug tab).
+        """
+        label = f"  {glyph}  {display_name}  "
+        try:
+            self.tabview.add(label)
+            parent = self.tabview.tab(label)
+            widget = factory(parent)
+            if widget is not None:
+                widget.pack(fill="both", expand=True)
+            return widget
+        except Exception as exc:
+            if hasattr(self, "debug_tab"):
+                try:
+                    self.debug_tab.add_log(
+                        f"Failed to register plugin tab {display_name!r}: {exc}",
+                        "ERROR",
+                    )
+                except Exception:
+                    pass
+            return None
+
+    def _load_plugins(self):
+        """Discover entry-point plugins and fire their ``on_app_ready`` hook.
+
+        Runs after ``_build_ui`` + exception handler install so a
+        misbehaving plugin hits the global handler instead of the bare
+        Tk loop. Each plugin is called in its own try/except so one
+        bad actor doesn't prevent the rest from loading.
+        """
+        from videokidnapper.plugins import discover_plugins
+
+        discovered = discover_plugins(app_version=APP_VERSION)
+        self.plugins = discovered
+
+        loaded = 0
+        for entry in discovered:
+            if entry.error or entry.plugin is None:
+                if hasattr(self, "debug_tab"):
+                    try:
+                        self.debug_tab.add_log(
+                            f"Skipped plugin {entry.name!r}: {entry.error}",
+                            "WARN",
+                        )
+                    except Exception:
+                        pass
+                continue
+            try:
+                entry.plugin.on_app_ready(self)
+                loaded += 1
+                if hasattr(self, "debug_tab"):
+                    try:
+                        self.debug_tab.add_log(
+                            f"Loaded plugin {entry.name!r} "
+                            f"({entry.plugin.name} v{entry.plugin.version})",
+                            "INFO",
+                        )
+                    except Exception:
+                        pass
+            except Exception as exc:
+                if hasattr(self, "debug_tab"):
+                    try:
+                        self.debug_tab.add_log(
+                            f"Plugin {entry.name!r} on_app_ready failed: {exc}",
+                            "ERROR",
+                        )
+                    except Exception:
+                        pass
+        if loaded and self.status_bar:
+            self.status_bar.show(
+                f"Loaded {loaded} plugin{'s' if loaded != 1 else ''}",
+                "success",
+            )
 
     # ------------------------------------------------------------------
     # Setup dialog
