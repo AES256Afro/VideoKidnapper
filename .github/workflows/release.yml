@@ -1,0 +1,118 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
+#
+# On tag push (v*.*.*), build an sdist + wheel and publish to PyPI
+# using Trusted Publishing (OIDC — no API token required).
+#
+# Setup on PyPI (one-time, done by the repo owner):
+#   1. https://pypi.org/manage/account/publishing/
+#   2. Add a new pending publisher with:
+#        owner:  AES256Afro
+#        repo:   VideoKidnapper
+#        workflow:  release.yml
+#        env:    pypi   (matches the `environment:` below)
+#
+# After the first successful release, the "pending" publisher becomes
+# permanent and future tag pushes publish without further setup.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"       # v1.2.3
+      - "v[0-9]+.[0-9]+.[0-9]+-*"     # v1.2.3-rc1 etc.
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install build backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+
+      - name: Verify tag matches package version
+        # Catches "oops, I tagged v1.2.3 but forgot to bump __init__.py"
+        # before we publish a mis-labeled wheel.
+        run: |
+          python - <<'PY'
+          import os, sys
+          import videokidnapper  # reads __version__ from __init__.py
+          tag = os.environ["GITHUB_REF_NAME"]  # e.g. "v1.2.3"
+          want = f"v{videokidnapper.__version__}"
+          if not tag.startswith(want):
+              sys.exit(f"Tag {tag!r} does not match __version__ {want!r}")
+          print(f"OK: tag {tag} matches {want}")
+          PY
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: Upload built distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 14
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/videokidnapper
+    permissions:
+      id-token: write   # required for PyPI Trusted Publishing (OIDC)
+    steps:
+      - name: Download built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Attach wheels to GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create / update GitHub Release
+        # Uploads the sdist + wheel to the release page so users can
+        # grab them without a PyPI round-trip (also makes it easier
+        # to inspect what was published for a given tag).
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" dist/* \
+              --title "$tag" \
+              --notes "Published to PyPI: https://pypi.org/project/videokidnapper/${tag#v}/"
+          fi

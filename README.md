@@ -140,6 +140,19 @@ Entry fields swallow shortcuts so typing into them doesn't scrub the video.
 
 ## Installation
 
+### Option A — PyPI (recommended)
+
+```bash
+pip install videokidnapper            # core install
+pip install "videokidnapper[dnd]"     # + drag-and-drop support
+videokidnapper                        # launches the GUI
+videokidnapper --help                 # CLI mode
+```
+
+You still need FFmpeg on `PATH` (or use the in-app **⚙ Setup** dialog after first launch to auto-install a portable copy on Windows).
+
+### Option B — Clone and install (contributors / latest `main`)
+
 ### 1. Install Python 3.9 – 3.14
 
 ### 2. Clone and install
@@ -147,6 +160,8 @@ Entry fields swallow shortcuts so typing into them doesn't scrub the video.
 ```bash
 git clone https://github.com/AES256Afro/VideoKidnapper.git
 cd VideoKidnapper
+pip install -e .                      # editable install — picks up your edits
+# or the old way:
 pip install -r requirements.txt
 ```
 
@@ -161,8 +176,11 @@ Three options — the Setup dialog handles all of them:
 ### 4. Run
 
 ```bash
-python main.py           # GUI
+python main.py           # GUI (works from a clone without installing)
 python main.py --help    # CLI help
+# or, after `pip install -e .`:
+videokidnapper           # GUI
+videokidnapper --help    # CLI help
 ```
 
 ---
