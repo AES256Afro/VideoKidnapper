@@ -9,14 +9,27 @@ PRESETS = {
 
 DOWNLOADS_DIR = Path.home() / "Downloads"
 
-SUPPORTED_VIDEO_EXTENSIONS = (".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv")
+SUPPORTED_VIDEO_EXTENSIONS = (
+    ".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv",
+    ".gif",  # ffmpeg reads GIFs as input; useful for re-trimming existing GIFs
+    ".m4v", ".mpeg", ".mpg", ".ts", ".mts", ".3gp",
+)
 
 EXPORT_FORMATS = ["GIF", "MP4"]
+
+SUPPORTED_PLATFORMS = {
+    "YouTube":   [r"(?:www\.|m\.|music\.)?youtube\.com/", r"youtu\.be/"],
+    "Instagram": [r"(?:www\.)?instagram\.com/"],
+    "Bluesky":   [r"(?:www\.)?bsky\.app/", r"(?:www\.)?bsky\.social/"],
+    "Twitter/X": [r"(?:www\.|mobile\.)?twitter\.com/", r"(?:www\.|mobile\.)?x\.com/"],
+    "Reddit":    [r"(?:www\.|old\.|new\.|np\.)?reddit\.com/", r"redd\.it/", r"v\.redd\.it/"],
+    "Facebook":  [r"(?:www\.|m\.|web\.)?facebook\.com/", r"fb\.watch/", r"(?:www\.)?fb\.com/"],
+}
 
 APP_NAME = "VideoKidnapper"
 APP_VERSION = "1.0.0"
 WINDOW_SIZE = "1000x700"
-MIN_WINDOW_SIZE = (800, 600)
+MIN_WINDOW_SIZE = (680, 480)
 
 TEMP_DIR = Path.home() / ".videokidnapper_temp"
 
