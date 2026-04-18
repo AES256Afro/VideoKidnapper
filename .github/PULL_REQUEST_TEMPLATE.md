@@ -18,6 +18,13 @@ Closes #
 - [ ] `python main.py` — app boots without errors
 - [ ] Manually exercised the affected tab / dialog
 
+## License
+
+- [ ] My contribution is submitted under **Apache License 2.0** (the project's license).
+- [ ] New `.py` files carry the SPDX header:
+      `# SPDX-License-Identifier: Apache-2.0`
+- [ ] No differently-licensed code was copied in without discussion.
+
 ## Notes for reviewers
 
 <!-- Anything non-obvious: tradeoffs you considered, screenshots if UI changed,

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 """Minimal 'check GitHub releases for a newer version' helper.
 
 Runs on a daemon thread with a short timeout; never blocks UI, never raises

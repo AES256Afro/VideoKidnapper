@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 """Record an animated demo GIF of the app for the README banner.
 
 Drives the app through a short tour — loads the demo video, scrubs, queues

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 """Frame preview helpers.
 
 The LRU cache is capped so long sessions don't balloon memory. ffmpeg

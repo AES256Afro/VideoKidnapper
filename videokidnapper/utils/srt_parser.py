@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 """Minimal SRT subtitle parser.
 
 Returns a list of dicts compatible with TextLayersPanel's layer schema so a

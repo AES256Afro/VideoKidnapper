@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 """FFmpeg filter-graph escaping.
 
 The `drawtext` filter runs arbitrary user text through ffmpeg's lavfi parser,

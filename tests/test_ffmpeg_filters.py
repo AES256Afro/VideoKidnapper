@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 from videokidnapper.core.ffmpeg_backend import (
     _build_audio_speed, _build_crop_filter, _build_rotate_filter,
     _build_speed_filter,

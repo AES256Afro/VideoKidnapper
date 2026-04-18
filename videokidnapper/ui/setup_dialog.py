@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 """Setup / Prerequisites dialog.
 
 Shows each prerequisite as a row: status icon, feature it enables, and a
