@@ -125,7 +125,18 @@ def _run_kwargs():
     return {}
 
 
+class ProbeError(RuntimeError):
+    """ffprobe failed to read the file (missing binary, bad media, timeout)."""
+
+
 def get_video_info(input_path):
+    """Return a metadata dict for ``input_path``.
+
+    Raises :class:`ProbeError` with a user-facing message when ffprobe
+    can't read the file — callers (TrimTab._load_path, CLI) already
+    catch the old generic-Exception path, so this is wire-compatible
+    while giving the error funnel something actionable to surface.
+    """
     cmd = [
         _get_ffprobe(),
         "-v", "quiet",
@@ -134,8 +145,30 @@ def get_video_info(input_path):
         "-show_streams",
         str(input_path),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-    data = json.loads(result.stdout)
+    # A corrupt file / missing codec / killed process used to land here
+    # as a naked JSONDecodeError and propagate to the Tk event loop. Wrap
+    # every failure mode in ProbeError with a short, human-readable reason.
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=10,
+        )
+    except FileNotFoundError as exc:
+        raise ProbeError(f"ffprobe not found on PATH: {exc}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ProbeError(
+            f"ffprobe timed out after 10s reading {input_path!r}",
+        ) from exc
+    if result.returncode != 0:
+        tail = (result.stderr or "").strip().splitlines()[-1:] or ["(no stderr)"]
+        raise ProbeError(
+            f"ffprobe exited {result.returncode}: {tail[0]}",
+        )
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise ProbeError(
+            f"ffprobe returned non-JSON output for {input_path!r}: {exc}",
+        ) from exc
     video_stream = None
     audio_stream = None
     for s in data.get("streams", []):

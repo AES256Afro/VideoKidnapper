@@ -8,11 +8,21 @@ app over preferences.
 """
 
 import json
+import os
+import tempfile
+import threading
 from pathlib import Path
 
 
 _SETTINGS_PATH = Path.home() / ".videokidnapper_settings.json"
 _CURRENT_SCHEMA = 2
+
+# In-process lock for the read-modify-write cycle. Two export threads
+# finishing at the same moment both did `data = _read(); data[k] = v;
+# _write(data)` — with no coordination, whichever wrote last stomped
+# the other's update, and if the OS crashed mid-write the JSON file
+# could be left truncated. The lock + atomic rename below fix both.
+_WRITE_LOCK = threading.Lock()
 
 _DEFAULTS = {
     "_version":         _CURRENT_SCHEMA,
@@ -77,10 +87,33 @@ def _read():
 
 
 def _write(data):
+    """Atomically persist ``data`` as JSON.
+
+    Writes to a temp file in the same directory, then ``os.replace``s
+    it over the real settings file. ``os.replace`` is atomic on both
+    POSIX and Windows, so a crash mid-write never leaves the real
+    file truncated or partially-written. Caller should already hold
+    ``_WRITE_LOCK``.
+    """
     try:
         _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(_SETTINGS_PATH, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2)
+        dir_ = str(_SETTINGS_PATH.parent)
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=".videokidnapper_settings.",
+            suffix=".tmp",
+            dir=dir_,
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2)
+            os.replace(tmp_path, _SETTINGS_PATH)
+        except OSError:
+            # Clean the temp file so we don't leak .tmp droppings in $HOME
+            # if the rename fails (read-only FS, permission error, etc.).
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
     except OSError:
         pass
 
@@ -95,17 +128,19 @@ def get(key, default=None):
 
 
 def set(key, value):   # noqa: A001 — deliberate shadow of builtin
-    data = _read()
-    data[key] = value
-    data["_version"] = _CURRENT_SCHEMA
-    _write(data)
+    with _WRITE_LOCK:
+        data = _read()
+        data[key] = value
+        data["_version"] = _CURRENT_SCHEMA
+        _write(data)
 
 
 def update(mapping):
-    data = _read()
-    data.update(mapping)
-    data["_version"] = _CURRENT_SCHEMA
-    _write(data)
+    with _WRITE_LOCK:
+        data = _read()
+        data.update(mapping)
+        data["_version"] = _CURRENT_SCHEMA
+        _write(data)
 
 
 def all_settings():
@@ -126,11 +161,20 @@ def reset():
 # ---------------------------------------------------------------------------
 
 def add_history_entry(entry):
-    """`entry` is a dict; we keep `_HISTORY_MAX` most recent."""
-    history = list(get("history", []) or [])
-    history.insert(0, entry)
-    del history[_HISTORY_MAX:]
-    set("history", history)
+    """Prepend ``entry`` to the history list, cap at ``_HISTORY_MAX``.
+
+    Holds ``_WRITE_LOCK`` across the whole read-modify-write so two
+    export threads finishing simultaneously don't race (one stomping
+    the other's history entry).
+    """
+    with _WRITE_LOCK:
+        data = _read()
+        history = list(data.get("history") or [])
+        history.insert(0, entry)
+        del history[_HISTORY_MAX:]
+        data["history"] = history
+        data["_version"] = _CURRENT_SCHEMA
+        _write(data)
 
 
 def get_history():

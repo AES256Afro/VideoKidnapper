@@ -218,6 +218,11 @@ class App(ctk.CTk):
         self.bind_all("<Control-E>", lambda e: self._shortcut(e, "keyboard_export"))
         self.bind_all("<Control-o>", lambda e: self._shortcut(e, "keyboard_open"))
         self.bind_all("<Control-O>", lambda e: self._shortcut(e, "keyboard_open"))
+        # Ctrl+V on the URL tab pastes the clipboard into the URL entry.
+        # Entries keep native paste because _editing_in_entry short-circuits
+        # the dispatcher; this binding only fires when focus is elsewhere.
+        self.bind_all("<Control-v>", lambda e: self._shortcut(e, "keyboard_paste_url"))
+        self.bind_all("<Control-V>", lambda e: self._shortcut(e, "keyboard_paste_url"))
 
     def _editing_in_entry(self, event):
         widget = event.widget
