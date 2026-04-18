@@ -22,6 +22,7 @@ from videokidnapper.ui.export_options import ExportOptionsPanel
 from videokidnapper.ui.multi_range import RangeQueue
 from videokidnapper.ui.text_layers import TextLayersPanel
 from videokidnapper.ui.theme import button
+from videokidnapper.ui.thumbnail_strip import ThumbnailStrip
 from videokidnapper.ui.video_player import VideoPlayer
 from videokidnapper.ui.waveform import WaveformStrip
 from videokidnapper.ui.widgets import RangeSlider, TimestampEntry
@@ -30,6 +31,7 @@ from videokidnapper.utils.file_naming import generate_export_path
 from videokidnapper.utils.size_estimator import estimate_bytes, human_bytes
 from videokidnapper.utils.srt_parser import parse_srt_file, srt_to_text_layers
 from videokidnapper.utils.time_format import seconds_to_hms, hms_to_seconds
+from videokidnapper.utils.undo import UndoStack
 
 
 class TrimTab(ctk.CTkScrollableFrame):
@@ -47,6 +49,15 @@ class TrimTab(ctk.CTkScrollableFrame):
         self.video_path = None
         self.video_info = None
         self._toast = None
+
+        # Undo/redo machinery. ``_restoring`` guards the widget callbacks
+        # that would otherwise record a new snapshot while we're applying
+        # one; ``_snapshot_after_id`` debounces rapid-fire edits (typing,
+        # slider scrub) into a single history entry per settled state.
+        self._undo_stack = UndoStack(cap=50)
+        self._restoring = False
+        self._snapshot_after_id = None
+        self._snapshot_debounce_ms = 350
 
         self._build_ui()
 
@@ -117,8 +128,15 @@ class TrimTab(ctk.CTkScrollableFrame):
         )
         timeline_card.pack(fill="x", padx=12, pady=6)
 
+        # Thumbnail strip sits above the waveform — click to seek. It
+        # extracts in the background so it never blocks video load.
+        self.thumbnail_strip = ThumbnailStrip(
+            timeline_card, on_seek=self._seek_from_thumbnail,
+        )
+        self.thumbnail_strip.pack(fill="x", padx=14, pady=(10, 2))
+
         self.waveform = WaveformStrip(timeline_card)
-        self.waveform.pack(fill="x", padx=14, pady=(10, 4))
+        self.waveform.pack(fill="x", padx=14, pady=(2, 4))
 
         self.range_slider = RangeSlider(
             timeline_card, from_=0, to=100,
@@ -171,7 +189,7 @@ class TrimTab(ctk.CTkScrollableFrame):
         ).pack(side="right", padx=(4, 0))
 
         # Multi-range queue
-        self.range_queue = RangeQueue(self, on_remove=self._update_export_enabled)
+        self.range_queue = RangeQueue(self, on_remove=self._on_range_removed)
         self.range_queue.pack(fill="x", padx=12, pady=6)
 
         # Text layers
@@ -247,6 +265,22 @@ class TrimTab(ctk.CTkScrollableFrame):
 
     def _on_text_layers_changed(self):
         self.player.refresh_overlay()
+        # Debounce: typing into a text entry fires on every keystroke —
+        # we only want one undo entry per "pause".
+        self._request_snapshot(immediate=False)
+
+    def _on_range_removed(self):
+        self._update_export_enabled()
+        self._request_snapshot(immediate=True)
+
+    def _seek_from_thumbnail(self, timestamp):
+        """Click on the thumbnail strip → move the trim start to that time."""
+        if not self.video_path or not self.video_info:
+            return
+        end_val = self.range_slider.get_values()[1]
+        new_start = max(0.0, min(timestamp, end_val - 0.05))
+        self.range_slider.set_values(new_start, end_val)
+        self._on_slider_change(new_start, end_val)
 
     # ------------------------------------------------------------------
     def _open_file(self):
@@ -268,44 +302,55 @@ class TrimTab(ctk.CTkScrollableFrame):
         self._load_path(path)
 
     def _load_path(self, path):
-        self.video_path = path
-        # A crop rectangle from a previous video's source pixels doesn't
-        # transfer — clear it so the export doesn't choke on out-of-bounds
-        # coordinates.
-        settings.set("crop", None)
-        self.player.set_crop(None)
-        self._crop_on = False
-        if hasattr(self, "crop_btn"):
-            self.crop_btn.configure(
-                text="⬚  Crop", fg_color=T.BG_RAISED, text_color=T.TEXT,
-            )
+        # _restoring suppresses undo/redo recording during the flurry of
+        # callbacks that fires as we reset every widget below. The stack
+        # is re-baselined at the end.
+        self._restoring = True
         try:
-            self.video_info = get_video_info(path)
-        except Exception as e:
-            self.file_label.configure(text=f"Error: {e}", text_color=T.DANGER)
-            self._notify(f"Could not read video: {e}", "error")
-            return
+            self.video_path = path
+            # A crop rectangle from a previous video's source pixels doesn't
+            # transfer — clear it so the export doesn't choke on out-of-bounds
+            # coordinates.
+            settings.set("crop", None)
+            self.player.set_crop(None)
+            self._crop_on = False
+            if hasattr(self, "crop_btn"):
+                self.crop_btn.configure(
+                    text="⬚  Crop", fg_color=T.BG_RAISED, text_color=T.TEXT,
+                )
+            try:
+                self.video_info = get_video_info(path)
+            except Exception as e:
+                self.file_label.configure(text=f"Error: {e}", text_color=T.DANGER)
+                self._notify(f"Could not read video: {e}", "error")
+                return
 
-        name = os.path.basename(path)
-        dur = self.video_info["duration"]
-        res = f"{self.video_info['width']}x{self.video_info['height']}"
-        self.file_label.configure(
-            text=f"{name}   ·   {res}   ·   {seconds_to_hms(dur)}",
-            text_color=T.TEXT,
-        )
+            name = os.path.basename(path)
+            dur = self.video_info["duration"]
+            res = f"{self.video_info['width']}x{self.video_info['height']}"
+            self.file_label.configure(
+                text=f"{name}   ·   {res}   ·   {seconds_to_hms(dur)}",
+                text_color=T.TEXT,
+            )
 
-        clear_cache()
-        self.range_slider.set_range(0, dur)
-        self.start_entry.set_value(seconds_to_hms(0))
-        self.end_entry.set_value(seconds_to_hms(dur))
-        self._update_duration_label(0, dur)
-        self.text_layers.set_duration(dur)
-        self.range_queue.clear()
+            clear_cache()
+            self.range_slider.set_range(0, dur)
+            self.start_entry.set_value(seconds_to_hms(0))
+            self.end_entry.set_value(seconds_to_hms(dur))
+            self._update_duration_label(0, dur)
+            self.text_layers.clear_layers()
+            self.text_layers.set_duration(dur)
+            self.range_queue.clear()
 
-        self.player.load_video(path, dur)
-        self.waveform.load(path, dur)
-        self._update_export_enabled()
-        self._notify(f"Loaded {name}", "success")
+            self.player.load_video(path, dur)
+            self.waveform.load(path, dur)
+            self.thumbnail_strip.load(path, dur)
+            self._update_export_enabled()
+            self._notify(f"Loaded {name}", "success")
+        finally:
+            self._restoring = False
+        # Baseline undo history against the freshly-loaded state.
+        self._undo_stack.reset(self._snapshot())
 
     def _on_slider_change(self, start_val, end_val):
         self.start_entry.set_value(seconds_to_hms(start_val))
@@ -313,6 +358,8 @@ class TrimTab(ctk.CTkScrollableFrame):
         self._update_duration_label(start_val, end_val)
         self.player.show_frame(start_val)
         self.waveform.set_range(start_val, end_val)
+        self.thumbnail_strip.set_range(start_val, end_val)
+        self._request_snapshot(immediate=False)
 
     def _on_start_entry(self, value):
         try:
@@ -322,6 +369,8 @@ class TrimTab(ctk.CTkScrollableFrame):
             self._update_duration_label(start_sec, end_val)
             self.player.show_frame(start_sec)
             self.waveform.set_range(start_sec, end_val)
+            self.thumbnail_strip.set_range(start_sec, end_val)
+            self._request_snapshot(immediate=True)
         except ValueError:
             pass
 
@@ -332,6 +381,8 @@ class TrimTab(ctk.CTkScrollableFrame):
             self.range_slider.set_values(start_val, end_sec)
             self._update_duration_label(start_val, end_sec)
             self.waveform.set_range(start_val, end_sec)
+            self.thumbnail_strip.set_range(start_val, end_sec)
+            self._request_snapshot(immediate=True)
         except ValueError:
             pass
 
@@ -369,6 +420,7 @@ class TrimTab(ctk.CTkScrollableFrame):
         if self.range_queue.add_range(start, end):
             self._notify(f"Queued range {seconds_to_hms(start)} → {seconds_to_hms(end)}", "success")
             self._update_size_estimate()
+            self._request_snapshot(immediate=True)
 
     # ------------------------------------------------------------------
     def _play_in_system(self):
@@ -399,6 +451,7 @@ class TrimTab(ctk.CTkScrollableFrame):
     def _on_crop_changed(self, rect):
         settings.set("crop", rect)
         self._update_size_estimate()
+        self._request_snapshot(immediate=True)
 
     # ------------------------------------------------------------------
     def _import_srt(self):
@@ -560,6 +613,120 @@ class TrimTab(ctk.CTkScrollableFrame):
 
     def keyboard_open(self):
         self._open_file()
+
+    def keyboard_undo(self):
+        """Restore the last recorded snapshot (Ctrl+Z)."""
+        # Flush any pending debounced edit so the user undoes the most
+        # recent "settled" state, not whatever was there 350ms ago.
+        self._flush_pending_snapshot()
+        snap = self._undo_stack.undo()
+        if snap is None:
+            self._notify("Nothing to undo", "info")
+            return
+        self._apply_snapshot(snap)
+        self._notify("Undo", "info")
+
+    def keyboard_redo(self):
+        """Re-apply a snapshot previously popped by undo (Ctrl+Y / Ctrl+Shift+Z)."""
+        self._flush_pending_snapshot()
+        snap = self._undo_stack.redo()
+        if snap is None:
+            self._notify("Nothing to redo", "info")
+            return
+        self._apply_snapshot(snap)
+        self._notify("Redo", "info")
+
+    # ------------------------------------------------------------------
+    # Undo/redo snapshot plumbing
+    # ------------------------------------------------------------------
+    def _snapshot(self):
+        """Capture the slice of editor state that undo/redo should restore.
+
+        Export preferences (quality, format, output folder, fade, etc.)
+        are intentionally excluded — they're settings, not edits, and
+        users don't expect Ctrl+Z to toggle them.
+        """
+        crop = self.player.get_crop() if hasattr(self, "player") else None
+        return {
+            "range":  tuple(self.range_slider.get_values()),
+            "queued": list(self.range_queue.get_ranges()),
+            "crop":   dict(crop) if crop else None,
+            "layers": [
+                dict(layer)
+                for layer in self.text_layers.get_all_layers(include_empty=True)
+            ],
+        }
+
+    def _request_snapshot(self, immediate=False):
+        """Schedule (or immediately commit) a new undo-history entry."""
+        if self._restoring or not self.video_path:
+            return
+        if self._snapshot_after_id is not None:
+            try:
+                self.after_cancel(self._snapshot_after_id)
+            except Exception:
+                pass
+            self._snapshot_after_id = None
+        if immediate:
+            self._commit_snapshot()
+        else:
+            self._snapshot_after_id = self.after(
+                self._snapshot_debounce_ms, self._commit_snapshot,
+            )
+
+    def _commit_snapshot(self):
+        self._snapshot_after_id = None
+        if self._restoring or not self.video_path:
+            return
+        self._undo_stack.record(self._snapshot())
+
+    def _flush_pending_snapshot(self):
+        if self._snapshot_after_id is None:
+            return
+        try:
+            self.after_cancel(self._snapshot_after_id)
+        except Exception:
+            pass
+        self._snapshot_after_id = None
+        self._commit_snapshot()
+
+    def _apply_snapshot(self, snap):
+        """Restore editor state from ``snap`` without re-recording."""
+        if not snap:
+            return
+        self._restoring = True
+        try:
+            # Trim range — update slider, both entries, waveform, thumbnails.
+            start, end = snap["range"]
+            self.range_slider.set_values(start, end)
+            self.start_entry.set_value(seconds_to_hms(start))
+            self.end_entry.set_value(seconds_to_hms(end))
+            self._update_duration_label(start, end)
+            self.waveform.set_range(start, end)
+            self.thumbnail_strip.set_range(start, end)
+
+            # Queued ranges — rebuild from scratch. Poke the queue's
+            # internal list directly so we don't re-notify on each add.
+            self.range_queue._ranges = [
+                (float(s), float(e)) for s, e in snap.get("queued", [])
+            ]
+            self.range_queue._redraw_chips()
+            self.range_queue._update_header()
+
+            # Crop rect.
+            self.player.set_crop(snap.get("crop"))
+            settings.set("crop", snap.get("crop"))
+
+            # Text layers — destroy existing widgets and rebuild from dicts.
+            self.text_layers.clear_layers()
+            for data in snap.get("layers", []):
+                self.text_layers._add_layer(preset_data=data)
+
+            # Show the frame at the new start and refresh the overlay.
+            self.player.show_frame(start)
+            self._update_export_enabled()
+        finally:
+            self._restoring = False
 
     # ------------------------------------------------------------------
     def _gather_ranges(self):

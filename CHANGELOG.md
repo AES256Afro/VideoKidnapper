@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
+- **Undo / redo (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z)** across the whole editor — text-layer add / remove / reorder / edit, crop rectangle, trim range, queued ranges. 50-step history; debounced 350ms so a typed sentence collapses to one undo step instead of one-per-keystroke. Ctrl+Z inside a text entry still performs field-level undo (Tk handles that natively).
+- **Thumbnail strip** above the waveform — 32 downscaled frames extracted in a background thread, rendered as a scrubbable strip. Click any thumb to move the trim start; the current range is outlined with an accent border and dimmed outside. Thumbs share the same LRU cache as the main preview so a second load of the same video is instant.
+- **Snap-to-guides when dragging text layers** — the dragged layer now snaps to frame center-X / center-Y, the padded frame edges (same 20-px margin the Top-Left / Bottom-Right presets use), and to every edge + center of every other text layer. Snap threshold is 8 source-pixels; dashed accent guide lines render while a snap is active and clear on release. Axes snap independently, so a drag can align horizontally without locking vertically.
 - **PyPI package.** `pip install videokidnapper` (core) or `pip install "videokidnapper[dnd]"` (+ drag-and-drop) now works. Installs a `videokidnapper` console script that launches the GUI (or the CLI with any flag). FFmpeg is still an external prereq — the in-app **⚙ Setup** dialog handles portable install on Windows.
 - **`.github/workflows/release.yml`** — tag push matching `v*.*.*` builds an sdist + wheel, publishes to PyPI via Trusted Publishing (OIDC — no API token in repo secrets), and attaches the same artifacts to the GitHub Release. Tag→version mismatch fails the build before publish, so a mis-tagged release can't ship.
 - **`--version` CLI flag** — `videokidnapper --version` prints the installed version.
@@ -15,6 +18,7 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Changed
 
+- **Status-bar hint** now mentions Ctrl+Z / Ctrl+Y alongside the existing shortcuts.
 - **`videokidnapper/__init__.py` is now the single source of truth for version.** `config.APP_VERSION` re-exports `__version__`, and `pyproject.toml` uses `tool.setuptools.dynamic` to read the same attribute — one bump, everything agrees.
 - **`main()` moved from repo-root `main.py` into `videokidnapper/cli.py`** so it's importable as a package attribute (required by the console-script entry point). Root `main.py` stays as a thin shim — `python main.py …` from a clone still works unchanged.
 - **README install section** documents the PyPI path as option A and keeps the clone-based path as option B.
