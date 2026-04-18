@@ -118,6 +118,23 @@ Open a GitHub issue with:
 - The full traceback or ffmpeg error from the **Debug** tab (the Debug tab captures stderr output including ffmpeg failures)
 - If the issue involves a URL, whether it happens with public and private content
 
+## License policy
+
+VideoKidnapper is licensed under **Apache License 2.0** and that is the *only* license accepted for contributions.
+
+By submitting a pull request you agree that your contribution is licensed under Apache-2.0 under the [in-bound = out-bound](https://opensource.guide/legal/#does-my-project-need-an-additional-contributor-agreement) convention (Apache-2.0 §5). No CLA required — submitting the PR is the agreement.
+
+**Every `.py` file must start with the SPDX header.** Two lines at the top of the file (below any shebang):
+
+```python
+# SPDX-FileCopyrightText: 2026 Your Name <contact>
+# SPDX-License-Identifier: Apache-2.0
+```
+
+The test in [`tests/test_license_headers.py`](tests/test_license_headers.py) enforces this — CI fails on any missing header. If you add new source files, paste the two lines and you're done.
+
+**Do not re-license individual files** (GPL, MIT, BSD, etc.). If you need to integrate code from a differently-licensed project, open an issue first so we can discuss compatibility before the PR.
+
 ## Security
 
 See [SECURITY.md](SECURITY.md) for how to report vulnerabilities.

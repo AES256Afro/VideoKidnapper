@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 """Screen-recorder using `mss` for fast cross-platform capture.
 
 Frames are written as PNGs into a temp folder and then stitched into an

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 """Detect + install prerequisites: FFmpeg, Python packages, updates.
 
 Install helpers run in the caller's thread so the dialog can show progress.

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 """Canvas-based audio waveform strip.
 
 Ffmpeg extraction is slow, so the widget caches peaks per video path and

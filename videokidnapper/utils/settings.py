@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 """Persistent user preferences, stored as JSON next to the temp dir.
 
 The `_version` key tracks the schema; see `_migrate` for the progression.

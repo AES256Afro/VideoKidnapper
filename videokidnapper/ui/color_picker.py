@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 """Color picker dialog — blocks until the user picks or cancels.
 
 Wraps ``tkinter.colorchooser`` which returns ``(rgb, hex)``. We only need

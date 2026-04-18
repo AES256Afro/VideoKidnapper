@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 """Share panel shown inside ExportDialog after a successful export.
 
 For platforms that accept a caption via query param (Facebook sharer, X

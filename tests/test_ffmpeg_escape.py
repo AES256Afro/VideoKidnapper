@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 from videokidnapper.utils.ffmpeg_escape import (
     escape_drawtext_value, escape_path, quote_filter_value,
 )

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 """Capture screenshots of VideoKidnapper states for the README.
 
 Launches the app in various configurations, snapshots the window via

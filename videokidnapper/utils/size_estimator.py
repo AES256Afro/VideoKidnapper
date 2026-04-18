@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
 """Rough output-size estimates shown next to the Export button.
 
 These are approximations — real compression varies with content. We label
