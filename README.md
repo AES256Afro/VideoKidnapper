@@ -212,6 +212,34 @@ python -m pytest tests/ -v
 
 ---
 
+---
+
+## Disclaimer & terms of use
+
+VideoKidnapper is a personal utility for trimming and re-encoding video you have the right to use. By running this software you acknowledge:
+
+- **Platform terms of service.** Downloading from services like YouTube, Instagram, Twitter/X, Reddit, Bluesky, and Facebook may violate their terms of service. You are responsible for ensuring your use complies with each platform's current ToS, your local laws, and applicable copyright law (DMCA, Fair Use, and equivalents in your jurisdiction).
+- **Copyright.** Re-hosting, re-sharing, or monetizing content you don't own or have a license to use is your responsibility and not this project's.
+- **Cookies.** The "Cookies from browser" option reads authentication cookies from your installed browsers through `yt-dlp`. Never share a cookie file or export — it grants session-level access to your accounts.
+- **No warranty.** The software is provided "as is" without warranty of any kind; see the LICENSE file for the full terms.
+
+The project's authors and contributors do not endorse or encourage violation of any platform's terms of service or any applicable law.
+
+---
+
 ## License
 
-MIT
+Licensed under the **GNU General Public License v3.0** — see [LICENSE](LICENSE) for the full text.
+
+VideoKidnapper depends on several third-party projects with their own licenses:
+
+| Project | License |
+|---|---|
+| [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) | MIT |
+| [Pillow](https://github.com/python-pillow/Pillow) | MIT-CMU / HPND |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Unlicense |
+| [mss](https://github.com/BoboTiG/python-mss) | MIT |
+| [tkinterdnd2](https://github.com/pmgagne/tkinterdnd2) | BSD-3-Clause (optional) |
+| [FFmpeg](https://ffmpeg.org/) | LGPLv2.1+ / GPLv2+ (build-dependent; `essentials` builds are GPL) |
+
+If you bundle FFmpeg with a redistribution of VideoKidnapper, note that the `essentials` and `full` gyan.dev builds ship under GPL — complying with GPL requires offering source on request. Alternatively, use an `LGPL` FFmpeg build for LGPL-only redistribution.
