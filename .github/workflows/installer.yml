@@ -56,13 +56,16 @@ jobs:
           }
           Get-Item dist/VideoKidnapper.exe | Select-Object Name, Length
 
-      - name: Smoke-test — --version exits 0
+      - name: Smoke-test — --help exits 0
         shell: pwsh
-        # A trivial "did the binary even load" check. Full GUI boot needs
-        # a display; CI runners don't have one, but --version should
-        # still work since argparse short-circuits before Tk is imported.
+        # Trivial "did the binary even load" check. Full GUI boot needs a
+        # display; CI runners don't have one, but argparse handles --help
+        # before Tk is imported, so it catches import-time / bundling
+        # regressions. Using --help (not --version) keeps the workflow
+        # wire-compatible with main before the feat/pypi-packaging PR
+        # adds the --version flag.
         run: |
-          dist/VideoKidnapper.exe --version
+          dist/VideoKidnapper.exe --help
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload artifact (PR builds)
