@@ -85,6 +85,24 @@ ffmpeg -y -f lavfi -i "testsrc=duration=6:size=1280x720:rate=24" \
 VK_DEMO_VIDEO=/tmp/vkshots/demo.mp4 python scripts/capture_screenshots.py
 ```
 
+## Recording the README demo GIF
+
+`scripts/record_demo.py` uses the same synthetic demo clip to produce an animated tour (`assets/screenshots/demo.gif`). The script drives the app through load → scrub → queue → text layer → URL tab → history while `mss` captures frames at 10fps, then encodes a palette-optimised GIF with FFmpeg.
+
+```bash
+VK_DEMO_VIDEO=/tmp/vkshots/demo.mp4 python scripts/record_demo.py
+```
+
+## Cutting a release
+
+Once a PR is merged into `main` and you're ready to tag:
+
+```bash
+./scripts/tag_release.sh v1.0.0 "Initial public release"
+```
+
+The script verifies you're on `main` with a clean tree, runs tests + ruff one more time, creates an annotated tag, and pushes it. It then prints a reminder to open **Releases → Draft a new release** on GitHub and paste the body from `.github/RELEASE_NOTES_vX.Y.Z.md`.
+
 ## Submitting a PR
 
 1. Fork, branch off `main` with a feature-style name (`feat/…`, `fix/…`, `docs/…`).

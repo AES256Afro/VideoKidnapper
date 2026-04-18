@@ -2,7 +2,7 @@
 
 A dark-themed desktop tool for trimming videos, downloading clips from the open web, and exporting polished GIFs or MP4s with text overlays — from any supported platform.
 
-![Trim Video with ranges queued](assets/screenshots/trim_loaded.png)
+![Animated tour of the app](assets/screenshots/demo.gif)
 
 ---
 
