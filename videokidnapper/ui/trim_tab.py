@@ -20,6 +20,7 @@ from videokidnapper.core.screen_capture import record_screen
 from videokidnapper.ui import theme as T
 from videokidnapper.ui.export_dialog import ExportDialog
 from videokidnapper.ui.export_options import ExportOptionsPanel
+from videokidnapper.ui.image_layers import ImageLayersPanel
 from videokidnapper.ui.multi_range import RangeQueue
 from videokidnapper.ui.text_layers import TextLayersPanel
 from videokidnapper.ui.theme import button
@@ -206,6 +207,13 @@ class TrimTab(ctk.CTkScrollableFrame):
         self.text_layers = TextLayersPanel(self, on_change=self._on_text_layers_changed)
         self.text_layers.pack(fill="x", padx=12, pady=6)
 
+        # Image overlays — same collapsible card pattern as text layers.
+        # Each row carries a PNG path + anchor + scale + opacity + timing.
+        # The export path passes the list through to trim_to_video, which
+        # switches to -filter_complex when any are present.
+        self.image_layers = ImageLayersPanel(self)
+        self.image_layers.pack(fill="x", padx=12, pady=6)
+
         # Export options (size estimate updates when options change)
         self.export_options = ExportOptionsPanel(self, on_change=self._update_size_estimate)
         self.export_options.pack(fill="x", padx=12, pady=6)
@@ -350,6 +358,7 @@ class TrimTab(ctk.CTkScrollableFrame):
             self._update_duration_label(0, dur)
             self.text_layers.clear_layers()
             self.text_layers.set_duration(dur)
+            self.image_layers.set_duration(dur)
             self.range_queue.clear()
 
             self.player.load_video(path, dur)
@@ -868,6 +877,7 @@ class TrimTab(ctk.CTkScrollableFrame):
         output_dir.mkdir(parents=True, exist_ok=True)
 
         layers = self.text_layers.get_all_layers()
+        image_layers = self.image_layers.get_all_layers()
         ranges = self._gather_ranges()
         concat = options.get("concat") and len(ranges) > 1 and fmt != "GIF" \
                  and not options.get("audio_only")
@@ -899,6 +909,10 @@ class TrimTab(ctk.CTkScrollableFrame):
                             progress_callback=progress_cb, cancel_event=dialog.cancel_event,
                         )
                     elif fmt == "GIF":
+                        # GIF pipeline doesn't support image overlays in this
+                        # PR — gifs re-encode via palettegen/paletteuse and
+                        # plumbing filter_complex through that path is more
+                        # involved than it's worth for the MVP.
                         result = trim_to_gif(
                             self.video_path, start, end, preset, output_path,
                             text_layers=layers, options=options,
@@ -907,7 +921,8 @@ class TrimTab(ctk.CTkScrollableFrame):
                     else:
                         result = trim_to_video(
                             self.video_path, start, end, preset, output_path,
-                            text_layers=layers, options=options,
+                            text_layers=layers, image_layers=image_layers,
+                            options=options,
                             progress_callback=progress_cb, cancel_event=dialog.cancel_event,
                         )
                     if result:
