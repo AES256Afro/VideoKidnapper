@@ -412,13 +412,130 @@ class App(ctk.CTk):
     # ------------------------------------------------------------------
     # Theme toggle
     # ------------------------------------------------------------------
+    #
+    # A live theme swap would need us to walk every widget in the app
+    # and .configure() its colors — CustomTkinter bakes color tokens at
+    # widget-construction time. Hundreds of widgets, brittle, and the
+    # status-bar "restart to apply" toast was easy to miss and made the
+    # button feel broken (issue from user feedback: "This button does
+    # nothing"). Trade: confirm-to-restart, which makes the click
+    # visibly do *something* every time.
     def _toggle_theme(self, mode):
         T.set_mode(mode)
+        # Flip the button icon immediately so the user sees the click
+        # registered even if they pick "Later". Also flip the closure
+        # mode so a second click in the same session inverts again.
+        self._refresh_theme_btn(mode)
+        if self._confirm_theme_restart(mode):
+            self._restart_app()
+            return
         if self.status_bar:
             self.status_bar.show(
                 f"Theme set to {mode} — restart VideoKidnapper to apply.",
                 "info",
             )
+
+    def _refresh_theme_btn(self, saved_mode):
+        """Rebind the theme button so its icon + command reflect ``saved_mode``.
+
+        ``saved_mode`` is the preference we just persisted. The button
+        should now display the OPPOSITE (what the next click would flip
+        to) so the icon matches the button's action, not the current
+        state. Matches the initial-construction convention.
+        """
+        next_mode = "light" if saved_mode == "dark" else "dark"
+        self.theme_btn.configure(
+            text="☾" if saved_mode == "dark" else "☀",
+            command=lambda: self._toggle_theme(next_mode),
+        )
+
+    def _confirm_theme_restart(self, mode):
+        """Modal yes/no for the restart prompt. Returns True if the user
+        chose Restart, False for Later. Falls through to False if a Tk
+        error swallows the dialog (extremely unlikely but would rather
+        skip the restart than crash)."""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Restart to apply theme")
+        dialog.geometry("380x170")
+        dialog.resizable(False, False)
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.configure(fg_color=T.BG_BASE)
+
+        # Center on the main window.
+        dialog.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 380) // 2
+        y = self.winfo_y() + (self.winfo_height() - 170) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+        card = ctk.CTkFrame(
+            dialog, fg_color=T.BG_SURFACE,
+            border_width=1, border_color=T.BORDER,
+            corner_radius=T.RADIUS_LG,
+        )
+        card.pack(fill="both", expand=True, padx=12, pady=12)
+
+        ctk.CTkLabel(
+            card, text=f"Theme set to {mode}.",
+            font=T.font(T.SIZE_LG, "bold"),
+            text_color=T.TEXT,
+        ).pack(pady=(18, 4))
+        ctk.CTkLabel(
+            card,
+            text="VideoKidnapper needs a restart to re-theme every panel.",
+            font=T.font(T.SIZE_SM), text_color=T.TEXT_MUTED,
+        ).pack(pady=(0, 14))
+
+        choice = {"restart": False}
+
+        btn_row = ctk.CTkFrame(card, fg_color="transparent")
+        btn_row.pack(pady=(0, 14))
+
+        def pick(restart):
+            choice["restart"] = restart
+            dialog.grab_release()
+            dialog.destroy()
+
+        ctk.CTkButton(
+            btn_row, text="Later",
+            fg_color=T.BG_RAISED, hover_color=T.BG_HOVER,
+            text_color=T.TEXT, font=T.font(T.SIZE_MD, "bold"),
+            corner_radius=T.RADIUS_SM, width=110, height=34,
+            command=lambda: pick(False),
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            btn_row, text="Restart now",
+            fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
+            text_color=T.TEXT_ON_ACCENT, font=T.font(T.SIZE_MD, "bold"),
+            corner_radius=T.RADIUS_SM, width=130, height=34,
+            command=lambda: pick(True),
+        ).pack(side="left")
+
+        dialog.protocol("WM_DELETE_WINDOW", lambda: pick(False))
+        # Block until the user picks.
+        self.wait_window(dialog)
+        return choice["restart"]
+
+    def _restart_app(self):
+        """Relaunch the current process cleanly.
+
+        Works for three launch shapes: ``python main.py`` (dev),
+        ``python -m videokidnapper`` (module), and the PyInstaller
+        one-file ``.exe`` (frozen). The frozen case needs sys.argv[1:]
+        instead of sys.argv because argv[0] is the exe path itself and
+        prepending sys.executable would pass it twice.
+        """
+        import subprocess
+        if getattr(sys, "frozen", False):
+            args = [sys.executable, *sys.argv[1:]]
+        else:
+            args = [sys.executable, *sys.argv]
+        # close_fds keeps the spawned process clean of our Tk handles.
+        subprocess.Popen(args, close_fds=True)
+        # destroy() ends the Tk mainloop; any pending after() callbacks
+        # get dropped, which is what we want — we're replacing the
+        # process with a fresh one anyway.
+        self.destroy()
 
     # ------------------------------------------------------------------
     # Uncaught-exception routing — keep the app alive and surface errors.
