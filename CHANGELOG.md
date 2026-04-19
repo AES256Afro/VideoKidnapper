@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Fixed
+
+- **Theme toggle felt broken.** Clicking the ☀ / ☾ chip in the header used to silently save the new theme and emit a status-bar toast with "restart to apply" — easy to miss, and the app didn't visibly re-theme, so the button felt dead. Now clicking pops a small "Theme set to X. Restart now?" dialog with **Restart now** / **Later**. Picking Restart cleanly relaunches the process (dev `python main.py`, `python -m videokidnapper`, and PyInstaller `.exe` all handled). The button icon also flips immediately on click — visual confirmation the preference saved, even if you pick Later.
+
 ### Added
 
 - **Paste an image into the video.** `Ctrl+V` on the Trim tab now grabs whatever image is on the clipboard — a screenshot, a "Copy image" from a browser, or a PNG / JPG / WebP / GIF / BMP file copied in Explorer / Finder — and drops it in as a new image overlay. Bitmap data is saved as PNG into the app temp dir; file-path clipboards use the file as-is (so animated GIFs keep their animation). The Image Overlays panel also grows a **📋 Paste from clipboard** button for discoverability, wired to the same path. The URL tab's existing `Ctrl+V` (paste URL text) is unaffected — the shortcut dispatcher routes by active tab.
