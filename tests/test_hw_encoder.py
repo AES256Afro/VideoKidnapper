@@ -1,25 +1,31 @@
 # SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
+#
+# After the ffmpeg_backend split, the HW-encoder cache and probe helpers
+# live in the ``_internals`` submodule. We monkeypatch them there and
+# call ``pick_video_encoder`` through the facade to pin that the public
+# API still honors the internal state.
 from videokidnapper.core import ffmpeg_backend
+from videokidnapper.core.ffmpeg import _internals as _ffmpeg_internals
 
 
 def test_pick_off_always_libx264(monkeypatch):
-    monkeypatch.setattr(ffmpeg_backend, "_hw_encoders_cache", ["h264_nvenc"])
+    monkeypatch.setattr(_ffmpeg_internals, "_hw_encoders_cache", ["h264_nvenc"])
     assert ffmpeg_backend.pick_video_encoder("off") == "libx264"
 
 
 def test_pick_auto_prefers_hw(monkeypatch):
-    monkeypatch.setattr(ffmpeg_backend, "_hw_encoders_cache", ["h264_qsv"])
+    monkeypatch.setattr(_ffmpeg_internals, "_hw_encoders_cache", ["h264_qsv"])
     assert ffmpeg_backend.pick_video_encoder("auto") == "h264_qsv"
 
 
 def test_pick_auto_fallback(monkeypatch):
-    monkeypatch.setattr(ffmpeg_backend, "_hw_encoders_cache", [])
+    monkeypatch.setattr(_ffmpeg_internals, "_hw_encoders_cache", [])
     assert ffmpeg_backend.pick_video_encoder("auto") == "libx264"
 
 
 def test_pick_specific_requested_but_absent(monkeypatch):
-    monkeypatch.setattr(ffmpeg_backend, "_hw_encoders_cache", [])
+    monkeypatch.setattr(_ffmpeg_internals, "_hw_encoders_cache", [])
     assert ffmpeg_backend.pick_video_encoder("h264_nvenc") == "libx264"
 
 
@@ -100,20 +106,20 @@ def test_crop_rejects_zero_video_dims():
 
 def test_detection_drops_probe_failures(monkeypatch):
     """nvenc listed in -encoders but failing probe should NOT appear."""
-    monkeypatch.setattr(ffmpeg_backend, "_hw_encoders_cache", None)
+    monkeypatch.setattr(_ffmpeg_internals, "_hw_encoders_cache", None)
     # Pretend ffmpeg -encoders lists both
     class FakeResult:
         stdout = " V..... h264_nvenc\n V..... h264_qsv\n"
         stderr = ""
         returncode = 0
     monkeypatch.setattr(
-        ffmpeg_backend.subprocess, "run",
+        _ffmpeg_internals.subprocess, "run",
         lambda *a, **kw: FakeResult(),
     )
     # Probe fails for nvenc, succeeds for qsv
     def fake_probe(enc):
         return enc == "h264_qsv"
-    monkeypatch.setattr(ffmpeg_backend, "_probe_encoder", fake_probe)
+    monkeypatch.setattr(_ffmpeg_internals, "_probe_encoder", fake_probe)
 
     result = ffmpeg_backend.detect_hardware_encoders()
     assert "h264_nvenc" not in result
@@ -121,11 +127,11 @@ def test_detection_drops_probe_failures(monkeypatch):
 
 
 def test_detection_caches(monkeypatch):
-    monkeypatch.setattr(ffmpeg_backend, "_hw_encoders_cache", ["h264_qsv"])
+    monkeypatch.setattr(_ffmpeg_internals, "_hw_encoders_cache", ["h264_qsv"])
     # Cache should be returned without running anything.
     def boom(*a, **kw):
         raise AssertionError("should not probe when cache is populated")
-    monkeypatch.setattr(ffmpeg_backend, "_probe_encoder", boom)
+    monkeypatch.setattr(_ffmpeg_internals, "_probe_encoder", boom)
     assert ffmpeg_backend.detect_hardware_encoders() == ["h264_qsv"]
 
 
