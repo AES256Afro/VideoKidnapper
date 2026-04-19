@@ -49,15 +49,15 @@ def _make_synthetic_source(dst: Path, duration: float = 1.0) -> None:
 @skip_if_no_ffmpeg
 def test_trim_to_video_round_trip(tmp_path, monkeypatch):
     """Full encode path: build filter graph, run ffmpeg, verify output."""
-    # Unit tests import ffmpeg_backend with module-level cached binary
-    # paths. The functions we're about to call resolve ffmpeg via
-    # ``find_ffmpeg()`` on first use — reset the caches so whatever is
-    # on CI's PATH actually gets picked up.
+    # Module-level cached binary paths live in the split's _internals
+    # module; reset them there so whatever is on CI's PATH actually gets
+    # picked up. We keep `ffmpeg_backend` as the call-site facade.
     from videokidnapper.core import ffmpeg_backend
+    from videokidnapper.core.ffmpeg import _internals as _ffmpeg_internals
 
-    monkeypatch.setattr(ffmpeg_backend, "_ffmpeg", None)
-    monkeypatch.setattr(ffmpeg_backend, "_ffprobe", None)
-    monkeypatch.setattr(ffmpeg_backend, "_hw_encoders_cache", None)
+    monkeypatch.setattr(_ffmpeg_internals, "_ffmpeg", None)
+    monkeypatch.setattr(_ffmpeg_internals, "_ffprobe", None)
+    monkeypatch.setattr(_ffmpeg_internals, "_hw_encoders_cache", None)
 
     src = tmp_path / "src.mp4"
     _make_synthetic_source(src, duration=1.0)
