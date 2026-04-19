@@ -40,3 +40,37 @@ def test_reset_clears(fresh_settings):
 def test_corrupt_file_returns_defaults(fresh_settings):
     fresh_settings._SETTINGS_PATH.write_text("{not valid json")
     assert fresh_settings.get("quality") == "Medium"
+
+
+def test_schema_v3_upgrades_to_v4(fresh_settings, tmp_path):
+    # A v3 settings file (pre-batch-persistence) must pick up the new
+    # batch_jobs default without clobbering any of the user's existing
+    # settings, and must bump _version to 4.
+    import json
+    fresh_settings._SETTINGS_PATH.write_text(
+        json.dumps({
+            "_version": 3,
+            "quality": "High",
+            "color_brightness": 0.1,
+        }),
+        encoding="utf-8",
+    )
+    # Force a re-read by clearing any cached state.
+    assert fresh_settings.get("batch_jobs") == []
+    assert fresh_settings.get("quality") == "High"
+    assert fresh_settings.get("color_brightness") == 0.1
+    # Touching any key rewrites the file; verify the version bumped.
+    fresh_settings.set("quality", "Ultra")
+    saved = json.loads(fresh_settings._SETTINGS_PATH.read_text(encoding="utf-8"))
+    assert saved["_version"] == 4
+    assert saved["batch_jobs"] == []
+
+
+def test_batch_jobs_round_trip(fresh_settings):
+    fresh_settings.set("batch_jobs", [
+        {"input_path": "/a.mp4", "output_path": "/b.mp4", "status": "queued"},
+    ])
+    restored = fresh_settings.get("batch_jobs")
+    assert isinstance(restored, list)
+    assert len(restored) == 1
+    assert restored[0]["input_path"] == "/a.mp4"
