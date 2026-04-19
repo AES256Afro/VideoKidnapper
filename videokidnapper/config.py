@@ -1,8 +1,24 @@
 # SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
 from pathlib import Path
+from typing import Dict, Optional, TypedDict
 
-PRESETS = {
+
+class Preset(TypedDict):
+    """Single-preset shape used by ``PRESETS`` below.
+
+    ``width`` is ``None`` for the "no downscale" preset (Ultra); every
+    other value is a plain int. Annotated so mypy can narrow
+    ``preset["width"]`` to ``Optional[int]`` at the call site instead
+    of the opaque ``object`` it would otherwise infer from a bare dict.
+    """
+    fps: int
+    width: Optional[int]
+    gif_colors: int
+    video_crf: int
+
+
+PRESETS: Dict[str, Preset] = {
     "Low": {"fps": 10, "width": 480, "gif_colors": 64, "video_crf": 28},
     "Medium": {"fps": 15, "width": 720, "gif_colors": 128, "video_crf": 23},
     "High": {"fps": 24, "width": 1080, "gif_colors": 256, "video_crf": 18},
