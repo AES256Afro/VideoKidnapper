@@ -97,6 +97,15 @@ class TrimTab(ctk.CTkScrollableFrame):
             width=130, height=36, command=self._import_srt,
         ).pack(side="left", padx=(4, 0))
 
+        # Whisper auto-captions — only enabled once a video is loaded.
+        # Clicking kicks off a background transcription; result feeds
+        # into the same text-layers panel the SRT importer targets.
+        self.captions_btn = button(
+            src_inner, "  🗣  Auto-captions", variant="ghost",
+            width=150, height=36, command=self._auto_caption,
+        )
+        self.captions_btn.pack(side="left", padx=(4, 0))
+
         self.file_label = ctk.CTkLabel(
             src_inner, text="No file loaded   ·   Ctrl+O, drag a file, or click the preview",
             font=T.font(T.SIZE_MD),
@@ -455,6 +464,115 @@ class TrimTab(ctk.CTkScrollableFrame):
         self._request_snapshot(immediate=True)
 
     # ------------------------------------------------------------------
+    def _auto_caption(self):
+        """Run Whisper over the trim range and import the result as layers."""
+        if not self.video_path:
+            self._notify("Load a video first", "warn")
+            return
+        # Late-import so the app still runs when faster-whisper isn't installed.
+        from videokidnapper.core import whisper_captions
+
+        if not whisper_captions.is_available():
+            self._notify(
+                "Auto-captions needs faster-whisper. "
+                "Install with:  pip install faster-whisper",
+                "error",
+            )
+            return
+
+        # Small dialog: pick model size. Larger = slower + more accurate.
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Auto-captions")
+        dialog.geometry("360x200")
+        dialog.resizable(False, False)
+        dialog.configure(fg_color=T.BG_BASE)
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+
+        card = ctk.CTkFrame(
+            dialog, fg_color=T.BG_SURFACE,
+            border_width=1, border_color=T.BORDER,
+            corner_radius=T.RADIUS_LG,
+        )
+        card.pack(fill="both", expand=True, padx=14, pady=14)
+
+        ctk.CTkLabel(
+            card, text="Generate captions with Whisper",
+            font=T.font(T.SIZE_LG, "bold"), text_color=T.TEXT,
+        ).pack(pady=(16, 8))
+
+        model_var = ctk.StringVar(value="base")
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.pack(pady=4)
+        ctk.CTkLabel(
+            row, text="Model:", font=T.font(T.SIZE_MD),
+            text_color=T.TEXT_MUTED,
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkOptionMenu(
+            row, variable=model_var,
+            values=list(whisper_captions.MODEL_SIZES),
+            width=100,
+            fg_color=T.BG_RAISED, button_color=T.BG_HOVER,
+            button_hover_color=T.BG_ACTIVE, text_color=T.TEXT,
+        ).pack(side="left")
+
+        ctk.CTkLabel(
+            card,
+            text=(
+                "Transcribes the current trim range only.\n"
+                "First run downloads the model (~75 MB for base)."
+            ),
+            font=T.font(T.SIZE_XS), text_color=T.TEXT_DIM,
+            justify="center",
+        ).pack(pady=(8, 4))
+
+        def start():
+            model_size = model_var.get()
+            dialog.destroy()
+            self._run_whisper_in_background(model_size)
+
+        btns = ctk.CTkFrame(card, fg_color="transparent")
+        btns.pack(pady=10)
+        button(btns, "Start", variant="primary", width=120,
+               command=start).pack(side="left", padx=4)
+        button(btns, "Cancel", variant="secondary", width=120,
+               command=dialog.destroy).pack(side="left", padx=4)
+
+    def _run_whisper_in_background(self, model_size):
+        """Worker thread: transcribe then marshal the result back to Tk."""
+        from videokidnapper.core import whisper_captions
+
+        start, end = self.range_slider.get_values()
+        self._notify(f"Transcribing with Whisper ({model_size})…", "info")
+        self.captions_btn.configure(state="disabled")
+
+        def worker():
+            try:
+                entries = whisper_captions.transcribe(
+                    self.video_path,
+                    model_size=model_size,
+                    start=start, end=end,
+                )
+            except Exception as exc:
+                self.after(0, self._on_captions_failed, str(exc))
+                return
+            self.after(0, self._on_captions_done, entries)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_captions_done(self, entries):
+        from videokidnapper.utils.srt_parser import srt_to_text_layers
+        self.captions_btn.configure(state="normal")
+        if not entries:
+            self._notify("Whisper produced no text (silent clip?)", "warn")
+            return
+        self.text_layers.import_srt_layers(srt_to_text_layers(entries))
+        self._notify(f"Imported {len(entries)} caption line(s)", "success")
+
+    def _on_captions_failed(self, error):
+        self.captions_btn.configure(state="normal")
+        self._notify(f"Auto-captions failed: {error}", "error")
+
     def _import_srt(self):
         path = filedialog.askopenfilename(
             title="Import SRT subtitles",

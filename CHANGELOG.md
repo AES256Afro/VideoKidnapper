@@ -24,6 +24,9 @@ All notable changes to this project are documented here. The format is based on 
 - **Standalone Windows `.exe`** — tag-push builds a one-file PyInstaller executable via a new `.github/workflows/installer.yml`. Users download `VideoKidnapper.exe` from the release page, double-click, done — no Python install required. FFmpeg is still an external prereq; the in-app Setup dialog handles it on first run.
 - **`packaging/videokidnapper.spec`** — PyInstaller spec file with `collect_all` calls for `customtkinter` and `tkinterdnd2` (so their package data — theme JSON, native TCL resources — is bundled correctly), `yt_dlp.extractor` as an explicit hidden import, and `matplotlib` / `pandas` / `IPython` excludes to keep the binary under ~40 MB.
 - **Manual `workflow_dispatch` trigger** on the installer workflow — maintainers can rebuild the installer for an existing tag without re-tagging (useful after a PyInstaller version bump).
+- **🗣 Auto-captions via Whisper.** New button in the Trim tab runs [faster-whisper](https://github.com/guillaumekln/faster-whisper) over the current trim range and imports the result through the existing SRT → text-layers pipeline. Captioned clips are ready to export instantly. Model size is pickable (tiny / base / small / medium / large) in a small dialog.
+- **`videokidnapper/core/whisper_captions.py`** — pure module: audio extraction via ffmpeg at the correct 16 kHz mono s16 format, segment → SRT-dict conversion (tested independently of the model), and a threaded transcribe entry point with progress + cancellation. Auto-captions feed the same layer importer as `parse_srt_file`, so the downstream UI code is unchanged.
+- **Optional dep: `faster-whisper`.** Added to `requirements.txt` under a commented "Optional" block. The button checks `is_available()` at click time and shows a `pip install faster-whisper` hint when missing — nothing else in the app changes.
 - **`.github/workflows/release.yml`** — tag push matching `v*.*.*` builds an sdist + wheel, publishes to PyPI via Trusted Publishing (OIDC — no API token in repo secrets), and attaches the same artifacts to the GitHub Release. Tag→version mismatch fails the build before publish, so a mis-tagged release can't ship.
 - **`--version` CLI flag** — `videokidnapper --version` prints the installed version.
 - **`ProbeError` exception** in `ffmpeg_backend.py` — narrow, catchable type for ffprobe failures that still deserve user-facing surfacing.
@@ -52,6 +55,8 @@ All notable changes to this project are documented here. The format is based on 
 
 - **Standalone Windows `.exe` is not yet a full installer.** Tag-push produces a one-file PyInstaller binary via `.github/workflows/installer.yml` — 80% solution. A true installer (Inno Setup / WiX with Start Menu entries and uninstall) is a follow-up PR.
 - **Code signing** is intentionally left out. Unsigned `.exe`s trigger SmartScreen warnings; addressing that needs an EV cert, which costs money and maintainer setup. Follow-up once the release cadence is established.
+- **faster-whisper over openai-whisper:** ~4× faster CPU inference (CTranslate2 backend), no torch / CUDA requirement, same model quality. MIT licensed. Models download on first use into `~/.cache/huggingface`.
+- **Auto-captions scope:** transcription only. Translation, speaker diarization, and word-level timestamps are post-MVP.
 
 ## [1.1.0] — 2026-04-18
 
