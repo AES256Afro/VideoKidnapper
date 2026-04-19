@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
+- **Keyboard shortcuts overlay (`?` key).** Press `?` anywhere in the app — or click the new `⌨` header chip — to open a categorized cheat sheet listing every advertised binding (playback, trim, edit, file & export, help). The binding registry (`videokidnapper/ui/shortcuts_dialog.py`) is a single source of truth; a drift-check test cross-references it against the actual `bind_all` calls in `app.py` so the overlay never lies about what the app supports. Esc or a second `?` closes the dialog. `?` inside a text entry still types a literal `?`, so captions aren't affected.
+- **`⌨` header chip** — discoverable second entry-point alongside the existing Setup and Theme chips.
 - **Platform export presets.** New **Platform** dropdown in the Trim tab's export row with 13 entries — YouTube 1080p / Shorts, Instagram Reel / Post / Story, TikTok, Twitter / X, Bluesky, Discord 8 MB / 25 MB, Slack GIF, Web Embed, plus **Custom** (no-op). Picking a preset snaps Quality + Format + aspect ratio in one click; editing any of those three fields afterwards reverts the label to Custom so the dropdown never claims a preset the user has deviated from. Preset choice persists across launches via the new `platform_preset` settings key.
 - **`videokidnapper/ui/platform_presets.py`** — single source of truth for the preset registry, consumed by the trim tab dropdown and validated by tests that every entry resolves to valid Quality / Format / aspect values.
 - **`ExportOptionsPanel.set_aspect(value)`** — public hook so the Platform dropdown can drive the aspect ratio without forcing users to open the collapsed Export Options panel.
