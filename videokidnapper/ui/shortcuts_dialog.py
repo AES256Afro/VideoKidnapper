@@ -45,7 +45,7 @@ SHORTCUTS: dict[str, list[Shortcut]] = {
     "File & Export": [
         Shortcut("Ctrl+O",          "Open video file"),
         Shortcut("Ctrl+E",          "Export current trim"),
-        Shortcut("Ctrl+V",          "Paste URL into the URL tab"),
+        Shortcut("Ctrl+V",          "Paste — URL into URL tab, clipboard image as overlay on Trim tab"),
     ],
     "Help": [
         Shortcut("?",               "Show this overlay"),

@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Paste an image into the video.** `Ctrl+V` on the Trim tab now grabs whatever image is on the clipboard — a screenshot, a "Copy image" from a browser, or a PNG / JPG / WebP / GIF / BMP file copied in Explorer / Finder — and drops it in as a new image overlay. Bitmap data is saved as PNG into the app temp dir; file-path clipboards use the file as-is (so animated GIFs keep their animation). The Image Overlays panel also grows a **📋 Paste from clipboard** button for discoverability, wired to the same path. The URL tab's existing `Ctrl+V` (paste URL text) is unaffected — the shortcut dispatcher routes by active tab.
+- **`videokidnapper/utils/clipboard_image.py`** — pure helper `grab_clipboard_image(temp_dir=None)` that never raises: PIL missing, clipboard unreachable (headless Linux without xclip / wl-paste), write-permission denied, non-image file paths — all resolve to `None` so the UI can uniformly toast "no image in clipboard."
+- **`ImageLayersPanel.add_layer_from_path(path)`** — public hook so both the clipboard path and any future drag-drop route can pre-populate a new layer's image path without touching widget internals.
+
 ## [1.2.0] — 2026-04-18
 
 ### Added

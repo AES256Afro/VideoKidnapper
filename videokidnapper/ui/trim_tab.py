@@ -217,7 +217,11 @@ class TrimTab(ctk.CTkScrollableFrame):
         # The export path passes the list through to trim_to_video, which
         # switches to -filter_complex when any are present. The on_change
         # callback triggers a preview refresh so slider drags show live.
-        self.image_layers = ImageLayersPanel(self, on_change=self._on_image_layers_changed)
+        self.image_layers = ImageLayersPanel(
+            self,
+            on_change=self._on_image_layers_changed,
+            on_notify=self._notify,
+        )
         self.image_layers.pack(fill="x", padx=12, pady=6)
 
         # Export options (size estimate updates when options change)
@@ -815,6 +819,13 @@ class TrimTab(ctk.CTkScrollableFrame):
 
     def keyboard_open(self):
         self._open_file()
+
+    def keyboard_paste_url(self):
+        """Ctrl+V on the Trim tab: paste an image from the clipboard as
+        a new image overlay. The URL tab binds the same method name to
+        paste URL text; the shortcut dispatcher routes to whichever tab
+        is active, so both behaviours coexist without conflict."""
+        self.image_layers._on_paste_clicked()
 
     def keyboard_undo(self):
         """Restore the last recorded snapshot (Ctrl+Z)."""
