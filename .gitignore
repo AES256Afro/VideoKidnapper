@@ -6,6 +6,9 @@ dist/
 build/
 .eggs/
 *.spec
+# ... except our hand-maintained PyInstaller spec that drives the
+# Windows installer build in .github/workflows/installer.yml.
+!packaging/videokidnapper.spec
 *.exe
 .venv/
 venv/
