@@ -27,19 +27,29 @@ from videokidnapper.config import PRESETS, SUPPORTED_VIDEO_EXTENSIONS
 from videokidnapper.core.ffmpeg_backend import get_video_info, trim_to_video
 from videokidnapper.ui import theme as T
 from videokidnapper.ui.export_options import ExportOptionsPanel
+from videokidnapper.ui.platform_presets import PLATFORM_CHOICES, get_preset
 from videokidnapper.ui.theme import button
 from videokidnapper.utils import settings
 from videokidnapper.utils.batch import (
+    PLATFORM_INHERIT,
     STATUS_CANCELLED,
     STATUS_DONE,
     STATUS_FAILED,
     STATUS_PROCESSING,
     STATUS_QUEUED,
     BatchJob,
-    plan_batch_jobs,
+    extend_batch_jobs,
     summarise,
 )
 from videokidnapper.utils.dnd import parse_dnd_files
+
+
+# "Inherit" is the default per-row platform option; everything else
+# comes from the shared platform-preset registry. Sorted so "Inherit"
+# appears first regardless of dict ordering.
+_ROW_PLATFORM_CHOICES = [PLATFORM_INHERIT] + [
+    p for p in PLATFORM_CHOICES if p != "Custom"
+]
 
 
 class BatchExportTab(ctk.CTkScrollableFrame):
@@ -60,8 +70,13 @@ class BatchExportTab(ctk.CTkScrollableFrame):
         self._job_rows: list[dict] = []  # parallel to _jobs; UI handles
         self._worker: threading.Thread | None = None
         self._cancel = threading.Event()
+        # Suppress persistence writes during bulk ops (initial restore,
+        # _rebuild_rows from worker callbacks). _persist_jobs is cheap
+        # but the JSON lock + atomic rename add up on a per-row basis.
+        self._suspend_persist = False
 
         self._build_ui()
+        self._restore_persisted_queue()
 
     def set_toast(self, toast):
         self._toast = toast
@@ -249,24 +264,21 @@ class BatchExportTab(ctk.CTkScrollableFrame):
             self._notify("Batch is running — wait for it to finish or Stop it first", "warn")
             return
 
-        # Seed the planner with our existing input paths so output-path
-        # collisions across adds get a unique numeric suffix.
         output_dir = self.export_options.get_output_folder() \
             or str(Path.home() / "Downloads")
         Path(output_dir).mkdir(parents=True, exist_ok=True)
 
-        existing_inputs = {job.input_path for job in self._jobs}
-        combined_inputs = [j.input_path for j in self._jobs] + [
-            p for p in paths if p not in existing_inputs
-        ]
-
         options = self.export_options.get_options()
         ext = "mp3" if options.get("audio_only") else "mp4"
-        new_plan = plan_batch_jobs(combined_inputs, output_dir, ext)
+        previous_count = len(self._jobs)
+        # extend_batch_jobs preserves per-row state (status, error,
+        # platform_override) on rows that were already in the queue —
+        # a re-drop of an existing file is a no-op, not a reset.
+        self._jobs = extend_batch_jobs(self._jobs, paths, output_dir, ext)
 
-        added = len(new_plan) - len(self._jobs)
-        self._jobs = new_plan
+        added = len(self._jobs) - previous_count
         self._rebuild_rows()
+        self._persist_jobs()
         if added > 0:
             self._notify(f"Queued {added} file(s)", "success")
         else:
@@ -278,6 +290,7 @@ class BatchExportTab(ctk.CTkScrollableFrame):
             return
         self._jobs = []
         self._rebuild_rows()
+        self._persist_jobs()
 
     def _rebuild_rows(self) -> None:
         for row in self._job_rows:
@@ -333,6 +346,21 @@ class BatchExportTab(ctk.CTkScrollableFrame):
         )
         out_lbl.pack(fill="x")
 
+        # Per-row platform override. "Inherit" means "use the batch-wide
+        # Quality / aspect"; anything else looks up the preset and uses
+        # its quality + aspect for this file alone.
+        platform_var = ctk.StringVar(value=job.platform_override)
+        platform_menu = ctk.CTkOptionMenu(
+            frame, variable=platform_var,
+            values=_ROW_PLATFORM_CHOICES, width=130,
+            fg_color=T.BG_SURFACE, button_color=T.BG_HOVER,
+            button_hover_color=T.BG_ACTIVE, text_color=T.TEXT,
+            dropdown_fg_color=T.BG_RAISED, dropdown_text_color=T.TEXT,
+            corner_radius=T.RADIUS_SM,
+            command=lambda v, j=job: self._on_row_platform_change(j, v),
+        )
+        platform_menu.pack(side="left", padx=(0, 6))
+
         status_lbl = ctk.CTkLabel(
             frame, text=job.status,
             font=T.font(T.SIZE_SM),
@@ -346,6 +374,7 @@ class BatchExportTab(ctk.CTkScrollableFrame):
                 return
             self._jobs = [x for x in self._jobs if x.input_path != j.input_path]
             self._rebuild_rows()
+            self._persist_jobs()
 
         remove_btn = ctk.CTkButton(
             frame, text="✕",
@@ -357,18 +386,158 @@ class BatchExportTab(ctk.CTkScrollableFrame):
         )
         remove_btn.pack(side="right", padx=(0, 6))
 
-        return {
+        row = {
             "frame": frame,
             "dot": dot,
             "name": name_lbl,
             "out": out_lbl,
             "status": status_lbl,
+            "platform_menu": platform_menu,
+            "platform_var": platform_var,
             "remove_btn": remove_btn,
             "input_path": job.input_path,
         }
 
+        # Right-click anywhere on the row (except the interactive
+        # controls) opens the context menu. Bind on the frame and the
+        # passive labels; the option menu and remove button keep their
+        # own native handling.
+        for widget in (frame, dot, info_col, name_lbl, out_lbl, status_lbl):
+            widget.bind(
+                "<Button-3>",
+                lambda e, j=job: self._show_row_context_menu(e, j),
+            )
+
+        return row
+
     def _update_summary(self) -> None:
         self.summary_label.configure(text=summarise(self._jobs))
+
+    # ------------------------------------------------------------------
+    # Per-row platform override
+    # ------------------------------------------------------------------
+    def _on_row_platform_change(self, job: BatchJob, value: str) -> None:
+        if value != PLATFORM_INHERIT and get_preset(value) is None:
+            # A stale dropdown value snuck in — ignore silently and let
+            # the var revert. Defensive: the menu only offers valid keys.
+            return
+        job.platform_override = value
+        self._persist_jobs()
+
+    # ------------------------------------------------------------------
+    # Right-click context menu
+    # ------------------------------------------------------------------
+    def _show_row_context_menu(self, event, job: BatchJob) -> None:
+        menu = tk.Menu(self, tearoff=0)
+
+        output_exists = bool(job.output_path) and Path(job.output_path).exists()
+        menu.add_command(
+            label="Reveal output in Explorer",
+            state="normal" if output_exists else "disabled",
+            command=lambda: self._reveal_output(job),
+        )
+        menu.add_command(
+            label="Open source folder",
+            command=lambda: self._open_source_folder(job),
+        )
+        menu.add_separator()
+        menu.add_command(
+            label="Reset status to queued",
+            state="disabled" if job.status == STATUS_QUEUED else "normal",
+            command=lambda: self._reset_row_status(job),
+        )
+        menu.add_command(
+            label="Remove from queue",
+            state="disabled" if (self._worker and self._worker.is_alive()) else "normal",
+            command=lambda: self._remove_job(job),
+        )
+
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _reveal_output(self, job: BatchJob) -> None:
+        if not job.output_path or not Path(job.output_path).exists():
+            self._notify("No output file to reveal (job hasn't finished)", "warn")
+            return
+        if os.name == "nt":
+            subprocess.Popen(["explorer", "/select,", job.output_path])
+        else:
+            subprocess.Popen(["xdg-open", str(Path(job.output_path).parent)])
+
+    def _open_source_folder(self, job: BatchJob) -> None:
+        parent = str(Path(job.input_path).parent)
+        if not Path(parent).exists():
+            self._notify("Source folder no longer exists", "warn")
+            return
+        if os.name == "nt":
+            os.startfile(parent)  # noqa: S606 — user-chosen path
+        else:
+            subprocess.Popen(["xdg-open", parent])
+
+    def _reset_row_status(self, job: BatchJob) -> None:
+        if self._worker and self._worker.is_alive():
+            self._notify("Cannot reset rows while batch is running", "warn")
+            return
+        job.status = STATUS_QUEUED
+        job.error = None
+        job.progress = 0.0
+        self._refresh_row(job)
+        self._persist_jobs()
+
+    def _remove_job(self, job: BatchJob) -> None:
+        if self._worker and self._worker.is_alive():
+            self._notify("Cannot remove rows while batch is running", "warn")
+            return
+        self._jobs = [x for x in self._jobs if x.input_path != job.input_path]
+        self._rebuild_rows()
+        self._persist_jobs()
+
+    # ------------------------------------------------------------------
+    # Queue persistence
+    # ------------------------------------------------------------------
+    def _persist_jobs(self) -> None:
+        if self._suspend_persist:
+            return
+        try:
+            settings.set("batch_jobs", [job.to_dict() for job in self._jobs])
+        except Exception as exc:
+            # Persistence is a quality-of-life feature, never a blocker.
+            # Log and move on — the user's queue remains in memory.
+            if self.app and hasattr(self.app, "debug_tab"):
+                try:
+                    self.app.debug_tab.add_log(
+                        f"Failed to persist batch queue: {exc}", "WARN",
+                    )
+                except Exception:
+                    pass
+
+    def _restore_persisted_queue(self) -> None:
+        raw = settings.get("batch_jobs", []) or []
+        if not isinstance(raw, list) or not raw:
+            return
+        restored: list[BatchJob] = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                restored.append(BatchJob.from_dict(entry))
+            except Exception:
+                # Malformed row — drop it, keep the rest.
+                continue
+        if not restored:
+            return
+        self._suspend_persist = True
+        try:
+            self._jobs = restored
+            # Reindex + normalise in case a partial write left gaps.
+            for i, job in enumerate(self._jobs):
+                job.index = i
+            self._rebuild_rows()
+        finally:
+            self._suspend_persist = False
+        self._notify(f"Restored {len(restored)} queued file(s)", "info")
 
     # ------------------------------------------------------------------
     # Batch worker
@@ -401,17 +570,30 @@ class BatchExportTab(ctk.CTkScrollableFrame):
             self._notify("Cancelling remaining jobs...", "warn")
 
     def _run_batch(self) -> None:
-        preset = self.quality_var.get()
-        options = self.export_options.get_options()
+        batch_preset = self.quality_var.get()
+        batch_options = self.export_options.get_options()
 
         for job in self._jobs:
             if self._cancel.is_set():
                 if job.status == STATUS_QUEUED:
                     job.status = STATUS_CANCELLED
                 self.after(0, self._refresh_row, job)
+                self.after(0, self._persist_jobs)
                 continue
             if job.status == STATUS_DONE:
                 continue  # already succeeded in an earlier run
+
+            # Per-row platform override wins over the batch-wide preset.
+            # Format stays batch-wide (switching it would invalidate the
+            # already-displayed output_path), but quality + aspect flip
+            # per row. Inherit leaves both alone.
+            preset = batch_preset
+            options = dict(batch_options)
+            override = get_preset(job.platform_override) \
+                if job.platform_override != PLATFORM_INHERIT else None
+            if override:
+                preset = override["quality"]
+                options["aspect_preset"] = override["aspect"]
 
             job.status = STATUS_PROCESSING
             job.progress = 0.0
@@ -446,6 +628,9 @@ class BatchExportTab(ctk.CTkScrollableFrame):
                 job.error = str(exc)
 
             self.after(0, self._refresh_row, job)
+            # Persist after each row so a crash mid-batch preserves
+            # everything up to the currently-processing job.
+            self.after(0, self._persist_jobs)
 
         self.after(0, self._finish_batch)
 
@@ -453,6 +638,7 @@ class BatchExportTab(ctk.CTkScrollableFrame):
         self.start_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
         self._update_summary()
+        self._persist_jobs()
         done = sum(1 for j in self._jobs if j.status == STATUS_DONE)
         failed = sum(1 for j in self._jobs if j.status == STATUS_FAILED)
         if failed:
