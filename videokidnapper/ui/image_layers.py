@@ -294,12 +294,37 @@ class ImageLayersPanel(ctk.CTkFrame):
         )
         layer.pack(fill="x", pady=(0, 5))
         self.layers.append(layer)
+        self._wire_layer_change(layer)
         self._update_header()
         self._notify_change()
 
         if not self._expanded:
             self._toggle()
         return layer
+
+    def _wire_layer_change(self, layer):
+        """Fire :meth:`_notify_change` whenever the user edits any knob.
+
+        Without this, the live preview only refreshed on add / remove —
+        slider drags, path picks, and anchor changes would all silently
+        bypass ``on_change``. Traces on the Tk vars catch every mutation.
+        """
+        def fire(*_):
+            self._notify_change()
+        layer.path_var.trace_add("write", fire)
+        layer.position_var.trace_add("write", fire)
+        layer.scale_var.trace_add("write", fire)
+        layer.opacity_var.trace_add("write", fire)
+
+        # Timing slider doesn't use a Tk var; it calls the command
+        # passed at construction. Wrap the existing callback to also
+        # fire our on_change.
+        original_time_cb = layer._on_time_change
+        def time_cb(start, end):
+            original_time_cb(start, end)
+            self._notify_change()
+        layer._on_time_change = time_cb
+        layer.time_slider.command = time_cb
 
     def _remove_layer(self, layer_widget):
         if layer_widget in self.layers:
