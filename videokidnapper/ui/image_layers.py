@@ -223,7 +223,7 @@ class ImageLayersPanel(ctk.CTkFrame):
     _CHEVRON_OPEN   = "▾"
     _CHEVRON_CLOSED = "▸"
 
-    def __init__(self, master, on_change=None, **kwargs):
+    def __init__(self, master, on_change=None, on_notify=None, **kwargs):
         super().__init__(
             master,
             fg_color=T.BG_SURFACE,
@@ -236,6 +236,10 @@ class ImageLayersPanel(ctk.CTkFrame):
         self.video_duration = 0.0
         self._expanded = False
         self._on_change = on_change
+        # Optional ``(message, level)`` sink so clipboard-paste failures
+        # surface to the user via the main status toast instead of the
+        # console. Parent tab sets this after construction.
+        self._on_notify = on_notify
 
         self._build_ui()
 
@@ -259,13 +263,27 @@ class ImageLayersPanel(ctk.CTkFrame):
         self.content = ctk.CTkFrame(self, fg_color="transparent")
 
         from videokidnapper.ui.theme import button as _btn
+        btn_row = ctk.CTkFrame(self.content, fg_color="transparent")
+        btn_row.pack(fill="x", padx=12, pady=(6, 6))
+
         self.add_btn = _btn(
-            self.content, "  +  Add Image Overlay",
+            btn_row, "  +  Add Image Overlay",
             variant="secondary", width=200, height=30,
             font=T.font(T.SIZE_MD, "bold"),
         )
         self.add_btn.configure(command=self._add_layer)
-        self.add_btn.pack(anchor="w", padx=12, pady=(6, 6))
+        self.add_btn.pack(side="left")
+
+        # Paste-from-clipboard button — discoverable second entry-point
+        # alongside the Ctrl+V shortcut. Useful when the user has just
+        # copied an image and isn't sure the keybind is wired up.
+        self.paste_btn = _btn(
+            btn_row, "  📋  Paste from clipboard",
+            variant="ghost", width=190, height=30,
+            font=T.font(T.SIZE_MD),
+        )
+        self.paste_btn.configure(command=self._on_paste_clicked)
+        self.paste_btn.pack(side="left", padx=(6, 0))
 
         self.layers_container = ctk.CTkScrollableFrame(
             self.content,
@@ -301,6 +319,37 @@ class ImageLayersPanel(ctk.CTkFrame):
         if not self._expanded:
             self._toggle()
         return layer
+
+    def add_layer_from_path(self, path):
+        """Add a new image layer pre-populated with ``path``.
+
+        Public hook used by both the clipboard-paste handler and any
+        future drag-drop route. Returns the newly-created widget, or
+        ``None`` if ``path`` is falsy (so callers can chain without a
+        null check).
+        """
+        if not path:
+            return None
+        layer = self._add_layer()
+        layer.path_var.set(str(path))
+        return layer
+
+    # ------------------------------------------------------------------
+    # Clipboard paste — driven by the Paste button and Ctrl+V from
+    # TrimTab. Silent-success through to add_layer_from_path; toasts on
+    # the failure path so the user knows why nothing happened.
+    def _on_paste_clicked(self):
+        from videokidnapper.utils.clipboard_image import grab_clipboard_image
+        path = grab_clipboard_image()
+        if path is None:
+            self._notify("No image in clipboard — copy one first.", "warn")
+            return
+        self.add_layer_from_path(path)
+        self._notify("Added image overlay from clipboard.", "success")
+
+    def _notify(self, message, level="info"):
+        if self._on_notify:
+            self._on_notify(message, level)
 
     def _wire_layer_change(self, layer):
         """Fire :meth:`_notify_change` whenever the user edits any knob.
