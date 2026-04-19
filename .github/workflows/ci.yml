@@ -30,11 +30,20 @@ jobs:
       # Ubuntu runners don't include the Tk development headers by default;
       # several modules import tkinter at load time, so pytest collection
       # needs it even though the tests themselves don't open windows.
-      - name: Install system Tk (Ubuntu)
+      - name: Install system Tk + ffmpeg (Ubuntu)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-tk
+          sudo apt-get install -y python3-tk ffmpeg
+
+      # Windows runners come with ffmpeg via choco-provided toolchain in
+      # some images, but it's not guaranteed — install explicitly so
+      # the integration test has a binary to invoke.
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install ffmpeg -y --no-progress
 
       - name: Install Python deps
         run: |
