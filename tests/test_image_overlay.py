@@ -137,3 +137,51 @@ def test_invalid_timing_drops_layer():
     assert fc == ""
     assert final == "vbase"
     assert inputs == []
+
+
+# ---------------------------------------------------------------------------
+# Drag-override (explicit x / y)
+# ---------------------------------------------------------------------------
+
+def test_explicit_xy_overrides_anchor():
+    # When the user has dragged the overlay, the layer dict carries
+    # ``x`` and ``y`` in source-pixel space. These MUST win over the
+    # anchor so the exported position matches the preview.
+    x, y = _overlay_position_expr("center", x=120, y=240)
+    assert x == "120"
+    assert y == "240"
+
+
+def test_explicit_xy_ignored_if_only_one_is_set():
+    # Both axes must be provided to trigger the override — a lone
+    # ``x`` with ``y=None`` is nonsense and falls back to anchor.
+    x, y = _overlay_position_expr("center", x=100, y=None)
+    assert "(main_w-overlay_w)/2" == x
+    assert "(main_h-overlay_h)/2" == y
+
+
+def test_explicit_negative_xy_clamped_to_zero():
+    # A drag that started too close to the frame edge can produce a
+    # negative coord; ffmpeg accepts it but the overlay would clip
+    # off-canvas. Clamp defensively.
+    x, y = _overlay_position_expr("top_left", x=-50, y=-10)
+    assert x == "0"
+    assert y == "0"
+
+
+def test_drag_override_threads_into_filter_chain():
+    # Drag-positioned overlay in a chain: the overlay filter must use
+    # the explicit pixel coords, not ``main_w-overlay_w``-style exprs.
+    layers = [{
+        "path": "/tmp/logo.png",
+        "position": "top_right",   # ignored because x/y win
+        "x": 300, "y": 150,
+        "scale": 0.25, "opacity": 1.0,
+        "start": 0.0, "end": 5.0,
+    }]
+    fc, _final, _inputs = _build_image_overlay_chain(
+        layers, base_label="vbase", video_dur=5.0,
+    )
+    assert "overlay=x=300:y=150" in fc
+    # And the default anchor exprs must NOT appear for this layer.
+    assert "main_w-overlay_w" not in fc

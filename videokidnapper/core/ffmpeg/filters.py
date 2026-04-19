@@ -258,13 +258,21 @@ IMAGE_OVERLAY_POSITIONS = (
 _OVERLAY_PAD = 20
 
 
-def _overlay_position_expr(anchor):
-    """Return ``x:y`` ffmpeg expressions for an anchor name.
+def _overlay_position_expr(anchor, x=None, y=None):
+    """Return ``x:y`` ffmpeg expressions for an overlay position.
 
-    ``main_w`` / ``main_h`` / ``overlay_w`` / ``overlay_h`` are the
-    variables ffmpeg exposes inside the overlay filter; using them
-    means positions self-adjust even if the image gets pre-scaled.
+    When ``x`` and ``y`` are both set (drag-positioned overlay), they
+    win over ``anchor`` and go through as literal integer pixel offsets
+    in source-video coordinate space. Negative values are clamped to 0
+    so a drag to the edge can't generate an off-canvas overlay.
+
+    Otherwise ``main_w`` / ``main_h`` / ``overlay_w`` / ``overlay_h``
+    are ffmpeg variables available inside the overlay filter; using
+    them means anchored positions self-adjust if the image is pre-
+    scaled or the main video is cropped.
     """
+    if x is not None and y is not None:
+        return (f"{max(0, int(x))}", f"{max(0, int(y))}")
     pad = _OVERLAY_PAD
     return {
         "top_left":      (f"{pad}",                              f"{pad}"),
@@ -342,7 +350,16 @@ def _build_image_overlay_chain(image_layers, base_label, video_dur=None):
             f"[{scaled_label}]"
         )
 
-        x_expr, y_expr = _overlay_position_expr(layer.get("position", "top_right"))
+        # Drag-positioned overlays carry explicit pixel coords that win
+        # over the anchor. ``x`` / ``y`` come from the VideoPlayer drag
+        # handler in source-video coordinate space, so they go through
+        # the overlay filter directly without a scale transform.
+        drag_x = layer.get("x")
+        drag_y = layer.get("y")
+        x_expr, y_expr = _overlay_position_expr(
+            layer.get("position", "top_right"),
+            x=drag_x, y=drag_y,
+        )
         out_label = f"v_ov{idx}"
         enable = f":enable='between(t\\,{start_t:.3f}\\,{end_t:.3f})'"
         parts.append(

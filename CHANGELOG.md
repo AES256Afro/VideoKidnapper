@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+- **Drag image overlays anywhere on the frame.** Click and drag any image, logo, sticker, or **animated GIF** overlay on the Trim preview — it moves in lockstep under the cursor and the exported video / GIF renders at the dragged position, not the anchor. Picking a new entry from the Position dropdown (Top Left, Center, …) snaps the overlay back to the anchor so the dropdown label is always truthful. Works the same way text-layer drag already does.
+- **Explicit `x` / `y` in the image-layer data.** When either axis is unset (sentinel `-1`), the preview and ffmpeg backend fall back to the anchor; when both are set, they win as source-video pixel coords. `_overlay_position_expr` grew optional `x=` / `y=` params that clamp negatives to 0 so a drag near the edge can't produce an off-canvas overlay.
+- **`ImageLayersPanel.set_layer_position(index, x, y)`** and **`VideoPlayer.set_image_position_callback(cb)`** — twin public hooks that mirror the text-drag pair, so any future drag source (pen, gesture, plugin) can drive image positioning without patching widget internals.
+
 ### Fixed
 
 - **Theme toggle felt broken.** Clicking the ☀ / ☾ chip in the header used to silently save the new theme and emit a status-bar toast with "restart to apply" — easy to miss, and the app didn't visibly re-theme, so the button felt dead. Now clicking pops a small "Theme set to X. Restart now?" dialog with **Restart now** / **Later**. Picking Restart cleanly relaunches the process (dev `python main.py`, `python -m videokidnapper`, and PyInstaller `.exe` all handled). The button icon also flips immediately on click — visual confirmation the preference saved, even if you pick Later.

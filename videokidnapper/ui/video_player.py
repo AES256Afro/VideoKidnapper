@@ -79,6 +79,15 @@ class VideoPlayer(ctk.CTkFrame):
         self._text_drag_offset = (0, 0)  # (src dx, src dy) from click to text origin
         self._text_position_cb = None    # callback(index, src_x, src_y)
 
+        # Image-overlay drag state — parallel to text. ``_image_bboxes``
+        # is rebuilt by ``_apply_image_overlay`` on every frame render
+        # so hit-testing uses the exact rendered position, including
+        # drag overrides that may have arrived since the last repaint.
+        self._image_bboxes = []        # [(index, src_x1, src_y1, src_x2, src_y2)]
+        self._dragging_image_index = None
+        self._image_drag_offset = (0, 0)  # (src dx, src dy) from click to image top-left
+        self._image_position_cb = None    # callback(index, src_x, src_y)
+
         self.canvas = tk.Canvas(
             self,
             bg=T.BG_BASE,
@@ -236,9 +245,16 @@ class VideoPlayer(ctk.CTkFrame):
         if self._crop_mode:
             self._on_crop_press(event)
             return
-        idx = self._hit_test_text(event.x, event.y)
-        if idx is not None:
-            self._begin_text_drag(idx, event)
+        # Text layers win hit-testing when they overlap an image —
+        # text sits on top of images in the render order, so the
+        # topmost-pixel-wins convention matches user expectation.
+        txt_idx = self._hit_test_text(event.x, event.y)
+        if txt_idx is not None:
+            self._begin_text_drag(txt_idx, event)
+            return
+        img_idx = self._hit_test_image(event.x, event.y)
+        if img_idx is not None:
+            self._begin_image_drag(img_idx, event)
 
     def _on_canvas_drag(self, event):
         if self._crop_mode and self._crop_drag_start is not None:
@@ -246,6 +262,9 @@ class VideoPlayer(ctk.CTkFrame):
             return
         if self._dragging_text_index is not None:
             self._on_text_drag(event)
+            return
+        if self._dragging_image_index is not None:
+            self._on_image_drag(event)
 
     def _on_canvas_release(self, event):
         if self._crop_mode:
@@ -253,14 +272,21 @@ class VideoPlayer(ctk.CTkFrame):
             return
         if self._dragging_text_index is not None:
             self._on_text_release(event)
+            return
+        if self._dragging_image_index is not None:
+            self._on_image_release(event)
 
     def _on_canvas_hover(self, event):
-        # Cursor feedback: hand when hovering over a draggable text layer,
-        # crosshair otherwise (leave crop-mode cursor alone).
+        # Cursor feedback: ``fleur`` (four-arrow move) when hovering
+        # anything draggable (text or image), crosshair otherwise.
+        # Crop-mode keeps its own cursor.
         if self._crop_mode or not self.video_path:
             return
-        idx = self._hit_test_text(event.x, event.y)
-        self.canvas.configure(cursor="fleur" if idx is not None else "crosshair")
+        hit = (
+            self._hit_test_text(event.x, event.y) is not None
+            or self._hit_test_image(event.x, event.y) is not None
+        )
+        self.canvas.configure(cursor="fleur" if hit else "crosshair")
 
     def _on_resize(self, _event=None):
         if self.video_path:
@@ -406,6 +432,10 @@ class VideoPlayer(ctk.CTkFrame):
         silently skipped. Timing obeys ``start`` / ``end`` the same way
         text layers do.
         """
+        # Reset hit-test table before any early exit so a previous
+        # frame's bboxes don't stick around once the layer list empties.
+        self._image_bboxes = []
+
         if not self._image_layers_provider:
             return image
         try:
@@ -413,18 +443,23 @@ class VideoPlayer(ctk.CTkFrame):
         except Exception:
             return image
         # Filter to layers that are (a) renderable now and (b) have a real path.
-        visible = [
-            L for L in layers
-            if L.get("path")
-            and L.get("start", 0) <= timestamp <= L.get("end", 1e9)
-        ]
+        # ``idx`` is carried through so the drag-callback can address the
+        # correct row in the source list even when some layers are
+        # skipped here (empty path, out-of-range timing).
+        visible = []
+        for idx, L in enumerate(layers):
+            if not L.get("path"):
+                continue
+            if not (L.get("start", 0) <= timestamp <= L.get("end", 1e9)):
+                continue
+            visible.append((idx, L))
         if not visible:
             return image
 
         composite = image.convert("RGBA")
         W, H = composite.size
 
-        for layer in visible:
+        for idx, layer in visible:
             path = layer.get("path")
             # Cache hit? Use it. Cache miss: load once and remember.
             src = self._image_cache.get(path)
@@ -454,13 +489,25 @@ class VideoPlayer(ctk.CTkFrame):
                 alpha = alpha.point(lambda v, o=opacity: int(v * o))
                 scaled.putalpha(alpha)
 
-            # Position — same anchor semantics as the ffmpeg overlay
-            # filter, using main_w/main_h = W/H and overlay_w/h = new_w/h.
-            x, y = _overlay_anchor_to_xy(
-                layer.get("position", "top_right"), W, H, new_w, new_h,
-            )
+            # Position — drag-override wins when present; otherwise
+            # use the anchor, same way the ffmpeg overlay filter does.
+            drag_x = layer.get("x")
+            drag_y = layer.get("y")
+            if isinstance(drag_x, int) and isinstance(drag_y, int) \
+                    and drag_x >= 0 and drag_y >= 0:
+                x, y = drag_x, drag_y
+            else:
+                x, y = _overlay_anchor_to_xy(
+                    layer.get("position", "top_right"), W, H, new_w, new_h,
+                )
 
             composite.alpha_composite(scaled, dest=(x, y))
+
+            # Record bbox in source-pixel space so clicks on this
+            # overlay in subsequent frames can be hit-tested.
+            self._image_bboxes.append(
+                (idx, x, y, x + new_w, y + new_h),
+            )
 
         return composite.convert("RGB")
 
@@ -677,6 +724,67 @@ class VideoPlayer(ctk.CTkFrame):
         self._dragging_text_index = None
         self.canvas.configure(cursor="crosshair")
         self.canvas.delete("snap")
+
+    # ------------------------------------------------------------------
+    # Image-overlay drag — same shape as text drag. No snap-to-guides
+    # pass: images are typically large (logos, stickers) and snapping
+    # them to the same targets as small text looks wrong. A dedicated
+    # image-snap with its own targets is a future enhancement.
+    # ------------------------------------------------------------------
+    def set_image_position_callback(self, callback):
+        """Register ``callback(index, src_x, src_y)`` to persist drags."""
+        self._image_position_cb = callback
+
+    def _hit_test_image(self, canvas_x, canvas_y):
+        """Return the image-layer index whose rendered bbox contains the click.
+
+        Top-most (last-drawn) wins when layers overlap. Returns ``None``
+        if the click isn't on any image overlay.
+        """
+        if not self._image_bboxes:
+            return None
+        src = self._canvas_to_source(canvas_x, canvas_y)
+        if not src:
+            return None
+        sx, sy = src
+        for idx, x1, y1, x2, y2 in reversed(self._image_bboxes):
+            if x1 <= sx <= x2 and y1 <= sy <= y2:
+                return idx
+        return None
+
+    def _begin_image_drag(self, idx, event):
+        src = self._canvas_to_source(event.x, event.y)
+        if not src:
+            return
+        bbox = next((b for b in self._image_bboxes if b[0] == idx), None)
+        if bbox is None:
+            return
+        _, x1, y1, _, _ = bbox
+        self._dragging_image_index = idx
+        # Offset from click to image top-left, in source pixels. This
+        # keeps the image from "jumping" on first mouse movement — the
+        # same grab-point stays under the cursor for the whole drag.
+        self._image_drag_offset = (src[0] - x1, src[1] - y1)
+        self.canvas.configure(cursor="fleur")
+
+    def _on_image_drag(self, event):
+        src = self._canvas_to_source(event.x, event.y)
+        if not src:
+            return
+        dx, dy = self._image_drag_offset
+        new_x = max(0, int(src[0] - dx))
+        new_y = max(0, int(src[1] - dy))
+        if self._image_position_cb:
+            try:
+                self._image_position_cb(
+                    self._dragging_image_index, new_x, new_y,
+                )
+            except Exception:
+                pass
+
+    def _on_image_release(self, _event):
+        self._dragging_image_index = None
+        self.canvas.configure(cursor="crosshair")
 
     def _snap_to_guides(self, new_x, new_y):
         """Apply snap-math against the current set of peer layer bboxes.
