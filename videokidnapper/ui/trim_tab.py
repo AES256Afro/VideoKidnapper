@@ -135,6 +135,12 @@ class TrimTab(ctk.CTkScrollableFrame):
         self.player.set_text_position_callback(
             lambda i, x, y: self.text_layers.set_layer_position(i, x, y),
         )
+        # Image overlays get the same treatment so users can drag a
+        # logo / sticker / GIF anywhere on the frame — same set-position
+        # flow as text, same live preview.
+        self.player.set_image_position_callback(
+            lambda i, x, y: self.image_layers.set_layer_position(i, x, y),
+        )
 
         # Waveform + timeline card
         timeline_card = ctk.CTkFrame(

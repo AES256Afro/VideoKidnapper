@@ -72,6 +72,13 @@ class ImageLayerWidget(ctk.CTkFrame):
         self.position_var = ctk.StringVar(value="Top Right")
         self.scale_var    = ctk.DoubleVar(value=0.25)
         self.opacity_var  = ctk.DoubleVar(value=1.0)
+        # Explicit drag position in source-video pixel coords. ``-1``
+        # is the sentinel for "unset" — when either axis is -1 the
+        # renderer + backend fall back to the anchor dropdown. Dragging
+        # the overlay on the preview sets both; picking a new anchor
+        # from the dropdown clears both back to -1.
+        self.x_var = ctk.IntVar(value=-1)
+        self.y_var = ctk.IntVar(value=-1)
 
         self._build_ui()
 
@@ -121,9 +128,12 @@ class ImageLayerWidget(ctk.CTkFrame):
 
         ctk.CTkLabel(row3, text="Position:",
                      font=ctk.CTkFont(size=11)).pack(side="left")
+        # Picking an anchor wipes any drag-applied x/y so the dropdown
+        # is always truthful about where the overlay sits.
         ctk.CTkOptionMenu(
             row3, variable=self.position_var,
             values=POSITION_ANCHORS, width=130,
+            command=lambda _v: self._clear_drag_position(),
         ).pack(side="left", padx=(2, 10))
 
         ctk.CTkLabel(row3, text="Scale:",
@@ -204,10 +214,31 @@ class ImageLayerWidget(ctk.CTkFrame):
         self.video_duration = max(0.1, float(duration))
         self.time_slider.set_range(0, self.video_duration)
 
+    def set_position(self, source_x, source_y):
+        """Apply a drag-positioned (x, y) in source-video pixel coords.
+
+        Called by the VideoPlayer drag handler each time the user
+        moves the overlay. Setting the vars triggers the panel's
+        ``trace_add`` wiring, so the preview refreshes live.
+        """
+        self.x_var.set(max(0, int(source_x)))
+        self.y_var.set(max(0, int(source_y)))
+
+    def _clear_drag_position(self):
+        """Reset drag override so the overlay snaps back to the anchor."""
+        self.x_var.set(-1)
+        self.y_var.set(-1)
+
     def get_layer_data(self):
-        """Return the dict ffmpeg_backend.trim_to_video consumes."""
+        """Return the dict ffmpeg_backend.trim_to_video consumes.
+
+        ``x`` and ``y`` are only included when the user has dragged the
+        overlay (sentinels cleared). Both the preview renderer and the
+        backend filter read them as the override when present and fall
+        back to ``position`` (anchor) otherwise.
+        """
         start, end = self.time_slider.get_values()
-        return {
+        data = {
             "path":     self.path_var.get(),
             "position": _DISPLAY_TO_KEY.get(self.position_var.get(), "top_right"),
             "scale":    float(self.scale_var.get()),
@@ -215,6 +246,11 @@ class ImageLayerWidget(ctk.CTkFrame):
             "start":    float(start),
             "end":      float(end),
         }
+        x, y = int(self.x_var.get()), int(self.y_var.get())
+        if x >= 0 and y >= 0:
+            data["x"] = x
+            data["y"] = y
+        return data
 
 
 class ImageLayersPanel(ctk.CTkFrame):
@@ -320,6 +356,17 @@ class ImageLayersPanel(ctk.CTkFrame):
             self._toggle()
         return layer
 
+    def set_layer_position(self, index, source_x, source_y):
+        """Apply a drag-positioned (x, y) to ``layers[index]``.
+
+        Called by :class:`VideoPlayer` each time the user drags an
+        image overlay on the preview canvas. Out-of-range indices are
+        silently ignored (the provider list can race with a remove).
+        """
+        if not (0 <= index < len(self.layers)):
+            return
+        self.layers[index].set_position(source_x, source_y)
+
     def add_layer_from_path(self, path):
         """Add a new image layer pre-populated with ``path``.
 
@@ -364,6 +411,11 @@ class ImageLayersPanel(ctk.CTkFrame):
         layer.position_var.trace_add("write", fire)
         layer.scale_var.trace_add("write", fire)
         layer.opacity_var.trace_add("write", fire)
+        # Drag-override coords: the drag handler writes both x and y
+        # per motion event, so we fire on either to keep the preview
+        # repaint in lockstep with the drag.
+        layer.x_var.trace_add("write", fire)
+        layer.y_var.trace_add("write", fire)
 
         # Timing slider doesn't use a Tk var; it calls the command
         # passed at construction. Wrap the existing callback to also
