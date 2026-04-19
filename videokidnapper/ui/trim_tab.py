@@ -126,6 +126,10 @@ class TrimTab(ctk.CTkScrollableFrame):
         self.player.pack(fill="x", padx=12, pady=6)
         self.player.pack_propagate(False)
         self.player.set_text_layers_provider(self._current_text_layers)
+        # Image overlays share the same provider pattern as text layers —
+        # the player composites PNG files on top of the frame in source-
+        # resolution space so the preview matches the exported output.
+        self.player.set_image_layers_provider(self._current_image_layers)
         # Click-drag on the preview moves the active layer. The panel owns
         # the widget state, so we forward via its set_layer_position entry.
         self.player.set_text_position_callback(
@@ -211,8 +215,9 @@ class TrimTab(ctk.CTkScrollableFrame):
         # Image overlays — same collapsible card pattern as text layers.
         # Each row carries a PNG path + anchor + scale + opacity + timing.
         # The export path passes the list through to trim_to_video, which
-        # switches to -filter_complex when any are present.
-        self.image_layers = ImageLayersPanel(self)
+        # switches to -filter_complex when any are present. The on_change
+        # callback triggers a preview refresh so slider drags show live.
+        self.image_layers = ImageLayersPanel(self, on_change=self._on_image_layers_changed)
         self.image_layers.pack(fill="x", padx=12, pady=6)
 
         # Export options (size estimate updates when options change)
@@ -298,12 +303,25 @@ class TrimTab(ctk.CTkScrollableFrame):
         self.size_label.pack(side="right", padx=(0, 12))
 
     # ------------------------------------------------------------------
+    def _current_image_layers(self):
+        # Only layers whose path is a real file — the ffmpeg export path
+        # applies the same filter, so the preview matches. Using
+        # include_empty=False skips half-configured rows where the user
+        # hasn't picked a file yet.
+        return self.image_layers.get_all_layers()
+
     def _current_text_layers(self):
         # include_empty keeps the list index aligned with panel.layers so
         # the VideoPlayer's hit-test can call back with the right widget index.
         return self.text_layers.get_all_layers(include_empty=True)
 
     def _on_text_layers_changed(self):
+        self.player.refresh_overlay()
+
+    def _on_image_layers_changed(self):
+        # Drop the image cache so newly-picked files aren't shadowed by a
+        # previous failure, and re-render the current frame.
+        self.player._image_cache.clear()
         self.player.refresh_overlay()
         # Debounce: typing into a text entry fires on every keystroke —
         # we only want one undo entry per "pause".
@@ -965,13 +983,13 @@ class TrimTab(ctk.CTkScrollableFrame):
                             progress_callback=progress_cb, cancel_event=dialog.cancel_event,
                         )
                     elif fmt == "GIF":
-                        # GIF pipeline doesn't support image overlays in this
-                        # PR — gifs re-encode via palettegen/paletteuse and
-                        # plumbing filter_complex through that path is more
-                        # involved than it's worth for the MVP.
+                        # GIF + image overlays encodes an intermediate MP4
+                        # first (see ffmpeg_backend.trim_to_gif) — slower
+                        # but keeps the filter-graph plumbing simple.
                         result = trim_to_gif(
                             self.video_path, start, end, preset, output_path,
-                            text_layers=layers, options=options,
+                            text_layers=layers, image_layers=image_layers,
+                            options=options,
                             progress_callback=progress_cb, cancel_event=dialog.cancel_event,
                         )
                     else:

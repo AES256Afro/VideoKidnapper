@@ -53,6 +53,11 @@ class VideoPlayer(ctk.CTkFrame):
         self._on_file_dropped = on_file_dropped
         self._placeholder_ids = []
         self._text_layers_provider = None
+        # Image overlays live alongside text layers: a callable returning
+        # the current list of overlay dicts. Loaded PIL images are memoized
+        # by path so panning through frames doesn't re-read them from disk.
+        self._image_layers_provider = None
+        self._image_cache = {}  # path → PIL.Image (RGBA)
         self._playing = False
         self._play_after_id = None
         self._play_end = None
@@ -115,14 +120,23 @@ class VideoPlayer(ctk.CTkFrame):
             self._on_file_dropped(paths[0])
 
     # ------------------------------------------------------------------
-    # Text-layer live preview
+    # Text-layer + image-overlay live preview
     # ------------------------------------------------------------------
     def set_text_layers_provider(self, provider):
         """`provider` is a zero-arg callable returning the current layer list."""
         self._text_layers_provider = provider
 
+    def set_image_layers_provider(self, provider):
+        """`provider` is a zero-arg callable returning the image-overlay list.
+
+        Same shape as ``set_text_layers_provider`` but for PNG/JPG
+        overlays. Returning ``None`` or an empty list is the "no
+        overlays" case and produces no extra rendering work.
+        """
+        self._image_layers_provider = provider
+
     def refresh_overlay(self):
-        """Re-render the current frame with latest text overlays."""
+        """Re-render the current frame with latest text + image overlays."""
         if self.video_path:
             self.show_frame(self.current_time)
 
@@ -286,11 +300,15 @@ class VideoPlayer(ctk.CTkFrame):
         new_w = max(1, int(fw * scale))
         new_h = max(1, int(fh * scale))
 
-        # Draw text overlays onto the SOURCE-sized frame, then resize the
-        # whole composite. This is what ffmpeg does at export time, so the
-        # preview matches the export proportionally regardless of source
-        # resolution or preset scaling.
+        # Draw text + image overlays onto the SOURCE-sized frame, then
+        # resize the whole composite. This is what ffmpeg does at export
+        # time, so the preview matches the export proportionally
+        # regardless of source resolution or preset scaling. Ordering
+        # matters — at export time filter_complex runs image overlays
+        # AFTER drawtext (see ffmpeg_backend.trim_to_video), so images
+        # sit on top. We mirror that order here.
         composited = self._apply_text_overlay(frame, timestamp)
+        composited = self._apply_image_overlay(composited, timestamp)
         rendered = composited.resize((new_w, new_h), Image.LANCZOS)
 
         self._photo = ImageTk.PhotoImage(rendered)
@@ -373,6 +391,78 @@ class VideoPlayer(ctk.CTkFrame):
             )
 
         return overlay.convert("RGB")
+
+    def _apply_image_overlay(self, image, timestamp):
+        """Composite image-overlay layers onto ``image`` at native resolution.
+
+        Mirrors what ``ffmpeg_backend._build_image_overlay_chain`` does
+        at export time: for each layer, load the file (memoized by path),
+        scale it by ``scale`` relative to the IMAGE'S OWN width (same as
+        ffmpeg — the scale filter can't see the main video's width from
+        inside the overlay input chain), apply opacity via alpha
+        multiplication, then paste at the anchored position.
+
+        Layers with an empty / missing path or an unreadable file are
+        silently skipped. Timing obeys ``start`` / ``end`` the same way
+        text layers do.
+        """
+        if not self._image_layers_provider:
+            return image
+        try:
+            layers = self._image_layers_provider() or []
+        except Exception:
+            return image
+        # Filter to layers that are (a) renderable now and (b) have a real path.
+        visible = [
+            L for L in layers
+            if L.get("path")
+            and L.get("start", 0) <= timestamp <= L.get("end", 1e9)
+        ]
+        if not visible:
+            return image
+
+        composite = image.convert("RGBA")
+        W, H = composite.size
+
+        for layer in visible:
+            path = layer.get("path")
+            # Cache hit? Use it. Cache miss: load once and remember.
+            src = self._image_cache.get(path)
+            if src is None:
+                try:
+                    src = Image.open(path).convert("RGBA")
+                except Exception:
+                    # Bad path / unreadable file — cache the failure as
+                    # None so we don't retry every frame tick.
+                    self._image_cache[path] = None
+                    continue
+                self._image_cache[path] = src
+            elif src is None:
+                continue  # previously-failed load
+
+            # Scale relative to the image's own width (matches ffmpeg).
+            scale = max(0.01, min(1.0, float(layer.get("scale", 0.25))))
+            sw, sh = src.size
+            new_w = max(1, int(sw * scale))
+            new_h = max(1, int(sh * scale))
+            scaled = src.resize((new_w, new_h), Image.LANCZOS)
+
+            # Opacity: pre-multiply alpha into the overlay's alpha band.
+            opacity = max(0.0, min(1.0, float(layer.get("opacity", 1.0))))
+            if opacity < 0.999:
+                alpha = scaled.split()[3]
+                alpha = alpha.point(lambda v, o=opacity: int(v * o))
+                scaled.putalpha(alpha)
+
+            # Position — same anchor semantics as the ffmpeg overlay
+            # filter, using main_w/main_h = W/H and overlay_w/h = new_w/h.
+            x, y = _overlay_anchor_to_xy(
+                layer.get("position", "top_right"), W, H, new_w, new_h,
+            )
+
+            composite.alpha_composite(scaled, dest=(x, y))
+
+        return composite.convert("RGB")
 
     def clear(self):
         self.stop()
@@ -794,6 +884,29 @@ def _parse_numeric_position(pos_expr):
         return int(float(parts[0])), int(float(parts[1]))
     except ValueError:
         return None
+
+
+_OVERLAY_PAD = 20  # mirror ffmpeg_backend._OVERLAY_PAD
+
+
+def _overlay_anchor_to_xy(anchor, main_w, main_h, overlay_w, overlay_h):
+    """Resolve an overlay-anchor name to a ``(x, y)`` top-left pixel pair.
+
+    Computes the same positions ``ffmpeg_backend._overlay_position_expr``
+    produces as filter-expression strings — just in concrete pixel
+    values here because the preview uses PIL, not lavfi. Keeping these
+    in lockstep is what makes the live preview match the export.
+    """
+    pad = _OVERLAY_PAD
+    return {
+        "top_left":      (pad,                      pad),
+        "top_right":     (main_w - overlay_w - pad, pad),
+        "bottom_left":   (pad,                      main_h - overlay_h - pad),
+        "bottom_right":  (main_w - overlay_w - pad, main_h - overlay_h - pad),
+        "center":        ((main_w - overlay_w) // 2, (main_h - overlay_h) // 2),
+        "top_center":    ((main_w - overlay_w) // 2, pad),
+        "bottom_center": ((main_w - overlay_w) // 2, main_h - overlay_h - pad),
+    }.get(anchor, (main_w - overlay_w - pad, pad))
 
 
 _NAMED_COLORS = {

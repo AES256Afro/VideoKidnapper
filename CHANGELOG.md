@@ -86,6 +86,11 @@ All notable changes to this project are documented here. The format is based on 
 - **Image overlays: no live preview yet.** The overlay appears in the exported file; rendering it on the frame-scrub preview is a separate PR.
 - **Image overlays MVP: 7 preset anchors, no custom drag.** Drag-to-position is a natural follow-up that would reuse the text-layer drag machinery.
 
+### Changed
+
+- **Image overlays now live-preview** on the scrub canvas. ``VideoPlayer`` grew a ``set_image_layers_provider`` hook (mirrors ``set_text_layers_provider``) and a ``_apply_image_overlay`` pass that composites PNGs onto the source-sized frame using PIL's ``alpha_composite``. Loaded files are memoized by path so scrubbing through frames doesn't re-read from disk. Ordering matches export: image overlays render on top of text overlays.
+- **Image overlays now work for GIF export.** ``trim_to_gif`` accepts ``image_layers=``; when any are present, it encodes an intermediate MP4 (via ``trim_to_video``, which already threads filter_complex) and then palette-passes that. Costs one extra libx264 encode but keeps the palettegen/paletteuse plumbing untouched. Quality loss is dominated by the palette reduction anyway.
+
 ## [1.1.0] — 2026-04-18
 
 ### Changed
