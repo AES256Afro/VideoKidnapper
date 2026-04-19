@@ -141,12 +141,70 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
 
 
 def trim_to_gif(input_path, start, end, preset_name, output_path,
-                text_layers=None, progress_callback=None, cancel_event=None,
+                text_layers=None, image_layers=None,
+                progress_callback=None, cancel_event=None,
                 options=None):
     preset = PRESETS[preset_name]
     duration = max(0.001, end - start)
     info = get_video_info(input_path)
     options = options or {}
+
+    # Image overlays → filter_complex. The GIF two-pass (palettegen +
+    # paletteuse) already does a ton of filter-graph wrangling, and
+    # threading overlays through both passes cleanly while keeping
+    # stream indices straight is fiddly. Shortcut: encode an
+    # intermediate MP4 with the overlays baked in, then palette-pass
+    # that. Costs an extra libx264 pass (~1-2× the GIF encode time) but
+    # keeps the code simple and overlay quality good because the
+    # dominant quality loss in GIFs is the palette reduction, not a
+    # single extra lossy pass before it.
+    valid_images = [L for L in (image_layers or []) if (L or {}).get("path")]
+    if valid_images:
+        intermediate = Path(tempfile.mktemp(suffix=".mp4"))
+
+        def intermediate_progress(p):
+            if progress_callback:
+                # Intermediate encode gets the first half of the bar.
+                progress_callback(p * 0.5)
+
+        mp4_options = dict(options)
+        # Force libx264 for the intermediate — the final GIF is
+        # palette-reduced anyway, so HW encoder speed > quality.
+        mp4_options["hw_encoder"] = "off"
+        result = trim_to_video(
+            str(input_path), start, end, preset_name, str(intermediate),
+            text_layers=text_layers,
+            image_layers=image_layers,
+            progress_callback=intermediate_progress,
+            cancel_event=cancel_event,
+            options=mp4_options,
+        )
+        if not result or (cancel_event and cancel_event.is_set()):
+            intermediate.unlink(missing_ok=True)
+            return None
+
+        # Now GIF-encode the intermediate. Re-invoke trim_to_gif
+        # without image_layers and pointing at the new input. Text
+        # layers are already baked in, so skip them too.
+        def gif_half_progress(p):
+            if progress_callback:
+                progress_callback(0.5 + p * 0.5)
+
+        gif_result = trim_to_gif(
+            str(intermediate),
+            start=0.0,
+            end=duration,
+            preset_name=preset_name,
+            output_path=output_path,
+            text_layers=None,
+            image_layers=None,
+            progress_callback=gif_half_progress,
+            cancel_event=cancel_event,
+            options={k: v for k, v in options.items()
+                     if k not in ("aspect_preset", "crop", "rotate", "speed")},
+        )
+        intermediate.unlink(missing_ok=True)
+        return gif_result
 
     palette_path = Path(tempfile.mktemp(suffix=".png"))
 
