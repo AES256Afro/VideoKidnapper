@@ -147,7 +147,11 @@ Entry fields swallow shortcuts so typing into them doesn't scrub the video.
 
 ## Installation
 
-### Option A — PyPI (recommended)
+### Option A — Windows `.exe` (no Python required)
+
+Download **`VideoKidnapper.exe`** from the [latest release](https://github.com/AES256Afro/VideoKidnapper/releases/latest), double-click to run. FFmpeg is still an external prereq — the app's **⚙ Setup** dialog will auto-install a portable copy on first launch if one isn't on PATH.
+
+### Option B — PyPI (recommended if you have Python)
 
 ```bash
 pip install videokidnapper            # core install
@@ -158,7 +162,7 @@ videokidnapper --help                 # CLI mode
 
 You still need FFmpeg on `PATH` (or use the in-app **⚙ Setup** dialog after first launch to auto-install a portable copy on Windows).
 
-### Option B — Clone and install (contributors / latest `main`)
+### Option C — Clone and install (contributors / latest `main`)
 
 ### 1. Install Python 3.9 – 3.14
 
