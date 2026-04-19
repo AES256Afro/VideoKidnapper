@@ -18,6 +18,15 @@ there's no reason to pay for a lock here.
 """
 
 
+from typing import Any, List, Optional, Tuple
+
+
+# Snapshots can be any comparable value (dicts, tuples, frozen classes…).
+# Using ``Any`` keeps the stack reusable across different state shapes;
+# callers commit to a specific shape in their own code.
+Snapshot = Any
+
+
 class UndoStack:
     """A bounded undo/redo stack keyed to a single "present" snapshot.
 
@@ -33,22 +42,22 @@ class UndoStack:
     both stacks and installs a new baseline (used on video load).
     """
 
-    def __init__(self, cap=50):
+    def __init__(self, cap: int = 50) -> None:
         if cap < 1:
             raise ValueError("cap must be >= 1")
-        self._cap = cap
-        self._present = None
-        self._undo = []
-        self._redo = []
+        self._cap: int = cap
+        self._present: Optional[Snapshot] = None
+        self._undo: List[Snapshot] = []
+        self._redo: List[Snapshot] = []
 
     # ------------------------------------------------------------------
-    def reset(self, snapshot):
+    def reset(self, snapshot: Snapshot) -> None:
         """Install ``snapshot`` as the present state, clearing history."""
         self._present = snapshot
         self._undo.clear()
         self._redo.clear()
 
-    def record(self, snapshot):
+    def record(self, snapshot: Snapshot) -> bool:
         """Record a new present state.
 
         No-ops (``snapshot == present``) are ignored so debounced callers
@@ -68,16 +77,16 @@ class UndoStack:
         return True
 
     # ------------------------------------------------------------------
-    def can_undo(self):
+    def can_undo(self) -> bool:
         return bool(self._undo)
 
-    def can_redo(self):
+    def can_redo(self) -> bool:
         return bool(self._redo)
 
-    def present(self):
+    def present(self) -> Optional[Snapshot]:
         return self._present
 
-    def undo(self):
+    def undo(self) -> Optional[Snapshot]:
         """Pop the most-recent snapshot off the undo stack and return it.
 
         The state it displaces (the current ``present``) moves onto the
@@ -90,7 +99,7 @@ class UndoStack:
         self._present = self._undo.pop()
         return self._present
 
-    def redo(self):
+    def redo(self) -> Optional[Snapshot]:
         """Symmetric counterpart to ``undo()``."""
         if not self._redo:
             return None
@@ -99,11 +108,11 @@ class UndoStack:
         return self._present
 
     # ------------------------------------------------------------------
-    def depth(self):
+    def depth(self) -> Tuple[int, int]:
         """Return ``(undo_count, redo_count)`` — useful for UI state."""
         return len(self._undo), len(self._redo)
 
-    def clear(self):
+    def clear(self) -> None:
         """Drop both stacks and the present snapshot."""
         self._present = None
         self._undo.clear()
