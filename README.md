@@ -11,6 +11,7 @@ A dark-themed desktop tool for trimming videos, downloading clips from the open 
 - **Multi-platform downloads** — YouTube, Instagram, Bluesky, Twitter/X, Reddit, Facebook
 - **Batch URL queue** — paste many links, download sequentially, pick one to edit
 - **Pixel-accurate text overlays** — preview matches export (fontsize, position, box padding all match ffmpeg's output)
+- **Image / logo overlay track** — drop PNGs / JPGs as overlays with per-layer position, scale, opacity, and timing (watermarks, reaction stickers, brand bugs)
 - **Multi-range trimming** — queue N clips from one source, export individually or concatenate into one file
 - **Undo / redo** — Ctrl+Z / Ctrl+Y across text-layer edits, crop, trim range, and queued ranges (50-step history)
 - **Thumbnail strip** above the timeline — click any thumb to seek; the selected range is outlined in accent
