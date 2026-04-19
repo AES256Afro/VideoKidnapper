@@ -24,7 +24,7 @@ from videokidnapper.core.ffmpeg_backend import ProbeError, get_video_info
 
 def test_get_video_info_raises_on_non_json_output():
     fake = MagicMock(returncode=0, stdout="not json", stderr="")
-    with patch("videokidnapper.core.ffmpeg_backend.subprocess.run",
+    with patch("videokidnapper.core.ffmpeg.probe.subprocess.run",
                return_value=fake):
         with pytest.raises(ProbeError, match="non-JSON"):
             get_video_info("bogus.mp4")
@@ -35,7 +35,7 @@ def test_get_video_info_raises_on_nonzero_exit():
         returncode=1, stdout="",
         stderr="bogus.mp4: Invalid data found when processing input\n",
     )
-    with patch("videokidnapper.core.ffmpeg_backend.subprocess.run",
+    with patch("videokidnapper.core.ffmpeg.probe.subprocess.run",
                return_value=fake):
         with pytest.raises(ProbeError, match="ffprobe exited 1"):
             get_video_info("bogus.mp4")
@@ -43,7 +43,7 @@ def test_get_video_info_raises_on_nonzero_exit():
 
 def test_get_video_info_raises_on_ffprobe_missing():
     with patch(
-        "videokidnapper.core.ffmpeg_backend.subprocess.run",
+        "videokidnapper.core.ffmpeg.probe.subprocess.run",
         side_effect=FileNotFoundError("no such file"),
     ):
         with pytest.raises(ProbeError, match="not found"):
@@ -53,7 +53,7 @@ def test_get_video_info_raises_on_ffprobe_missing():
 def test_get_video_info_raises_on_timeout():
     import subprocess as sp
     with patch(
-        "videokidnapper.core.ffmpeg_backend.subprocess.run",
+        "videokidnapper.core.ffmpeg.probe.subprocess.run",
         side_effect=sp.TimeoutExpired(cmd="ffprobe", timeout=10),
     ):
         with pytest.raises(ProbeError, match="timed out"):
@@ -69,7 +69,7 @@ def test_get_video_info_succeeds_on_well_formed_output():
         ],
     })
     fake = MagicMock(returncode=0, stdout=payload, stderr="")
-    with patch("videokidnapper.core.ffmpeg_backend.subprocess.run",
+    with patch("videokidnapper.core.ffmpeg.probe.subprocess.run",
                return_value=fake):
         info = get_video_info("ok.mp4")
     assert info["duration"] == 12.5
