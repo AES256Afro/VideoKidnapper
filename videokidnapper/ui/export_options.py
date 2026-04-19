@@ -401,3 +401,11 @@ class ExportOptionsPanel(ctk.CTkFrame):
 
     def get_output_folder(self):
         return self.output_folder_var.get()
+
+    # ------------------------------------------------------------------
+    # Platform-preset hook: let TrimTab's Platform dropdown force the
+    # aspect ratio without users having to open the collapsed panel.
+    def set_aspect(self, value):
+        if value in ASPECT_CHOICES:
+            self.aspect_var.set(value)
+            self._save()
