@@ -22,6 +22,7 @@ from videokidnapper.ui.export_dialog import ExportDialog
 from videokidnapper.ui.export_options import ExportOptionsPanel
 from videokidnapper.ui.image_layers import ImageLayersPanel
 from videokidnapper.ui.multi_range import RangeQueue
+from videokidnapper.ui.platform_presets import PLATFORM_CHOICES, get_preset
 from videokidnapper.ui.text_layers import TextLayersPanel
 from videokidnapper.ui.theme import button
 from videokidnapper.ui.thumbnail_strip import ThumbnailStrip
@@ -229,6 +230,27 @@ class TrimTab(ctk.CTkScrollableFrame):
         exp_inner = ctk.CTkFrame(export_card, fg_color="transparent")
         exp_inner.pack(fill="x", padx=14, pady=12)
 
+        # Platform preset — snaps Quality + Format + aspect in one shot.
+        # Any of those three can still be tweaked afterwards, which flips
+        # the dropdown back to "Custom" so the label doesn't lie.
+        ctk.CTkLabel(
+            exp_inner, text="Platform",
+            font=T.font(T.SIZE_MD), text_color=T.TEXT_MUTED,
+        ).pack(side="left", padx=(0, 6))
+        self.platform_var = ctk.StringVar(
+            value=settings.get("platform_preset", "Custom"),
+        )
+        self.platform_menu = ctk.CTkOptionMenu(
+            exp_inner, variable=self.platform_var,
+            values=PLATFORM_CHOICES, width=150,
+            fg_color=T.BG_RAISED, button_color=T.BG_HOVER,
+            button_hover_color=T.BG_ACTIVE, text_color=T.TEXT,
+            dropdown_fg_color=T.BG_RAISED, dropdown_text_color=T.TEXT,
+            corner_radius=T.RADIUS_SM,
+            command=self._apply_platform_preset,
+        )
+        self.platform_menu.pack(side="left", padx=(0, 18))
+
         ctk.CTkLabel(
             exp_inner, text="Quality",
             font=T.font(T.SIZE_MD), text_color=T.TEXT_MUTED,
@@ -241,7 +263,7 @@ class TrimTab(ctk.CTkScrollableFrame):
             button_hover_color=T.BG_ACTIVE, text_color=T.TEXT,
             dropdown_fg_color=T.BG_RAISED, dropdown_text_color=T.TEXT,
             corner_radius=T.RADIUS_SM,
-            command=lambda v: settings.set("quality", v),
+            command=self._on_quality_change,
         )
         self.quality_menu.pack(side="left", padx=(0, 18))
 
@@ -257,7 +279,7 @@ class TrimTab(ctk.CTkScrollableFrame):
             button_hover_color=T.BG_ACTIVE, text_color=T.TEXT,
             dropdown_fg_color=T.BG_RAISED, dropdown_text_color=T.TEXT,
             corner_radius=T.RADIUS_SM,
-            command=lambda v: settings.set("format", v),
+            command=self._on_format_change,
         )
         self.format_menu.pack(side="left")
 
@@ -290,6 +312,40 @@ class TrimTab(ctk.CTkScrollableFrame):
     def _on_range_removed(self):
         self._update_export_enabled()
         self._request_snapshot(immediate=True)
+
+    # ------------------------------------------------------------------
+    # Platform preset wiring: selecting a platform snaps three fields;
+    # editing any of those fields afterward reverts the label to Custom
+    # so the dropdown never claims a preset the user has deviated from.
+    def _apply_platform_preset(self, name):
+        settings.set("platform_preset", name)
+        preset = get_preset(name)
+        if preset is None:
+            return
+        self.quality_var.set(preset["quality"])
+        settings.set("quality", preset["quality"])
+        self.format_var.set(preset["format"])
+        settings.set("format", preset["format"])
+        self.export_options.set_aspect(preset["aspect"])
+        self._update_export_enabled()
+        self._update_size_estimate()
+        self._notify(f"Applied preset: {name}", "info")
+
+    def _on_quality_change(self, value):
+        settings.set("quality", value)
+        self._mark_platform_custom()
+        self._update_size_estimate()
+
+    def _on_format_change(self, value):
+        settings.set("format", value)
+        self._mark_platform_custom()
+        self._update_export_enabled()
+        self._update_size_estimate()
+
+    def _mark_platform_custom(self):
+        if self.platform_var.get() != "Custom":
+            self.platform_var.set("Custom")
+            settings.set("platform_preset", "Custom")
 
     def _seek_from_thumbnail(self, timestamp):
         """Click on the thumbnail strip → move the trim start to that time."""
