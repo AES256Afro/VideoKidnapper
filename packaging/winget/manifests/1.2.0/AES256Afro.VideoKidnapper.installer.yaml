@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+#
+# Winget installer manifest — points at the GitHub Release .exe built by
+# .github/workflows/installer.yml (PR #16). Since it's a portable
+# single-file .exe with no bundled uninstaller, we declare it with
+# InstallerType: portable and Commands: videokidnapper for PATH wiring.
+#
+# POST-RELEASE: replace REPLACE_WITH_EXE_SHA256 with the SHA256 of
+# `VideoKidnapper.exe` attached to the v1.2.0 GitHub Release. PowerShell:
+#     (Get-FileHash -Algorithm SHA256 VideoKidnapper.exe).Hash
+
+PackageIdentifier: AES256Afro.VideoKidnapper
+PackageVersion: 1.2.0
+
+# Portable installer: the .exe IS the app, no MSI/EXE installer wraps it.
+# winget drops it in a managed path and exposes the Commands below.
+InstallerType: portable
+Commands:
+  - videokidnapper
+
+ReleaseDate: 2026-04-18
+ReleaseNotesUrl: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.2.0
+
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/AES256Afro/VideoKidnapper/releases/download/v1.2.0/VideoKidnapper.exe
+    InstallerSha256: REPLACE_WITH_EXE_SHA256_AFTER_RELEASE
+    # The .exe is self-contained — no Start Menu shortcut or uninstaller.
+    # winget manages install/uninstall as a simple file copy.
+
+ManifestType: installer
+ManifestVersion: 1.6.0
