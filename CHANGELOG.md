@@ -27,6 +27,9 @@ All notable changes to this project are documented here. The format is based on 
 - **🗣 Auto-captions via Whisper.** New button in the Trim tab runs [faster-whisper](https://github.com/guillaumekln/faster-whisper) over the current trim range and imports the result through the existing SRT → text-layers pipeline. Captioned clips are ready to export instantly. Model size is pickable (tiny / base / small / medium / large) in a small dialog.
 - **`videokidnapper/core/whisper_captions.py`** — pure module: audio extraction via ffmpeg at the correct 16 kHz mono s16 format, segment → SRT-dict conversion (tested independently of the model), and a threaded transcribe entry point with progress + cancellation. Auto-captions feed the same layer importer as `parse_srt_file`, so the downstream UI code is unchanged.
 - **Optional dep: `faster-whisper`.** Added to `requirements.txt` under a commented "Optional" block. The button checks `is_available()` at click time and shows a `pip install faster-whisper` hint when missing — nothing else in the app changes.
+- **Image / logo overlay track.** New collapsible **Image Overlays** panel on the Trim tab. Each layer carries a file path (PNG / JPG / WebP / GIF / BMP), a position anchor (7 presets matching the text anchors), a scale slider (5–100% of image width), an opacity slider (0–100%), and a start/end timing slider. Great for watermarks, reaction stickers, brand bugs. Mirrors `TextLayersPanel`'s pattern so add/remove/timing feel consistent.
+- **`_build_image_overlay_chain()`** in `ffmpeg_backend.py` — produces the per-layer `format → scale → colorchannelmixer → overlay` chain as a filter_complex string. Clamps out-of-range inputs (scale/opacity/timing) so corrupt settings can't break the encode. Zero-duration layers are silently dropped.
+- **`trim_to_video` now accepts `image_layers=`.** When any are present, the command switches from `-vf <chain>` to `-filter_complex [0:v]<chain>[vbase];…[ov]overlay=…` with one `-loop 1 -i <image>` per layer. Existing encodes with no image overlays are unchanged.
 - **`.github/workflows/release.yml`** — tag push matching `v*.*.*` builds an sdist + wheel, publishes to PyPI via Trusted Publishing (OIDC — no API token in repo secrets), and attaches the same artifacts to the GitHub Release. Tag→version mismatch fails the build before publish, so a mis-tagged release can't ship.
 - **`--version` CLI flag** — `videokidnapper --version` prints the installed version.
 - **`ProbeError` exception** in `ffmpeg_backend.py` — narrow, catchable type for ffprobe failures that still deserve user-facing surfacing.
@@ -57,6 +60,9 @@ All notable changes to this project are documented here. The format is based on 
 - **Code signing** is intentionally left out. Unsigned `.exe`s trigger SmartScreen warnings; addressing that needs an EV cert, which costs money and maintainer setup. Follow-up once the release cadence is established.
 - **faster-whisper over openai-whisper:** ~4× faster CPU inference (CTranslate2 backend), no torch / CUDA requirement, same model quality. MIT licensed. Models download on first use into `~/.cache/huggingface`.
 - **Auto-captions scope:** transcription only. Translation, speaker diarization, and word-level timestamps are post-MVP.
+- **Image overlays: MP4 export only in this PR.** GIF pipeline goes through `palettegen`/`paletteuse` and plumbing filter_complex through that path is more involved than it's worth for the MVP. A follow-up can add GIF support.
+- **Image overlays: no live preview yet.** The overlay appears in the exported file; rendering it on the frame-scrub preview is a separate PR.
+- **Image overlays MVP: 7 preset anchors, no custom drag.** Drag-to-position is a natural follow-up that would reuse the text-layer drag machinery.
 
 ## [1.1.0] — 2026-04-18
 

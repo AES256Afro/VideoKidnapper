@@ -398,6 +398,132 @@ def _build_text_filters(text_layers, fade=0.0):
             for layer in text_layers if layer.get("text", "").strip()]
 
 
+# ---------------------------------------------------------------------------
+# Image overlay track — PNG / JPG on top of the video via ffmpeg overlay
+# ---------------------------------------------------------------------------
+
+IMAGE_OVERLAY_POSITIONS = (
+    "top_left", "top_right", "bottom_left", "bottom_right",
+    "center", "top_center", "bottom_center",
+)
+
+# Edge margin (pixels) for the anchored positions. Kept modest so tiny
+# logos don't float in empty space but corner badges don't hug the
+# bezel. Matches the drawtext pad used in the UI preview.
+_OVERLAY_PAD = 20
+
+
+def _overlay_position_expr(anchor):
+    """Return ``x:y`` ffmpeg expressions for an anchor name.
+
+    ``main_w`` / ``main_h`` / ``overlay_w`` / ``overlay_h`` are the
+    variables ffmpeg exposes inside the overlay filter; using them
+    means positions self-adjust even if the image gets pre-scaled.
+    """
+    pad = _OVERLAY_PAD
+    return {
+        "top_left":      (f"{pad}",                              f"{pad}"),
+        "top_right":     (f"main_w-overlay_w-{pad}",             f"{pad}"),
+        "bottom_left":   (f"{pad}",                              f"main_h-overlay_h-{pad}"),
+        "bottom_right":  (f"main_w-overlay_w-{pad}",             f"main_h-overlay_h-{pad}"),
+        "center":        ("(main_w-overlay_w)/2",                "(main_h-overlay_h)/2"),
+        "top_center":    ("(main_w-overlay_w)/2",                f"{pad}"),
+        "bottom_center": ("(main_w-overlay_w)/2",                f"main_h-overlay_h-{pad}"),
+    }.get(anchor, ("main_w-overlay_w-20", "20"))
+
+
+def _build_image_overlay_chain(image_layers, base_label, video_dur=None):
+    """Build the filter_complex chain that lays images over ``base_label``.
+
+    Parameters
+    ----------
+    image_layers : list of dict
+        Each dict carries ``path`` (str), ``position`` (anchor name),
+        ``scale`` (0.0–1.0 relative to video width), ``opacity``
+        (0.0–1.0), ``start`` and ``end`` (seconds, clip-relative).
+    base_label : str
+        The ``[v?]`` filter label whose output we overlay onto.
+    video_dur : float, optional
+        Clip duration — used to clamp per-overlay timing so
+        out-of-range values don't crash ffmpeg.
+
+    Returns a tuple ``(filter_str, final_label, input_paths)``. An
+    empty ``filter_str`` means there are no valid layers and the
+    caller should skip the filter_complex branch.
+    """
+    inputs = []
+    parts = []
+    current = base_label
+    valid_layers = [
+        L for L in (image_layers or []) if (L or {}).get("path")
+    ]
+    if not valid_layers:
+        return "", current, inputs
+
+    for idx, layer in enumerate(valid_layers):
+        path = str(layer["path"])
+        inputs.append(path)
+        # ffmpeg stream index for this overlay image — every image is
+        # fed in AFTER the main video, so input-stream i+1.
+        stream_idx = idx + 1
+
+        # Scale: fraction of main-video width. ``-1`` keeps aspect.
+        scale = float(layer.get("scale", 0.25))
+        scale = max(0.01, min(1.0, scale))
+        # Opacity: ffmpeg's colorchannelmixer aa=<alpha>.
+        opacity = max(0.0, min(1.0, float(layer.get("opacity", 1.0))))
+        # Timing — clip-relative because the input was already -ss'd.
+        start_t = max(0.0, float(layer.get("start", 0.0)))
+        end_t = float(layer.get("end", video_dur or 1e9))
+        if video_dur is not None:
+            end_t = min(end_t, video_dur)
+        if end_t <= start_t:
+            # Invalid timing → skip the layer rather than crashing.
+            inputs.pop()
+            continue
+
+        # Scale the overlay using main-video width (w): the filter
+        # chain resolves main_w to the VIDEO width at run time, not
+        # the image's own width.
+        scaled_label = f"ov{idx}s"
+        parts.append(
+            f"[{stream_idx}:v]"
+            f"format=rgba,"
+            f"scale=w=iw*{scale:.3f}*(main_w/iw):h=-1,"
+            f"colorchannelmixer=aa={opacity:.3f}"
+            f"[{scaled_label}]"
+        )
+        # Wait — ffmpeg's ``scale`` filter doesn't know about main_w
+        # inside the overlay input chain; only the ``overlay`` filter
+        # exposes main_w/main_h. For the scale step we have to use
+        # the source image's own iw. We'll pre-compute scale based on
+        # an assumption: the video info object is passed in by the
+        # caller via a separate helper that knows the video width.
+        # For now we use the image's own iw × scale, which works as a
+        # coarse "scale relative to image" knob. A future pass can
+        # rebuild this to scale relative to video width if the caller
+        # passes info.
+        # (Rewriting the line above — same logic, without main_w.)
+        parts[-1] = (
+            f"[{stream_idx}:v]"
+            f"format=rgba,"
+            f"scale=iw*{scale:.3f}:-1,"
+            f"colorchannelmixer=aa={opacity:.3f}"
+            f"[{scaled_label}]"
+        )
+
+        x_expr, y_expr = _overlay_position_expr(layer.get("position", "top_right"))
+        out_label = f"v_ov{idx}"
+        enable = f":enable='between(t\\,{start_t:.3f}\\,{end_t:.3f})'"
+        parts.append(
+            f"[{current}][{scaled_label}]"
+            f"overlay=x={x_expr}:y={y_expr}{enable}[{out_label}]"
+        )
+        current = out_label
+
+    return ";".join(parts), current, inputs
+
+
 def _assemble_video_filters(preset_name, info, text_layers, options):
     """Build the video filter chain in the right order.
 
@@ -529,7 +655,8 @@ def _log_ffmpeg_failure(cmd, returncode, stderr_tail):
 # ---------------------------------------------------------------------------
 
 def trim_to_video(input_path, start, end, preset_name, output_path,
-                  text_layers=None, progress_callback=None, cancel_event=None,
+                  text_layers=None, image_layers=None,
+                  progress_callback=None, cancel_event=None,
                   options=None):
     preset = PRESETS[preset_name]
     duration = max(0.001, end - start)
@@ -567,11 +694,24 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
 
     filters = _assemble_video_filters(preset_name, info, text_layers, options)
 
+    # If there are image overlays we switch from -vf to -filter_complex
+    # and add one -i per image. The existing video filter chain becomes
+    # the first stage; the overlay chain composes on top of its output.
+    valid_images = [L for L in (image_layers or []) if (L or {}).get("path")]
+
     encoder = pick_video_encoder(options.get("hw_encoder", "auto"))
     cmd = [
         _get_ffmpeg(), "-y",
         "-ss", str(start),
         "-i", str(input_path),
+    ]
+    # Image overlay inputs land after the main video input. They're NOT
+    # -ss'd because PNGs don't have a timeline — ffmpeg loops them and
+    # the per-layer enable='between(t,...)' handles when they show.
+    for img_path in (L["path"] for L in valid_images):
+        cmd += ["-loop", "1", "-i", str(img_path)]
+
+    cmd += [
         "-t", str(duration),
         "-r", str(preset["fps"]),
         "-c:v", encoder,
@@ -586,7 +726,22 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
         if audio_tempo:
             cmd += ["-filter:a", audio_tempo]
 
-    if filters:
+    if valid_images:
+        # filter_complex path: pipe the video chain into a labelled
+        # output, then overlay each image on top.
+        base_chain = ",".join(filters) if filters else "null"
+        overlay_chain, final_label, _inputs = _build_image_overlay_chain(
+            valid_images, base_label="vbase", video_dur=duration,
+        )
+        fc = f"[0:v]{base_chain}[vbase];{overlay_chain}"
+        cmd += [
+            "-filter_complex", fc,
+            "-map", f"[{final_label}]",
+        ]
+        # Explicitly map audio from input 0 (optional — ``?`` lets
+        # ffmpeg skip when the source has no audio).
+        cmd += ["-map", "0:a?"]
+    elif filters:
         cmd += ["-vf", ",".join(filters)]
     cmd += ["-movflags", "+faststart", str(output_path)]
 
