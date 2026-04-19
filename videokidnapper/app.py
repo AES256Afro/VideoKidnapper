@@ -110,7 +110,18 @@ class App(ctk.CTk):
             corner_radius=14, width=82, height=28,
             command=self._open_setup_dialog,
         )
-        self.setup_btn.place(relx=1.0, rely=0, anchor="ne", x=-104, y=16)
+        self.setup_btn.place(relx=1.0, rely=0, anchor="ne", x=-150, y=16)
+
+        # Keyboard shortcuts overlay — discoverable at a glance instead
+        # of buried in the status-bar hint that scrolls away after 4s.
+        self.shortcuts_btn = ctk.CTkButton(
+            header, text="⌨",
+            fg_color=T.BG_RAISED, hover_color=T.BG_HOVER,
+            text_color=T.TEXT, font=T.font(T.SIZE_LG, "bold"),
+            corner_radius=14, width=36, height=28,
+            command=self._open_shortcuts_dialog,
+        )
+        self.shortcuts_btn.place(relx=1.0, rely=0, anchor="ne", x=-104, y=16)
 
         # Theme toggle (takes effect on restart)
         current = T.current_mode()
@@ -189,7 +200,7 @@ class App(ctk.CTk):
         self.status_bar.pack(fill="x", side="bottom")
         self.status_bar.show(
             "Ready · Space play · J/L step · I/O set in-out · "
-            "Ctrl+Z/Y undo/redo · Ctrl+E export",
+            "Ctrl+Z/Y undo/redo · Ctrl+E export · ? shortcuts",
             "success",
         )
 
@@ -233,6 +244,9 @@ class App(ctk.CTk):
         self.bind_all("<Control-Shift-Z>", lambda e: self._shortcut(e, "keyboard_redo"))
         self.bind_all("<Control-y>",       lambda e: self._shortcut(e, "keyboard_redo"))
         self.bind_all("<Control-Y>",       lambda e: self._shortcut(e, "keyboard_redo"))
+        # `?` opens the shortcuts overlay. Not routed through _shortcut()
+        # because the target is the app itself, not the active tab.
+        self.bind_all("<Key-question>", self._shortcut_shortcuts_overlay)
 
     def _editing_in_entry(self, event):
         widget = event.widget
@@ -250,6 +264,12 @@ class App(ctk.CTk):
         fn = getattr(tab, method, None)
         if callable(fn):
             fn(*args)
+
+    def _shortcut_shortcuts_overlay(self, event):
+        # `?` inside a text entry should still type a literal `?`.
+        if self._editing_in_entry(event):
+            return
+        self._open_shortcuts_dialog()
 
     # ------------------------------------------------------------------
     # Update check
@@ -374,6 +394,13 @@ class App(ctk.CTk):
     def _open_setup_dialog(self):
         from videokidnapper.ui.setup_dialog import SetupDialog
         SetupDialog(self)
+
+    # ------------------------------------------------------------------
+    # Shortcuts overlay (? key / header chip)
+    # ------------------------------------------------------------------
+    def _open_shortcuts_dialog(self):
+        from videokidnapper.ui.shortcuts_dialog import ShortcutsDialog
+        ShortcutsDialog(self)
 
     # ------------------------------------------------------------------
     # Theme toggle
