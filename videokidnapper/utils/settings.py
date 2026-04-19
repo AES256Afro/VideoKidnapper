@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 _SETTINGS_PATH = Path.home() / ".videokidnapper_settings.json"
-_CURRENT_SCHEMA = 3
+_CURRENT_SCHEMA = 4
 
 # In-process lock for the read-modify-write cycle. Two export threads
 # finishing at the same moment both did `data = _read(); data[k] = v;
@@ -53,6 +53,11 @@ _DEFAULTS = {
     # lossless concat demuxer path; anything else forces re-encode.
     "concat_transition":          "cut",
     "concat_transition_duration": 0.5,    # seconds
+    # Persisted Batch Export queue. Empty by default. Each entry is a
+    # serialised BatchJob dict (see utils/batch.BatchJob.to_dict); the
+    # tab restores the queue on launch so a crash / force-quit mid-
+    # batch doesn't lose the user's queue + per-row overrides.
+    "batch_jobs":                 [],
 }
 
 _HISTORY_MAX = 25
@@ -89,6 +94,12 @@ def _migrate(data):
         data.setdefault("concat_transition", "cut")
         data.setdefault("concat_transition_duration", 0.5)
         version = 3
+    if version < 4:
+        # Schema 4: added persisted Batch Export queue. Empty by default
+        # so existing users see no behaviour change until they actually
+        # add files to the new tab.
+        data.setdefault("batch_jobs", [])
+        version = 4
     data["_version"] = version
     return data
 
