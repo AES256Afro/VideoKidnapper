@@ -7,11 +7,15 @@ the number as "~" in the UI and err slightly high so users aren't
 surprised.
 """
 
+from typing import Tuple
+
 from videokidnapper.config import PRESETS
 
 
-def _scaled_resolution(preset_name, input_width, input_height):
-    """Return (w, h) after preset scaling, preserving aspect ratio."""
+def _scaled_resolution(
+    preset_name: str, input_width: int, input_height: int,
+) -> Tuple[int, int]:
+    """Return ``(w, h)`` after preset scaling, preserving aspect ratio."""
     preset = PRESETS[preset_name]
     target_w = preset["width"]
     if target_w is None or input_width <= target_w:
@@ -20,7 +24,10 @@ def _scaled_resolution(preset_name, input_width, input_height):
     return target_w, max(1, int(input_height * scale))
 
 
-def estimate_gif_bytes(duration_s, preset_name, input_width, input_height):
+def estimate_gif_bytes(
+    duration_s: float, preset_name: str,
+    input_width: int, input_height: int,
+) -> int:
     preset = PRESETS[preset_name]
     w, h = _scaled_resolution(preset_name, input_width, input_height)
     fps = preset["fps"]
@@ -32,7 +39,10 @@ def estimate_gif_bytes(duration_s, preset_name, input_width, input_height):
     return int(frames * per_frame)
 
 
-def estimate_mp4_bytes(duration_s, preset_name, input_width, input_height):
+def estimate_mp4_bytes(
+    duration_s: float, preset_name: str,
+    input_width: int, input_height: int,
+) -> int:
     preset = PRESETS[preset_name]
     w, h = _scaled_resolution(preset_name, input_width, input_height)
     fps = preset["fps"]
@@ -45,12 +55,15 @@ def estimate_mp4_bytes(duration_s, preset_name, input_width, input_height):
     return int((bitrate_bps + audio_bps) * duration_s / 8)
 
 
-def estimate_mp3_bytes(duration_s):
+def estimate_mp3_bytes(duration_s: float) -> int:
     return int(192_000 * duration_s / 8)
 
 
-def estimate_bytes(duration_s, preset_name, fmt, input_width, input_height,
-                   audio_only=False):
+def estimate_bytes(
+    duration_s: float, preset_name: str, fmt: str,
+    input_width: int, input_height: int,
+    audio_only: bool = False,
+) -> int:
     if duration_s <= 0:
         return 0
     if audio_only:
@@ -60,7 +73,7 @@ def estimate_bytes(duration_s, preset_name, fmt, input_width, input_height,
     return estimate_mp4_bytes(duration_s, preset_name, input_width, input_height)
 
 
-def human_bytes(n):
+def human_bytes(n: int) -> str:
     units = ["B", "KB", "MB", "GB"]
     size = float(n)
     for unit in units:

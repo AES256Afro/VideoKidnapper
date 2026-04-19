@@ -31,7 +31,7 @@ _DRAWTEXT_ESCAPES = {
 }
 
 
-def escape_drawtext_value(text):
+def escape_drawtext_value(text: "str | None") -> str:
     """Escape a string for use as the value in a drawtext option.
 
     The returned string is safe to wrap in single quotes inside the filter
@@ -45,7 +45,7 @@ def escape_drawtext_value(text):
     return "".join(out)
 
 
-def escape_path(path):
+def escape_path(path: "str | None") -> str:
     """Escape a filesystem path for use in an ffmpeg filter argument.
 
     On Windows, forward slashes are preferred and drive-letter colons must be
@@ -60,6 +60,6 @@ def escape_path(path):
     return p
 
 
-def quote_filter_value(escaped):
+def quote_filter_value(escaped: str) -> str:
     """Wrap an already-escaped string in single quotes for lavfi."""
     return f"'{escaped}'"
