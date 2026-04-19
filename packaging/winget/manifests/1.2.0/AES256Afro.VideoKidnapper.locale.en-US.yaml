@@ -1,0 +1,70 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+#
+# Winget default-locale manifest. Required alongside the installer
+# manifest. Holds the user-facing metadata shown in winget search.
+
+PackageIdentifier: AES256Afro.VideoKidnapper
+PackageVersion: 1.2.0
+PackageLocale: en-US
+
+Publisher: AES256Afro
+PublisherUrl: https://github.com/AES256Afro
+PublisherSupportUrl: https://github.com/AES256Afro/VideoKidnapper/issues
+
+Author: Christopher Courtney
+PackageName: VideoKidnapper
+PackageUrl: https://github.com/AES256Afro/VideoKidnapper
+License: Apache-2.0
+LicenseUrl: https://github.com/AES256Afro/VideoKidnapper/blob/main/LICENSE
+Copyright: Copyright (c) 2026 Christopher Courtney
+
+ShortDescription: Dark-themed desktop tool for trimming videos, downloading clips from the open web, and exporting polished GIFs or MP4s with text overlays.
+Description: |-
+  VideoKidnapper is a dark-themed desktop app (Windows / macOS / Linux) that
+  trims local video files or downloaded clips from YouTube, Instagram,
+  Bluesky, Twitter/X, Reddit, and Facebook, then exports polished GIFs or
+  MP4s with pixel-accurate text overlays.
+
+  Features include multi-range trimming, undo / redo, a scrubbable
+  thumbnail strip, snap-to-guides when positioning text, auto-captions
+  via Whisper, image overlays, color grading, transitions between
+  queued ranges, and a plugin system for third-party extensions.
+
+  FFmpeg is a runtime prerequisite — the in-app Setup dialog can pull a
+  portable build on first launch if one isn't already on PATH.
+
+Moniker: videokidnapper
+
+Tags:
+  - video
+  - gif
+  - ffmpeg
+  - trim
+  - clip
+  - youtube-dl
+  - yt-dlp
+  - editor
+  - desktop
+
+ReleaseNotes: |-
+  1.2.0 — major feature batch. See the full changelog for each item:
+  https://github.com/AES256Afro/VideoKidnapper/blob/main/CHANGELOG.md
+
+  Headline features:
+  - Undo / redo (Ctrl+Z / Ctrl+Y) across the whole editor
+  - Thumbnail strip above the timeline (click to seek)
+  - Snap-to-guides when dragging text layers
+  - Color grade sliders (brightness / contrast / saturation / gamma)
+  - Transitions between queued ranges (crossfade / fade-to-black / fade-to-white)
+  - Whisper-powered auto-captions
+  - Image / logo overlay track
+  - Real-time video + audio playback via imageio-ffmpeg + sounddevice
+  - Plugin system (entry-point discovery, Apache-2.0 core + any-license plugins)
+  - Tier-1 robustness fixes (ffprobe crash, yt-dlp timeout, concurrent-write settings race)
+
+ReleaseNotesUrl: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.2.0
+
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
