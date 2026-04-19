@@ -49,7 +49,7 @@ class App(ctk.CTk):
         self._build_tabs()
         self._build_statusbar()
 
-        for tab in (self.trim_tab, self.url_tab):
+        for tab in (self.trim_tab, self.url_tab, self.batch_export_tab):
             if hasattr(tab, "set_toast"):
                 tab.set_toast(self.status_bar)
 
@@ -160,9 +160,11 @@ class App(ctk.CTk):
 
         self.tabview.add("  ✂  Trim Video  ")
         self.tabview.add("  ↓  URL Download  ")
+        self.tabview.add("  ⎆  Batch Export  ")
         self.tabview.add("  ⌛  History  ")
         self.tabview.add("  ⚙  Debug  ")
 
+        from videokidnapper.ui.batch_export_tab import BatchExportTab
         from videokidnapper.ui.debug_tab import DebugTab
         from videokidnapper.ui.history_tab import HistoryTab
         from videokidnapper.ui.trim_tab import TrimTab
@@ -176,6 +178,11 @@ class App(ctk.CTk):
 
         self.url_tab = UrlTab(self.tabview.tab("  ↓  URL Download  "), self)
         self.url_tab.pack(fill="both", expand=True)
+
+        self.batch_export_tab = BatchExportTab(
+            self.tabview.tab("  ⎆  Batch Export  "), self,
+        )
+        self.batch_export_tab.pack(fill="both", expand=True)
 
         self.history_tab = HistoryTab(self.tabview.tab("  ⌛  History  "), self)
         self.history_tab.pack(fill="both", expand=True)
