@@ -12,6 +12,7 @@ space drawtext's ``x:y`` expression uses at export time). The caller
 """
 
 from collections import namedtuple
+from typing import Iterable, List, Tuple
 
 
 # A single 1-D snap target. ``axis`` is ``"x"`` or ``"y"``.
@@ -27,7 +28,15 @@ SnapTarget = namedtuple("SnapTarget", "axis value kind label")
 SnapHit = namedtuple("SnapHit", "axis position label")
 
 
-def build_targets(frame_w, frame_h, other_bboxes, edge_pad=20):
+BBox = Tuple[int, int, int, int, int]  # (idx, x1, y1, x2, y2)
+
+
+def build_targets(
+    frame_w: int,
+    frame_h: int,
+    other_bboxes: Iterable[BBox],
+    edge_pad: int = 20,
+) -> List[SnapTarget]:
     """Return the full list of snap targets for a drag session.
 
     Parameters
@@ -66,7 +75,9 @@ def build_targets(frame_w, frame_h, other_bboxes, edge_pad=20):
     return targets
 
 
-def _candidate_positions(value, kind, tw, th, axis):
+def _candidate_positions(
+    value: float, kind: str, tw: int, th: int, axis: str,
+) -> float:
     """Return the ``new_start`` value the dragged layer would need so
     that its ``kind`` edge lands on ``value`` for the given axis."""
     size = tw if axis == "x" else th
@@ -78,7 +89,14 @@ def _candidate_positions(value, kind, tw, th, axis):
     return value - size / 2
 
 
-def apply_snap(new_x, new_y, tw, th, targets, threshold=8):
+def apply_snap(
+    new_x: int,
+    new_y: int,
+    tw: int,
+    th: int,
+    targets: Iterable[SnapTarget],
+    threshold: int = 8,
+) -> Tuple[int, int, List[SnapHit]]:
     """Snap ``(new_x, new_y)`` to the closest target within ``threshold``.
 
     ``(new_x, new_y)`` is the top-left corner of the dragged layer's

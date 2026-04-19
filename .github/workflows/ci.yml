@@ -65,3 +65,23 @@ jobs:
           cache: pip
       - run: pip install ruff
       - run: ruff check videokidnapper/ main.py scripts/ tests/
+
+  typecheck:
+    name: mypy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # mypy.ini starts with strict=true as the default, then opts
+      # per-module out via ignore_errors=true. Each module that gets
+      # type-hinted joins the strict set (see mypy.ini for the
+      # allowlist). Rest of the tree is silently skipped — Tkinter /
+      # customtkinter / yt-dlp have no usable stubs, so typing them
+      # would be punishment for little gain.
+      - name: Install mypy
+        run: pip install mypy
+      - name: Type-check the typed module set
+        run: mypy --config-file mypy.ini videokidnapper
