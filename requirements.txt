@@ -13,7 +13,7 @@ tkinterdnd2>=0.3.0
 # 8-fps frame-scrub preview when any of these is missing.
 imageio-ffmpeg>=0.5.0
 sounddevice>=0.4.6
-numpy>=1.24
+numpy>=2.0.2
 
 # Optional — enables Whisper auto-captions. Downloads a ~75 MB model
 # the first time it runs. Core app works without it; the
