@@ -12,7 +12,7 @@ tkinterdnd2>=0.3.0
 # "Play in System Player" workaround). App falls back to the original
 # 8-fps frame-scrub preview when any of these is missing.
 imageio-ffmpeg>=0.5.0
-sounddevice>=0.4.6
+sounddevice>=0.5.5
 numpy>=1.24
 
 # Optional — enables Whisper auto-captions. Downloads a ~75 MB model
