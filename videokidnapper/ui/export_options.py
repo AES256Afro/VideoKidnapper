@@ -35,6 +35,36 @@ TRANSITION_CHOICES = [
 TRANSITION_LABEL_TO_KEY = dict(TRANSITION_CHOICES)
 TRANSITION_KEY_TO_LABEL = {k: label for label, k in TRANSITION_CHOICES}
 
+# GIF palette options: UI label ↔ settings/backend key. Keys are consumed
+# by core/ffmpeg/filters._build_paletteuse_filter / _build_palettegen_filter.
+GIF_DITHER_CHOICES = [
+    ("Bayer (small files)",   "bayer"),
+    ("Floyd-Steinberg",       "floyd_steinberg"),
+    ("Sierra",                "sierra2_4a"),
+    ("None (flat colors)",    "none"),
+]
+GIF_DITHER_LABEL_TO_KEY = dict(GIF_DITHER_CHOICES)
+GIF_DITHER_KEY_TO_LABEL = {k: label for label, k in GIF_DITHER_CHOICES}
+
+GIF_STATS_CHOICES = [
+    ("Full frame", "full"),
+    ("Motion",     "diff"),
+]
+GIF_STATS_LABEL_TO_KEY = dict(GIF_STATS_CHOICES)
+GIF_STATS_KEY_TO_LABEL = {k: label for label, k in GIF_STATS_CHOICES}
+
+# Loop: label ↔ the value the GIF muxer's -loop flag takes
+# (0 = forever, -1 = play once, N>0 = N extra loops).
+GIF_LOOP_CHOICES = [
+    ("Forever", 0),
+    ("Once",    -1),
+    ("2×",      2),
+    ("3×",      3),
+    ("5×",      5),
+]
+GIF_LOOP_LABEL_TO_KEY = dict(GIF_LOOP_CHOICES)
+GIF_LOOP_KEY_TO_LABEL = {k: label for label, k in GIF_LOOP_CHOICES}
+
 
 def _speed_to_float(label):
     try:
@@ -105,6 +135,19 @@ class ExportOptionsPanel(ctk.CTkFrame):
         )
         self.transition_duration_var = ctk.DoubleVar(
             value=float(settings.get("concat_transition_duration", 0.5)),
+        )
+        # GIF palette options — persisted as backend keys, shown as labels.
+        self.gif_dither_var = ctk.StringVar(
+            value=GIF_DITHER_KEY_TO_LABEL.get(
+                settings.get("gif_dither", "bayer"), GIF_DITHER_CHOICES[0][0]),
+        )
+        self.gif_stats_var = ctk.StringVar(
+            value=GIF_STATS_KEY_TO_LABEL.get(
+                settings.get("gif_stats_mode", "full"), GIF_STATS_CHOICES[0][0]),
+        )
+        self.gif_loop_var = ctk.StringVar(
+            value=GIF_LOOP_KEY_TO_LABEL.get(
+                settings.get("gif_loop", 0), GIF_LOOP_CHOICES[0][0]),
         )
 
         self._build_ui()
@@ -279,6 +322,34 @@ class ExportOptionsPanel(ctk.CTkFrame):
             font=T.font(T.SIZE_XS), text_color=T.TEXT_DIM,
         ).pack(side="left", padx=(10, 0))
 
+        # --- Row: GIF palette options (only meaningful for GIF exports)
+        row5 = ctk.CTkFrame(self.body, fg_color="transparent")
+        row5.pack(fill="x", padx=12, pady=(4, 10))
+
+        self._menu_label(row5, "GIF dither")
+        self._menu(
+            row5, self.gif_dither_var,
+            [label for label, _k in GIF_DITHER_CHOICES], width=170,
+        ).pack(side="left", padx=(0, 14))
+
+        self._menu_label(row5, "Palette")
+        self._menu(
+            row5, self.gif_stats_var,
+            [label for label, _k in GIF_STATS_CHOICES], width=110,
+        ).pack(side="left", padx=(0, 14))
+
+        self._menu_label(row5, "Loop")
+        self._menu(
+            row5, self.gif_loop_var,
+            [label for label, _k in GIF_LOOP_CHOICES], width=90,
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(
+            row5,
+            text="(only applies to GIF exports)",
+            font=T.font(T.SIZE_XS), text_color=T.TEXT_DIM,
+        ).pack(side="left", padx=(10, 0))
+
     def _on_transition_duration_change(self, value):
         try:
             self.transition_duration_var.set(float(value.rstrip("s")))
@@ -372,6 +443,12 @@ class ExportOptionsPanel(ctk.CTkFrame):
                 TRANSITION_LABEL_TO_KEY.get(self.transition_var.get(), "cut"),
             "concat_transition_duration":
                 round(float(self.transition_duration_var.get()), 2),
+            "gif_dither":
+                GIF_DITHER_LABEL_TO_KEY.get(self.gif_dither_var.get(), "bayer"),
+            "gif_stats_mode":
+                GIF_STATS_LABEL_TO_KEY.get(self.gif_stats_var.get(), "full"),
+            "gif_loop":
+                GIF_LOOP_LABEL_TO_KEY.get(self.gif_loop_var.get(), 0),
         })
         if self._on_change:
             self._on_change()
@@ -397,6 +474,13 @@ class ExportOptionsPanel(ctk.CTkFrame):
             "concat_transition":
                 TRANSITION_LABEL_TO_KEY.get(self.transition_var.get(), "cut"),
             "concat_transition_duration": float(self.transition_duration_var.get()),
+            # GIF palette options — consumed by trim_to_gif / frames_to_gif.
+            "gif_dither":
+                GIF_DITHER_LABEL_TO_KEY.get(self.gif_dither_var.get(), "bayer"),
+            "gif_stats_mode":
+                GIF_STATS_LABEL_TO_KEY.get(self.gif_stats_var.get(), "full"),
+            "gif_loop":
+                GIF_LOOP_LABEL_TO_KEY.get(self.gif_loop_var.get(), 0),
         }
 
     def get_output_folder(self):
