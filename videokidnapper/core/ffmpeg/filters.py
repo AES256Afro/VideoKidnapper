@@ -426,3 +426,66 @@ def _assemble_video_filters(preset_name, info, text_layers, options):
         filters.append(f)
 
     return filters
+
+
+# ---------------------------------------------------------------------------
+# GIF palette builders (palettegen / paletteuse)
+# ---------------------------------------------------------------------------
+
+# Dither key → paletteuse parameter string. Keys are what the UI / settings
+# persist; values are what ffmpeg consumes. Unknown keys fall back to the
+# historical default ("bayer") so a hand-edited settings file can't produce
+# a command ffmpeg rejects.
+GIF_DITHER_PARAMS = {
+    "bayer":           "dither=bayer:bayer_scale=5",
+    "floyd_steinberg": "dither=floyd_steinberg",
+    "sierra2_4a":      "dither=sierra2_4a",
+    "none":            "dither=none",
+}
+
+GIF_STATS_MODES = ("full", "diff")
+
+
+def _build_palettegen_filter(max_colors, stats_mode="full"):
+    """Build the first-pass ``palettegen`` filter string.
+
+    ``stats_mode=diff`` weights the palette toward pixels that change
+    between frames — a quality win for clips with static backgrounds
+    (reaction GIFs, screen recordings). ``full`` (the historical
+    behavior) weights all pixels equally and is omitted from the
+    output so existing commands stay byte-identical.
+    """
+    max_colors = max(2, min(256, int(max_colors)))
+    parts = [f"palettegen=max_colors={max_colors}"]
+    if stats_mode in GIF_STATS_MODES and stats_mode != "full":
+        parts.append(f"stats_mode={stats_mode}")
+    return ":".join(parts)
+
+
+def _build_paletteuse_filter(dither="bayer"):
+    """Build the second-pass ``paletteuse`` filter string.
+
+    ``bayer`` (the historical default) gives the patterned retro look
+    and smaller files; ``floyd_steinberg`` smooths gradients at a size
+    cost; ``none`` compresses flat-color sources (screen recordings)
+    dramatically better.
+    """
+    params = GIF_DITHER_PARAMS.get(dither, GIF_DITHER_PARAMS["bayer"])
+    return f"paletteuse={params}"
+
+
+def _gif_loop_flag(loop):
+    """Normalise a persisted loop value to what ``-loop`` accepts.
+
+    GIF muxer semantics: ``0`` = loop forever, ``-1`` = play once
+    (no Netscape loop extension), ``N>0`` = N additional loops.
+    Anything unparseable falls back to forever — the historical
+    behavior and the least surprising default.
+    """
+    try:
+        value = int(loop)
+    except (TypeError, ValueError):
+        return 0
+    if value < -1:
+        return 0
+    return value

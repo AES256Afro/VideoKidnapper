@@ -16,6 +16,19 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
+- **GIF palette options: dither, palette stats mode, loop count.** New "GIF" row in Export Options with three dropdowns, all persisted across launches (settings schema v5, additive migration from v4):
+  - **Dither** — Bayer (the previous hardcoded default: patterned retro look, smaller files), Floyd-Steinberg (smoother gradients, the GIPHY look), Sierra (middle ground), or None (flat-color sources like screen recordings compress dramatically better without dithering).
+  - **Palette** — Full frame (previous behavior) or Motion (`palettegen=stats_mode=diff`), which weights the palette toward pixels that change between frames — a visible quality win for clips with static backgrounds.
+  - **Loop** — Forever (previous behavior), Once, or 2× / 3× / 5×.
+  Defaults reproduce the old hardcoded pipeline exactly, so existing users' GIFs are byte-identical until they touch the new controls.
+- **`_build_palettegen_filter` / `_build_paletteuse_filter` / `_gif_loop_flag`** in `core/ffmpeg/filters.py` — pure builders with clamping and unknown-value fallbacks, so a hand-edited settings file can't produce a command ffmpeg rejects. `frames_to_gif` grew an optional `options=` param so the screen-record path can use the same knobs.
+
+### Fixed
+
+- **Race-prone GIF palette temp files.** `trim_to_gif` / `frames_to_gif` reserved palette paths with the deprecated `tempfile.mktemp`, which only reserves a *name* — two concurrent GIF exports (reachable since the Batch Export tab) could collide on the same palette file. Now uses `mkstemp` (atomic creation) and `try/finally` cleanup, so a failed or cancelled encode can no longer leave orphan palette PNGs or intermediate MP4s behind.
+
+### Added
+
 - **Drag image overlays anywhere on the frame.** Click and drag any image, logo, sticker, or **animated GIF** overlay on the Trim preview — it moves in lockstep under the cursor and the exported video / GIF renders at the dragged position, not the anchor. Picking a new entry from the Position dropdown (Top Left, Center, …) snaps the overlay back to the anchor so the dropdown label is always truthful. Works the same way text-layer drag already does.
 - **Explicit `x` / `y` in the image-layer data.** When either axis is unset (sentinel `-1`), the preview and ffmpeg backend fall back to the anchor; when both are set, they win as source-video pixel coords. `_overlay_position_expr` grew optional `x=` / `y=` params that clamp negatives to 0 so a drag near the edge can't produce an off-canvas overlay.
 - **`ImageLayersPanel.set_layer_position(index, x, y)`** and **`VideoPlayer.set_image_position_callback(cb)`** — twin public hooks that mirror the text-drag pair, so any future drag source (pen, gesture, plugin) can drive image positioning without patching widget internals.
