@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
+- **⟳ Update yt-dlp button** on the URL tab's cookies row. A stale extractor is the most common cause of "this video won't download" — the fix is now one click: upgrades via pip on a worker thread and reports the old/new version (with a restart hint when the old module is already loaded). Bundled `.exe` builds get a clear pointer to the releases page instead, since pip can't install into a PyInstaller bundle.
+- **Outdated-extractor hint on failures.** When a download error matches known stale-extractor signatures ("Unable to extract...", "Unsupported URL", HTTP 403, nsig failures), the error line appends "yt-dlp may be outdated; try ⟳ Update yt-dlp" so users aren't left guessing.
+- **`videokidnapper/utils/ytdlp_update.py`** — version probe (installed vs. PyPI), date-version comparison, frozen-build detection, and the extractor-failure heuristic. All network paths take short timeouts and never raise.
+
+### Fixed
+
+- **Downloads now retry transient network failures and resume partial files.** `download_video` wraps yt-dlp in a bounded retry loop (3 attempts, 2s/4s backoff) that triggers only on transient signatures — timeouts, connection resets, HTTP 429/5xx, DNS hiccups — never on permanent failures like private videos or unsupported URLs. `continuedl` is enabled so each retry resumes the partial download instead of starting over; a mid-backoff cancel takes effect immediately.
+
+### Added
+
 - **Drag image overlays anywhere on the frame.** Click and drag any image, logo, sticker, or **animated GIF** overlay on the Trim preview — it moves in lockstep under the cursor and the exported video / GIF renders at the dragged position, not the anchor. Picking a new entry from the Position dropdown (Top Left, Center, …) snaps the overlay back to the anchor so the dropdown label is always truthful. Works the same way text-layer drag already does.
 - **Explicit `x` / `y` in the image-layer data.** When either axis is unset (sentinel `-1`), the preview and ffmpeg backend fall back to the anchor; when both are set, they win as source-video pixel coords. `_overlay_position_expr` grew optional `x=` / `y=` params that clamp negatives to 0 so a drag near the edge can't produce an off-canvas overlay.
 - **`ImageLayersPanel.set_layer_position(index, x, y)`** and **`VideoPlayer.set_image_position_callback(cb)`** — twin public hooks that mirror the text-drag pair, so any future drag source (pen, gesture, plugin) can drive image positioning without patching widget internals.
