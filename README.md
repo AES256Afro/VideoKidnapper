@@ -50,7 +50,11 @@ The empty state tells you every way to load a file: click the preview, drag one 
 
 ![Trim Video with ranges queued + text overlay](assets/screenshots/trim_loaded.png)
 
-With a video loaded: frame preview with pixel-accurate text overlay, two ranges queued (each will be exported as its own clip — or concatenated if "Concat queued ranges" is toggled in Export Options), a text layer with reorder / duplicate / remove buttons, and the waveform showing the selected range highlighted in accent. Timestamp entries accept `HH:MM:SS.mmm` input.
+With a video loaded: thumbnail strip, waveform, a queued range (each queued range exports as its own clip, or they concatenate when "Concat queued ranges" is on), and a Caption-style text layer showing the per-layer controls: multiline text box, bold / italic toggles, and the Outline / Shadow checkboxes. The outlined two-line caption renders on the preview exactly as it will export. Timestamp entries accept `HH:MM:SS.mmm` input.
+
+![Export Options expanded](assets/screenshots/export_options.png)
+
+The expanded **Export Options** panel: speed / rotate / aspect with the **Fill** mode dropdown (Crop or Blur fill), text fade, color grade sliders, concat transitions, and the GIF row (dither algorithm, palette stats mode, loop count).
 
 ### URL Download
 
