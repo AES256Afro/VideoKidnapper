@@ -207,3 +207,68 @@ def test_fetch_latest_version_swallows_network_errors(monkeypatch):
 
     monkeypatch.setattr(urllib.request, "urlopen", boom)
     assert ytdlp_update.fetch_latest_version() is None
+
+
+# ---------------------------------------------------------------------------
+# Cookie resolution + cookie-error friendliness
+# ---------------------------------------------------------------------------
+
+def test_resolve_cookies_none_when_unconfigured():
+    assert downloader.resolve_cookies("", "") is None
+    assert downloader.resolve_cookies() is None
+
+
+def test_resolve_cookies_browser():
+    assert downloader.resolve_cookies("firefox", "") == {"browser": "firefox"}
+
+
+def test_resolve_cookies_file():
+    assert (downloader.resolve_cookies("", "C:/c/cookies.txt")
+            == {"file": "C:/c/cookies.txt"})
+
+
+def test_resolve_cookies_file_wins_over_browser():
+    # A hand-edited settings file may carry both; the file wins.
+    assert (downloader.resolve_cookies("chrome", "/x/cookies.txt")
+            == {"file": "/x/cookies.txt"})
+
+
+@pytest.mark.parametrize("msg", [
+    "ERROR: Could not copy Chrome cookie database. See https://github.com/yt-dlp...",
+    "Failed to decrypt with DPAPI cookies from chrome",
+    "could not find chrome cookies database in ...",
+    "App-Bound encryption prevents reading Chrome cookies",
+])
+def test_cookie_errors_detected(msg):
+    assert downloader._is_cookie_error(msg)
+
+
+@pytest.mark.parametrize("msg", [
+    "This video is private",
+    "Could not copy file to temp dir",     # no 'cookie' in message
+    "Sign in to confirm your age",
+    "",
+    None,
+])
+def test_non_cookie_errors_not_matched(msg):
+    assert not downloader._is_cookie_error(msg)
+
+
+def test_friendly_error_cookie_branch_is_actionable():
+    raw = "ERROR: Could not copy Chrome cookie database. See https://..."
+    out = downloader._friendly_error(raw, "YouTube")
+    # Every escape route must be named, and the actions must appear
+    # early enough to survive the status bar's 160-char truncation.
+    head = out[:160]
+    assert "Close the browser" in head
+    assert "firefox" in head
+    assert "Cookies file" in head
+    assert "(raw:" in out
+
+
+def test_friendly_error_cookie_branch_wins_over_login_hint():
+    # Cookie-read failures often contain 'see https://...' text that can
+    # also trip the login/private heuristics; the cookie branch must win.
+    raw = "Could not copy Chrome cookie database; cookies not available"
+    out = downloader._friendly_error(raw, "Instagram")
+    assert "Browser cookies unreadable" in out
