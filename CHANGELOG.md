@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
+- **Blurred-background aspect fill.** A new **Fill** dropdown next to Aspect in Export Options: **Crop** (the historical center-crop) or **Blur fill**, which fits the whole frame over a scaled, blurred copy of itself — the standard Shorts / Reels / TikTok look for 16:9 → 9:16 conversion, with no pixels lost and no black bars. Compiles to a `split / scale / boxblur / overlay` filtergraph slotted into the same chain position as the aspect crop; blur radius scales with the canvas so 480p and 4K look alike. Persisted via settings schema v6 (additive migration from v5); the default reproduces the historical crop exactly.
+- **`_build_aspect_fill_blur`** in `core/ffmpeg/filters.py` — pure builder with the same defer-to-explicit-crop and invalid-input no-op semantics as `_build_aspect_crop`. Canvas dimensions are forced even for yuv420p.
+
+### Added
+
 - **⟳ Update yt-dlp button** on the URL tab's cookies row. A stale extractor is the most common cause of "this video won't download" — the fix is now one click: upgrades via pip on a worker thread and reports the old/new version (with a restart hint when the old module is already loaded). Bundled `.exe` builds get a clear pointer to the releases page instead, since pip can't install into a PyInstaller bundle.
 - **Outdated-extractor hint on failures.** When a download error matches known stale-extractor signatures ("Unable to extract...", "Unsupported URL", HTTP 403, nsig failures), the error line appends "yt-dlp may be outdated; try ⟳ Update yt-dlp" so users aren't left guessing.
 - **`videokidnapper/utils/ytdlp_update.py`** — version probe (installed vs. PyPI), date-version comparison, frozen-build detection, and the extractor-failure heuristic. All network paths take short timeouts and never raise.
