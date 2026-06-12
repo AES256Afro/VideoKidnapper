@@ -65,6 +65,15 @@ TEXT_STYLES = {
         "boxcolor": "black@0.6",
         "boxborderw": 8,
     },
+    "Caption": {
+        # The social-media caption look: white text, black outline, no box.
+        "position": "bottom_center",
+        "fontsize": 28,
+        "fontcolor": "white",
+        "box": False,
+        "borderw": 2,
+        "bordercolor": "black",
+    },
     "Title": {
         "position": "center",
         "fontsize": 48,

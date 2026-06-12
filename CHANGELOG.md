@@ -11,6 +11,30 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
+- **⟳ Update yt-dlp button** on the URL tab's cookies row. A stale extractor is the most common cause of "this video won't download" — the fix is now one click: upgrades via pip on a worker thread and reports the old/new version (with a restart hint when the old module is already loaded). Bundled `.exe` builds get a clear pointer to the releases page instead, since pip can't install into a PyInstaller bundle.
+- **Outdated-extractor hint on failures.** When a download error matches known stale-extractor signatures ("Unable to extract...", "Unsupported URL", HTTP 403, nsig failures), the error line appends "yt-dlp may be outdated; try ⟳ Update yt-dlp" so users aren't left guessing.
+- **`videokidnapper/utils/ytdlp_update.py`** — version probe (installed vs. PyPI), date-version comparison, frozen-build detection, and the extractor-failure heuristic. All network paths take short timeouts and never raise.
+
+### Fixed
+
+- **Downloads now retry transient network failures and resume partial files.** `download_video` wraps yt-dlp in a bounded retry loop (3 attempts, 2s/4s backoff) that triggers only on transient signatures — timeouts, connection resets, HTTP 429/5xx, DNS hiccups — never on permanent failures like private videos or unsupported URLs. `continuedl` is enabled so each retry resumes the partial download instead of starting over; a mid-backoff cancel takes effect immediately.
+
+### Added
+
+- **Text outline and shadow.** Two new per-layer toggles on every text layer:
+  - **Outline** — drawtext `borderw=2:bordercolor=black`, the classic white-text-black-outline social caption look. Imported layer dicts with other widths (SRT round-trips, plugins) keep their width.
+  - **Shadow** — drawtext `shadowx=2:shadowy=2:shadowcolor=black@0.7`.
+  Both render identically in the live preview (PIL `stroke_width` for outline, offset translucent draw for shadow) and in the export. Off by default — pre-existing layers produce byte-identical filter strings.
+- **Bold / italic text.** B / I checkboxes per layer. The font resolver now finds style-variant files next to the regular face (`arialbd.ttf`, `ariali.ttf`, `georgiab.ttf`, `trebucit.ttf`, `calibriz.ttf`, …) with graceful fallback: missing Bold Italic tries Bold, then Italic, then regular — a missing variant can never fail an export.
+- **Multiline captions.** The text input is now a wrapping 2-line textbox; embedded newlines render as real line breaks in both the preview and the export (drawtext renders `\n` natively). `\r\n` / `\r` are normalised so SRT files and Windows clipboard text can't smuggle tofu glyphs.
+- **"Caption" style preset** — white text, 2px black outline, no box, bottom center. The social-standard look in one click, alongside Subtitle / Title / Watermark / Custom.
+
+### Fixed
+
+- **Preview rendered translucent text elements as opaque.** PIL's `ImageDraw` overwrites pixels rather than alpha-blending, so the subtitle background box (`black@0.6`) and the Watermark preset's `white@0.5` text previewed fully opaque while exporting translucent — a real preview/export divergence. Text layers now render per-layer on a transparent scratch image that is alpha-composited onto the frame, so preview translucency finally matches the export.
+
+### Added
+
 - **GIF palette options: dither, palette stats mode, loop count.** New "GIF" row in Export Options with three dropdowns, all persisted across launches (settings schema v5, additive migration from v4):
   - **Dither** — Bayer (the previous hardcoded default: patterned retro look, smaller files), Floyd-Steinberg (smoother gradients, the GIPHY look), Sierra (middle ground), or None (flat-color sources like screen recordings compress dramatically better without dithering).
   - **Palette** — Full frame (previous behavior) or Motion (`palettegen=stats_mode=diff`), which weights the palette toward pixels that change between frames — a visible quality win for clips with static backgrounds.
