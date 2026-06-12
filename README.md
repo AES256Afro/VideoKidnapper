@@ -10,7 +10,8 @@ A dark-themed desktop tool for trimming videos, downloading clips from the open 
 
 - **Multi-platform downloads** — YouTube, Instagram, Bluesky, Twitter/X, Reddit, Facebook
 - **Batch URL queue** — paste many links, download sequentially, pick one to edit
-- **Pixel-accurate text overlays** — preview matches export (fontsize, position, box padding all match ffmpeg's output)
+- **Resilient downloads:** transient network failures retry automatically and resume the partial file, and a one-click **⟳ Update yt-dlp** button keeps the extractor current
+- **Pixel-accurate text overlays** — preview matches export (fontsize, position, box padding all match ffmpeg's output), with per-layer **outline, shadow, bold / italic, and multiline captions**
 - **Image / logo overlay track** — drop PNGs / JPGs as overlays with per-layer position, scale, opacity, and timing (watermarks, reaction stickers, brand bugs)
 - **Multi-range trimming** — queue N clips from one source, export individually or concatenate into one file
 - **Undo / redo** — Ctrl+Z / Ctrl+Y across text-layer edits, crop, trim range, and queued ranges (50-step history)
@@ -19,7 +20,9 @@ A dark-themed desktop tool for trimming videos, downloading clips from the open 
 - **SRT import** — drop an SRT/VTT file to auto-populate time-synced text layers
 - **Whisper auto-captions** — one click transcribes the current trim range and imports the captions as text layers (requires optional [`faster-whisper`](https://github.com/guillaumekln/faster-whisper))
 - **Crop by click-drag** on the preview canvas, or pick an aspect-ratio preset (1:1, 9:16, 16:9, 4:5, 3:4)
-- **Export options** — speed (0.25×–4×), rotate, mute, audio-only MP3, text fade in/out
+- **Export options** — speed (0.25×–4×), rotate, mute, audio-only MP3, text fade in/out, color grade sliders
+- **GIF tuning:** dither algorithm (Bayer / Floyd-Steinberg / Sierra / None), palette stats mode (Full frame / Motion), and loop count (Forever / Once / 2-5×)
+- **Blurred-background aspect fill:** convert 16:9 to 9:16 (or any aspect preset) with the Shorts / Reels fill look instead of cropping or black bars
 - **Hardware encoding** — auto-probes NVENC / QuickSync / VideoToolbox / AMF and falls back cleanly to libx264
 - **Screen recording** — capture your monitor and drop the result straight into the trim workflow
 - **Share to platform** — one click copies the exported file to clipboard and opens the compose page on YouTube, Instagram, Bluesky, X, Reddit, or Facebook
@@ -33,6 +36,7 @@ A dark-themed desktop tool for trimming videos, downloading clips from the open 
 - **CLI mode** — `python main.py --url ... --start 10 --end 25 --format GIF`
 - **Plugin system** — third-party packages can add tabs and lifecycle hooks via the `videokidnapper.plugins` entry-point group; see [`docs/PLUGINS.md`](docs/PLUGINS.md) for the API
 - **Light / dark themes**
+- **Roadmap:** see [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's planned next (audio track, boomerang GIFs, size-targeted export, silence auto-cut, and more)
 
 ---
 
@@ -63,7 +67,7 @@ Paste a URL and the matching platform chip lights up with its brand color. Suppo
 | **Reddit** | `reddit.com`, `redd.it`, `v.redd.it` (gallery-wrapped + video+audio auto-merged) |
 | **Facebook** | `facebook.com`, `fb.watch`, `fb.com`, `m.facebook.com` |
 
-**Cookies from** lets you export cookies from Chrome / Firefox / Edge / Brave / Opera for Instagram and private X videos that require authentication. yt-dlp is invoked with platform-aware format selectors (progressive MP4 for X/Instagram, HLS-aware for Bluesky, video+audio muxing for Reddit).
+**Cookies from** reads login cookies from Chrome / Firefox / Edge / Brave / Opera, or from a `cookies.txt` export via the **Cookies file…** picker, for Instagram and private X videos that require authentication. Note that current Windows Chrome locks and encrypts its cookie database (App-Bound Encryption), so direct Chrome reads often fail; close Chrome fully, switch to Firefox, or use a cookies file (the in-app error message walks you through exactly that). yt-dlp is invoked with platform-aware format selectors (progressive MP4 for X/Instagram, HLS-aware for Bluesky, video+audio muxing for Reddit), and downloads retry transient network failures with resume.
 
 ![URL Download with batch panel](assets/screenshots/url_batch.png)
 
@@ -105,8 +109,11 @@ After a successful export, the Export dialog reveals a share panel with a captio
 
 Both tabs expose a collapsible **Text Layers** panel with per-layer controls:
 
-- **Style presets** — Subtitle (white-on-black box), Title (large centered), Watermark (small corner), Custom
+- **Style presets** — Subtitle (white-on-black box), Caption (white with black outline, the social-standard look), Title (large centered), Watermark (small corner), Custom
 - Per-layer font (all system fonts), size, color (8 presets + **Custom…** color picker), position (7 anchors)
+- **Bold / italic** toggles, resolved to real font-variant files (`arialbd.ttf`, `ariali.ttf`, ...) with graceful fallback when a variant is missing
+- **Outline** and **Shadow** toggles, compiled to drawtext `borderw` / `shadowx` and mirrored exactly in the preview
+- **Multiline captions:** the text box wraps, and embedded newlines export as real line breaks
 - Per-layer timing slider — exactly when each text appears and disappears
 - Background box toggle
 - ▲ / ▼ reorder, ⧉ duplicate, ✕ remove
@@ -239,7 +246,7 @@ pip install pytest
 python -m pytest tests/ -v
 ```
 
-124+ tests covering URL detection, platform share intents, ffmpeg filter construction (crop clamping, aspect-crop math, fade expressions, hardware encoder picking / probing), settings persistence + schema migration, SRT parser, size estimator, LRU cache behavior, and the DnD payload parser.
+410+ tests covering URL detection, platform share intents, ffmpeg filter construction (crop clamping, aspect-crop and blur-fill math, fade expressions, GIF palette builders, hardware encoder picking / probing), text styling (outline / shadow / font-variant resolution / multiline), download retry classification and cookie resolution, settings persistence + schema migration, SRT parser, size estimator, LRU cache behavior, and the DnD payload parser.
 
 ---
 
