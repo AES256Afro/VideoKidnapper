@@ -65,6 +65,15 @@ GIF_LOOP_CHOICES = [
 GIF_LOOP_LABEL_TO_KEY = dict(GIF_LOOP_CHOICES)
 GIF_LOOP_KEY_TO_LABEL = {k: label for label, k in GIF_LOOP_CHOICES}
 
+# How aspect presets reshape the frame. "crop" center-crops (historical
+# behavior); "blur" fits the frame over a blurred copy of itself.
+ASPECT_FILL_CHOICES = [
+    ("Crop",      "crop"),
+    ("Blur fill", "blur"),
+]
+ASPECT_FILL_LABEL_TO_KEY = dict(ASPECT_FILL_CHOICES)
+ASPECT_FILL_KEY_TO_LABEL = {k: label for label, k in ASPECT_FILL_CHOICES}
+
 
 def _speed_to_float(label):
     try:
@@ -149,6 +158,11 @@ class ExportOptionsPanel(ctk.CTkFrame):
             value=GIF_LOOP_KEY_TO_LABEL.get(
                 settings.get("gif_loop", 0), GIF_LOOP_CHOICES[0][0]),
         )
+        self.aspect_fill_var = ctk.StringVar(
+            value=ASPECT_FILL_KEY_TO_LABEL.get(
+                settings.get("aspect_fill_mode", "crop"),
+                ASPECT_FILL_CHOICES[0][0]),
+        )
 
         self._build_ui()
 
@@ -205,7 +219,14 @@ class ExportOptionsPanel(ctk.CTkFrame):
         self._menu(row2, self.rotate_var, ROTATE_CHOICES, width=80).pack(side="left", padx=(0, 14))
 
         self._menu_label(row2, "Aspect")
-        self._menu(row2, self.aspect_var, ASPECT_CHOICES, width=90).pack(side="left", padx=(0, 14))
+        self._menu(row2, self.aspect_var, ASPECT_CHOICES, width=90).pack(side="left", padx=(0, 6))
+
+        # Fill mode rides next to Aspect — it only matters when an
+        # aspect preset is active.
+        self._menu(
+            row2, self.aspect_fill_var,
+            [label for label, _k in ASPECT_FILL_CHOICES], width=100,
+        ).pack(side="left", padx=(0, 14))
 
         self._menu_label(row2, "Text fade")
         self._menu(row2, self.fade_var, FADE_CHOICES, width=90).pack(side="left")
@@ -449,6 +470,8 @@ class ExportOptionsPanel(ctk.CTkFrame):
                 GIF_STATS_LABEL_TO_KEY.get(self.gif_stats_var.get(), "full"),
             "gif_loop":
                 GIF_LOOP_LABEL_TO_KEY.get(self.gif_loop_var.get(), 0),
+            "aspect_fill_mode":
+                ASPECT_FILL_LABEL_TO_KEY.get(self.aspect_fill_var.get(), "crop"),
         })
         if self._on_change:
             self._on_change()
@@ -481,6 +504,10 @@ class ExportOptionsPanel(ctk.CTkFrame):
                 GIF_STATS_LABEL_TO_KEY.get(self.gif_stats_var.get(), "full"),
             "gif_loop":
                 GIF_LOOP_LABEL_TO_KEY.get(self.gif_loop_var.get(), 0),
+            # Aspect fill mode — picks crop vs blur-fill in
+            # _assemble_video_filters when an aspect preset is active.
+            "aspect_fill_mode":
+                ASPECT_FILL_LABEL_TO_KEY.get(self.aspect_fill_var.get(), "crop"),
         }
 
     def get_output_folder(self):

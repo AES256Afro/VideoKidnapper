@@ -86,8 +86,28 @@ def test_schema_v4_upgrades_to_v5(fresh_settings):
     assert fresh_settings.get("quality") == "High"
     fresh_settings.set("quality", "Ultra")
     saved = json.loads(fresh_settings._SETTINGS_PATH.read_text(encoding="utf-8"))
-    assert saved["_version"] == 5
+    assert saved["_version"] == fresh_settings._CURRENT_SCHEMA
     assert saved["gif_dither"] == "bayer"
+
+
+def test_schema_v5_upgrades_to_v6(fresh_settings):
+    # A v5 settings file (pre-aspect-fill-mode) must pick up the "crop"
+    # default, which reproduces the historical center-crop behavior.
+    import json
+    fresh_settings._SETTINGS_PATH.write_text(
+        json.dumps({
+            "_version": 5,
+            "quality": "High",
+            "gif_dither": "none",
+        }),
+        encoding="utf-8",
+    )
+    assert fresh_settings.get("aspect_fill_mode") == "crop"
+    assert fresh_settings.get("gif_dither") == "none"
+    fresh_settings.set("quality", "Ultra")
+    saved = json.loads(fresh_settings._SETTINGS_PATH.read_text(encoding="utf-8"))
+    assert saved["_version"] == 6
+    assert saved["aspect_fill_mode"] == "crop"
 
 
 def test_batch_jobs_round_trip(fresh_settings):

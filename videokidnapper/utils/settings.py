@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 _SETTINGS_PATH = Path.home() / ".videokidnapper_settings.json"
-_CURRENT_SCHEMA = 5
+_CURRENT_SCHEMA = 6
 
 # In-process lock for the read-modify-write cycle. Two export threads
 # finishing at the same moment both did `data = _read(); data[k] = v;
@@ -63,6 +63,10 @@ _DEFAULTS = {
     "gif_dither":     "bayer",   # see filters.GIF_DITHER_PARAMS
     "gif_stats_mode": "full",    # "full" | "diff"
     "gif_loop":       0,         # 0 forever, -1 once, N>0 extra loops
+    # How aspect-ratio presets reshape the frame: "crop" center-crops
+    # (the historical behavior), "blur" fits the frame over a blurred
+    # copy of itself (the Shorts / Reels fill look).
+    "aspect_fill_mode": "crop",
 }
 
 _HISTORY_MAX = 25
@@ -113,6 +117,11 @@ def _migrate(data):
         data.setdefault("gif_stats_mode", "full")
         data.setdefault("gif_loop", 0)
         version = 5
+    if version < 6:
+        # Schema 6: added aspect fill mode. "crop" reproduces the
+        # historical center-crop behavior.
+        data.setdefault("aspect_fill_mode", "crop")
+        version = 6
     data["_version"] = version
     return data
 
