@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
+- **⟳ Update yt-dlp button** on the URL tab's cookies row. A stale extractor is the most common cause of "this video won't download" — the fix is now one click: upgrades via pip on a worker thread and reports the old/new version (with a restart hint when the old module is already loaded). Bundled `.exe` builds get a clear pointer to the releases page instead, since pip can't install into a PyInstaller bundle.
+- **Outdated-extractor hint on failures.** When a download error matches known stale-extractor signatures ("Unable to extract...", "Unsupported URL", HTTP 403, nsig failures), the error line appends "yt-dlp may be outdated; try ⟳ Update yt-dlp" so users aren't left guessing.
+- **`videokidnapper/utils/ytdlp_update.py`** — version probe (installed vs. PyPI), date-version comparison, frozen-build detection, and the extractor-failure heuristic. All network paths take short timeouts and never raise.
+
+### Fixed
+
+- **Downloads now retry transient network failures and resume partial files.** `download_video` wraps yt-dlp in a bounded retry loop (3 attempts, 2s/4s backoff) that triggers only on transient signatures — timeouts, connection resets, HTTP 429/5xx, DNS hiccups — never on permanent failures like private videos or unsupported URLs. `continuedl` is enabled so each retry resumes the partial download instead of starting over; a mid-backoff cancel takes effect immediately.
+
+### Added
+
 - **Text outline and shadow.** Two new per-layer toggles on every text layer:
   - **Outline** — drawtext `borderw=2:bordercolor=black`, the classic white-text-black-outline social caption look. Imported layer dicts with other widths (SRT round-trips, plugins) keep their width.
   - **Shadow** — drawtext `shadowx=2:shadowy=2:shadowcolor=black@0.7`.
