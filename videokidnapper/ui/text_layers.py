@@ -22,8 +22,47 @@ def _get_system_fonts():
         return ["Arial", "Segoe UI", "Helvetica", "Verdana", "Times New Roman"]
 
 
-def _find_font_path(font_name):
-    fonts_dir = os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts")
+# Style-variant filename suffixes, tried in order against the regular
+# face's stem. Windows font files follow loose conventions: arialbd.ttf /
+# ariali.ttf / arialbi.ttf, georgiab.ttf / georgiai.ttf / georgiaz.ttf,
+# trebucbd.ttf / trebucit.ttf / trebucbi.ttf, calibrib / calibrii /
+# calibriz... The candidate lists cover all of those.
+_VARIANT_SUFFIXES = {
+    (True, False): ("bd", "b"),           # bold
+    (False, True): ("i", "it"),           # italic
+    (True, True):  ("bi", "z", "bdit"),   # bold italic
+}
+
+
+def _variant_font_path(regular_path, bold, italic):
+    """Resolve the bold/italic variant file next to ``regular_path``.
+
+    Returns the variant path when a matching file exists, else the
+    regular path — a missing Bold face silently renders regular rather
+    than failing the export. Pure path math + ``os.path.exists``, so
+    it's unit-testable with a temp fonts dir.
+    """
+    if not (bold or italic):
+        return regular_path
+    base, ext = os.path.splitext(regular_path)
+    for suffix in _VARIANT_SUFFIXES[(bool(bold), bool(italic))]:
+        candidate = base + suffix + ext
+        if os.path.exists(candidate):
+            return candidate
+    # Bold italic with no dedicated file: fall back to plain bold, then
+    # plain italic, before giving up — closer to the asked-for look.
+    if bold and italic:
+        for key in ((True, False), (False, True)):
+            for suffix in _VARIANT_SUFFIXES[key]:
+                candidate = base + suffix + ext
+                if os.path.exists(candidate):
+                    return candidate
+    return regular_path
+
+
+def _find_font_path(font_name, bold=False, italic=False, fonts_dir=None):
+    if fonts_dir is None:
+        fonts_dir = os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts")
     name_lower = font_name.lower().replace(" ", "")
     common = {
         "arial": "arial.ttf", "arialblack": "ariblk.ttf",
@@ -38,17 +77,18 @@ def _find_font_path(font_name):
     if name_lower in common:
         path = os.path.join(fonts_dir, common[name_lower])
         if os.path.exists(path):
-            return path
+            return _variant_font_path(path, bold, italic)
     # Try direct match
     for ext in (".ttf", ".otf", ".ttc"):
         path = os.path.join(fonts_dir, font_name.replace(" ", "") + ext)
         if os.path.exists(path):
-            return path
+            return _variant_font_path(path, bold, italic)
         path = os.path.join(fonts_dir, font_name.replace(" ", "").lower() + ext)
         if os.path.exists(path):
-            return path
+            return _variant_font_path(path, bold, italic)
     # Fallback to arial
-    return os.path.join(fonts_dir, "arial.ttf")
+    return _variant_font_path(
+        os.path.join(fonts_dir, "arial.ttf"), bold, italic)
 
 
 class TextLayerWidget(ctk.CTkFrame):
@@ -136,17 +176,22 @@ class TextLayerWidget(ctk.CTkFrame):
         )
         self.style_menu.pack(side="right", padx=(0, 8))
 
-        # Row 2: Text input
+        # Row 2: Text input — a 2-line textbox so captions can wrap.
+        # Embedded newlines flow through to drawtext (and the PIL preview)
+        # as real line breaks. ``text_var`` mirrors the textbox content so
+        # the panel's trace-based change wiring keeps working.
         row2 = ctk.CTkFrame(self, fg_color="transparent")
         row2.pack(fill="x", padx=10, pady=2)
 
         self.text_var = ctk.StringVar(value="")
-        self.text_entry = ctk.CTkEntry(
-            row2, textvariable=self.text_var,
-            placeholder_text="Enter text...",
-            font=ctk.CTkFont(size=13), height=32,
+        self.text_box = ctk.CTkTextbox(
+            row2, height=56, wrap="word",
+            font=ctk.CTkFont(size=13),
+            border_width=1,
         )
-        self.text_entry.pack(fill="x")
+        self.text_box.pack(fill="x")
+        self.text_box.bind("<KeyRelease>", self._sync_text_var)
+        self.text_box.bind("<FocusOut>", self._sync_text_var)
 
         # Row 3: Font, size, color, position
         row3 = ctk.CTkFrame(self, fg_color="transparent")
@@ -169,6 +214,22 @@ class TextLayerWidget(ctk.CTkFrame):
         )
         self.size_entry.pack(side="left", padx=(2, 8))
 
+        # Bold / italic toggles — resolved to font-variant files at
+        # export and preview time (arialbd.ttf, ariali.ttf, ...).
+        self.bold_var = ctk.BooleanVar(value=False)
+        self.bold_cb = ctk.CTkCheckBox(
+            row3, text="B", variable=self.bold_var, width=36,
+            font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        self.bold_cb.pack(side="left", padx=(0, 2))
+
+        self.italic_var = ctk.BooleanVar(value=False)
+        self.italic_cb = ctk.CTkCheckBox(
+            row3, text="I", variable=self.italic_var, width=36,
+            font=ctk.CTkFont(size=12, slant="italic"),
+        )
+        self.italic_cb.pack(side="left", padx=(0, 8))
+
         ctk.CTkLabel(row3, text="Color:", font=ctk.CTkFont(size=11)).pack(side="left")
         self.color_var = ctk.StringVar(value="White")
         self.color_menu = ctk.CTkOptionMenu(
@@ -189,17 +250,39 @@ class TextLayerWidget(ctk.CTkFrame):
         )
         self.position_menu.pack(side="left", padx=(2, 0))
 
-        # Row 4: Background toggle
+        # Row 4: Background box / outline / shadow toggles
         row4 = ctk.CTkFrame(self, fg_color="transparent")
         row4.pack(fill="x", padx=10, pady=2)
 
         self.box_var = ctk.BooleanVar(value=True)
         self.box_cb = ctk.CTkCheckBox(
-            row4, text="Background box (subtitle style)",
+            row4, text="Background box",
             variable=self.box_var,
             font=ctk.CTkFont(size=11),
         )
-        self.box_cb.pack(side="left")
+        self.box_cb.pack(side="left", padx=(0, 12))
+
+        # Outline / shadow widths and offsets default to the social-caption
+        # standard (2px). load_from_dict preserves imported values in the
+        # private fields so a round-trip doesn't normalise them away.
+        self._borderw = 2
+        self._shadow_offset = (2, 2)
+
+        self.outline_var = ctk.BooleanVar(value=False)
+        self.outline_cb = ctk.CTkCheckBox(
+            row4, text="Outline",
+            variable=self.outline_var,
+            font=ctk.CTkFont(size=11),
+        )
+        self.outline_cb.pack(side="left", padx=(0, 12))
+
+        self.shadow_var = ctk.BooleanVar(value=False)
+        self.shadow_cb = ctk.CTkCheckBox(
+            row4, text="Shadow",
+            variable=self.shadow_var,
+            font=ctk.CTkFont(size=11),
+        )
+        self.shadow_cb.pack(side="left")
 
         # Row 5: Timing slider
         row5 = ctk.CTkFrame(self, fg_color="transparent")
@@ -229,6 +312,17 @@ class TextLayerWidget(ctk.CTkFrame):
             self._fonts = _get_system_fonts()
         return self._fonts
 
+    def _sync_text_var(self, _event=None):
+        """Mirror the textbox into ``text_var`` so traces keep firing."""
+        value = self.text_box.get("1.0", "end-1c")
+        if value != self.text_var.get():
+            self.text_var.set(value)
+
+    def _set_text(self, value):
+        self.text_box.delete("1.0", "end")
+        self.text_box.insert("1.0", value or "")
+        self.text_var.set(value or "")
+
     def _on_style_change(self, style_name):
         style = TEXT_STYLES.get(style_name, {})
         if not style:
@@ -248,6 +342,11 @@ class TextLayerWidget(ctk.CTkFrame):
         self.position_var.set(pos_display)
         self.size_var.set(str(style.get("fontsize", 24)))
         self.box_var.set(style.get("box", False))
+        self.outline_var.set(int(style.get("borderw", 0) or 0) > 0)
+        if int(style.get("borderw", 0) or 0) > 0:
+            self._borderw = int(style["borderw"])
+        self.shadow_var.set(
+            bool(style.get("shadowx") or style.get("shadowy")))
 
         # Map fontcolor to color name
         fc = style.get("fontcolor", "white")
@@ -330,23 +429,51 @@ class TextLayerWidget(ctk.CTkFrame):
         except ValueError:
             fontsize = 24
 
+        sx, sy = self._shadow_offset
         return {
-            "text": self.text_var.get(),
+            "text": self.text_box.get("1.0", "end-1c"),
             "font": self.font_var.get(),
             "fontsize": fontsize,
             "fontcolor": fontcolor,
             "position": pos_expr,
             "box": self.box_var.get(),
+            "bold": bool(self.bold_var.get()),
+            "italic": bool(self.italic_var.get()),
+            "borderw": self._borderw if self.outline_var.get() else 0,
+            "bordercolor": "black",
+            "shadowx": sx if self.shadow_var.get() else 0,
+            "shadowy": sy if self.shadow_var.get() else 0,
+            "shadowcolor": "black@0.7",
             "start": start,
             "end": end,
         }
 
     def load_from_dict(self, data):
         """Populate this widget from a layer dict (used for duplicate/import)."""
-        self.text_var.set(data.get("text", ""))
+        self._set_text(data.get("text", ""))
         self.font_var.set(data.get("font", "Arial"))
         self.size_var.set(str(data.get("fontsize", 24)))
         self.box_var.set(bool(data.get("box", True)))
+        self.bold_var.set(bool(data.get("bold", False)))
+        self.italic_var.set(bool(data.get("italic", False)))
+        # Outline / shadow: a positive imported width / offset is preserved
+        # in the private fields so duplicate and undo round-trips don't
+        # normalise it back to the 2px default.
+        try:
+            borderw = int(data.get("borderw", 0) or 0)
+        except (TypeError, ValueError):
+            borderw = 0
+        self.outline_var.set(borderw > 0)
+        if borderw > 0:
+            self._borderw = borderw
+        try:
+            sx = int(data.get("shadowx", 0) or 0)
+            sy = int(data.get("shadowy", 0) or 0)
+        except (TypeError, ValueError):
+            sx = sy = 0
+        self.shadow_var.set(bool(sx or sy))
+        if sx or sy:
+            self._shadow_offset = (sx, sy)
         # Position: match a preset name, fall back to numeric custom, else default.
         pos_expr = data.get("position", "(w-tw)/2:h-th-20")
         friendly = next(
@@ -517,6 +644,10 @@ class TextLayersPanel(ctk.CTkFrame):
         layer.position_var.trace_add("write", fire)
         layer.style_var.trace_add("write", fire)
         layer.box_var.trace_add("write", fire)
+        layer.bold_var.trace_add("write", fire)
+        layer.italic_var.trace_add("write", fire)
+        layer.outline_var.trace_add("write", fire)
+        layer.shadow_var.trace_add("write", fire)
         original_time_cb = layer._on_time_change
         def time_cb(start, end):
             original_time_cb(start, end)
