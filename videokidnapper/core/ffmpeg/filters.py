@@ -243,6 +243,64 @@ def _build_aspect_crop(preset, info, explicit_crop):
     return f"crop={max(2, new_w)}:{max(2, new_h)}:{max(0, x)}:{max(0, y)}"
 
 
+def _even(value):
+    """Round down to the nearest even int (min 2) — yuv420p needs even dims."""
+    value = int(value)
+    return max(2, value - (value % 2))
+
+
+def _build_aspect_fill_blur(preset, info, explicit_crop):
+    """Fit the source into a target aspect ratio over a blurred copy of itself.
+
+    The modern Shorts / Reels look for aspect conversion: instead of
+    center-cropping (losing pixels) or letterboxing (black bars), the
+    bars are filled with a scaled-up, blurred copy of the frame.
+
+    Returns a multi-chain filtergraph segment::
+
+        split=2[bfm][bfb];
+        [bfb]scale=W:H:force_original_aspect_ratio=increase,
+             crop=W:H,boxblur=R[bfbg];
+        [bfm]scale=W:H:force_original_aspect_ratio=decrease[bffg];
+        [bfbg][bffg]overlay=(W-w)/2:(H-h)/2
+
+    which is still valid inside a comma-joined ``-vf`` chain: the
+    preceding filter's output feeds ``split``, and ``overlay``'s output
+    feeds whatever comes next. Same defer-to-explicit-crop and same slot
+    in the chain as ``_build_aspect_crop`` — the two are alternative
+    modes of the one aspect step, picked by ``aspect_fill_mode``.
+    """
+    if explicit_crop:
+        return None
+    try:
+        a, b = preset.split(":")
+        target = float(a) / float(b)
+    except (ValueError, ZeroDivisionError, AttributeError):
+        return None
+    sw, sh = info.get("width", 0), info.get("height", 0)
+    if sw <= 0 or sh <= 0:
+        return None
+    src_ratio = sw / sh
+    if abs(src_ratio - target) < 0.001:
+        return None
+    # Canvas: keep the constraining source dimension, derive the other
+    # from the target ratio. A 16:9 source going 9:16 keeps its height.
+    if src_ratio > target:
+        canvas_w, canvas_h = _even(sh * target), _even(sh)
+    else:
+        canvas_w, canvas_h = _even(sw), _even(sw / target)
+    # Blur strength scales with the canvas so 480p and 4K look alike.
+    radius = max(2, min(canvas_w, canvas_h) // 20)
+    size = f"{canvas_w}:{canvas_h}"
+    return (
+        f"split=2[bfm][bfb];"
+        f"[bfb]scale={size}:force_original_aspect_ratio=increase,"
+        f"crop={size},boxblur={radius}[bfbg];"
+        f"[bfm]scale={size}:force_original_aspect_ratio=decrease[bffg];"
+        f"[bfbg][bffg]overlay=(W-w)/2:(H-h)/2"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Image overlay track
 # ---------------------------------------------------------------------------
@@ -391,10 +449,15 @@ def _assemble_video_filters(preset_name, info, text_layers, options):
     options = options or {}
 
     # Aspect preset is a second crop; `_build_aspect_crop` itself defers
-    # to any explicit crop, so putting aspect first is harmless.
+    # to any explicit crop, so putting aspect first is harmless. The
+    # "blur" fill mode swaps the crop for a fit-over-blurred-background
+    # composite at the same chain position.
     aspect = options.get("aspect_preset")
     if aspect and aspect != "Source":
-        f = _build_aspect_crop(aspect, info, options.get("crop"))
+        if options.get("aspect_fill_mode") == "blur":
+            f = _build_aspect_fill_blur(aspect, info, options.get("crop"))
+        else:
+            f = _build_aspect_crop(aspect, info, options.get("crop"))
         if f:
             filters.append(f)
 

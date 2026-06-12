@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
+- **Blurred-background aspect fill.** A new **Fill** dropdown next to Aspect in Export Options: **Crop** (the historical center-crop) or **Blur fill**, which fits the whole frame over a scaled, blurred copy of itself — the standard Shorts / Reels / TikTok look for 16:9 → 9:16 conversion, with no pixels lost and no black bars. Compiles to a `split / scale / boxblur / overlay` filtergraph slotted into the same chain position as the aspect crop; blur radius scales with the canvas so 480p and 4K look alike. Persisted via settings schema v6 (additive migration from v5); the default reproduces the historical crop exactly.
+- **`_build_aspect_fill_blur`** in `core/ffmpeg/filters.py` — pure builder with the same defer-to-explicit-crop and invalid-input no-op semantics as `_build_aspect_crop`. Canvas dimensions are forced even for yuv420p.
+
+### Added
+
 - **GIF palette options: dither, palette stats mode, loop count.** New "GIF" row in Export Options with three dropdowns, all persisted across launches (settings schema v5, additive migration from v4):
   - **Dither** — Bayer (the previous hardcoded default: patterned retro look, smaller files), Floyd-Steinberg (smoother gradients, the GIPHY look), Sierra (middle ground), or None (flat-color sources like screen recordings compress dramatically better without dithering).
   - **Palette** — Full frame (previous behavior) or Motion (`palettegen=stats_mode=diff`), which weights the palette toward pixels that change between frames — a visible quality win for clips with static backgrounds.
