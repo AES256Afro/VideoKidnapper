@@ -59,11 +59,35 @@ def test_schema_v3_upgrades_to_v4(fresh_settings, tmp_path):
     assert fresh_settings.get("batch_jobs") == []
     assert fresh_settings.get("quality") == "High"
     assert fresh_settings.get("color_brightness") == 0.1
-    # Touching any key rewrites the file; verify the version bumped.
+    # Touching any key rewrites the file; verify the version bumped to
+    # whatever the current schema is (writes always stamp _CURRENT_SCHEMA).
     fresh_settings.set("quality", "Ultra")
     saved = json.loads(fresh_settings._SETTINGS_PATH.read_text(encoding="utf-8"))
-    assert saved["_version"] == 4
+    assert saved["_version"] == fresh_settings._CURRENT_SCHEMA
     assert saved["batch_jobs"] == []
+
+
+def test_schema_v4_upgrades_to_v5(fresh_settings):
+    # A v4 settings file (pre-GIF-options) must pick up the new GIF
+    # defaults (matching the previously-hardcoded pipeline values)
+    # without clobbering existing settings.
+    import json
+    fresh_settings._SETTINGS_PATH.write_text(
+        json.dumps({
+            "_version": 4,
+            "quality": "High",
+            "batch_jobs": [],
+        }),
+        encoding="utf-8",
+    )
+    assert fresh_settings.get("gif_dither") == "bayer"
+    assert fresh_settings.get("gif_stats_mode") == "full"
+    assert fresh_settings.get("gif_loop") == 0
+    assert fresh_settings.get("quality") == "High"
+    fresh_settings.set("quality", "Ultra")
+    saved = json.loads(fresh_settings._SETTINGS_PATH.read_text(encoding="utf-8"))
+    assert saved["_version"] == 5
+    assert saved["gif_dither"] == "bayer"
 
 
 def test_batch_jobs_round_trip(fresh_settings):

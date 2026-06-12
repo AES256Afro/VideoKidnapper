@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 _SETTINGS_PATH = Path.home() / ".videokidnapper_settings.json"
-_CURRENT_SCHEMA = 4
+_CURRENT_SCHEMA = 5
 
 # In-process lock for the read-modify-write cycle. Two export threads
 # finishing at the same moment both did `data = _read(); data[k] = v;
@@ -58,6 +58,11 @@ _DEFAULTS = {
     # tab restores the queue on launch so a crash / force-quit mid-
     # batch doesn't lose the user's queue + per-row overrides.
     "batch_jobs":                 [],
+    # GIF pipeline options. Defaults reproduce the historical hardcoded
+    # behavior (bayer dither, full-frame palette stats, loop forever).
+    "gif_dither":     "bayer",   # see filters.GIF_DITHER_PARAMS
+    "gif_stats_mode": "full",    # "full" | "diff"
+    "gif_loop":       0,         # 0 forever, -1 once, N>0 extra loops
 }
 
 _HISTORY_MAX = 25
@@ -100,6 +105,14 @@ def _migrate(data):
         # add files to the new tab.
         data.setdefault("batch_jobs", [])
         version = 4
+    if version < 5:
+        # Schema 5: added GIF pipeline options (dither / palette stats
+        # mode / loop count). Defaults match the previously-hardcoded
+        # values so existing users' GIFs are byte-identical.
+        data.setdefault("gif_dither", "bayer")
+        data.setdefault("gif_stats_mode", "full")
+        data.setdefault("gif_loop", 0)
+        version = 5
     data["_version"] = version
     return data
 
