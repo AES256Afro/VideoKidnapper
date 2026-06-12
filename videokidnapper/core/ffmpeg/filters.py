@@ -161,13 +161,29 @@ def _fade_alpha_expr(start, end, fade):
     )
 
 
+def _coerce_int(value, default=0):
+    """Best-effort int conversion — corrupt layer dicts must not break encodes."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _build_drawtext_filter(layer, fade=0.0):
     # Late import avoids a tk-at-import-time dependency during pytest collection
     # when the font-discovery path pulls in the UI layer.
     from videokidnapper.ui.text_layers import _find_font_path
 
-    text = escape_drawtext_value(layer.get("text", ""))
-    font_path = escape_path(_find_font_path(layer.get("font", "Arial")))
+    # Normalise line endings first: the UI textbox and SRT files can hand
+    # us \r\n. drawtext renders embedded \n as line breaks, but a stray
+    # \r shows up as a tofu glyph.
+    raw_text = str(layer.get("text", "")).replace("\r\n", "\n").replace("\r", "\n")
+    text = escape_drawtext_value(raw_text)
+    font_path = escape_path(_find_font_path(
+        layer.get("font", "Arial"),
+        bold=bool(layer.get("bold")),
+        italic=bool(layer.get("italic")),
+    ))
     fontsize = int(layer.get("fontsize", 24))
     fontcolor = layer.get("fontcolor", "white")
     pos_expr = layer.get("position", "(w-tw)/2:h-th-20")
@@ -189,6 +205,21 @@ def _build_drawtext_filter(layer, fade=0.0):
     alpha = _fade_alpha_expr(start_t, end_t, layer_fade)
     if alpha:
         parts.append(f"alpha={alpha}")
+
+    # Outline (drawtext border). Width 0 means off and is omitted entirely,
+    # so pre-existing layer dicts produce byte-identical filter strings.
+    borderw = max(0, _coerce_int(layer.get("borderw", 0)))
+    if borderw:
+        parts.append(f"borderw={borderw}")
+        parts.append(f"bordercolor={layer.get('bordercolor') or 'black'}")
+
+    # Drop shadow — off unless either offset is non-zero.
+    shadowx = _coerce_int(layer.get("shadowx", 0))
+    shadowy = _coerce_int(layer.get("shadowy", 0))
+    if shadowx or shadowy:
+        parts.append(f"shadowx={shadowx}")
+        parts.append(f"shadowy={shadowy}")
+        parts.append(f"shadowcolor={layer.get('shadowcolor') or 'black@0.7'}")
 
     if layer.get("box"):
         boxcolor = layer.get("boxcolor", "black@0.6")
