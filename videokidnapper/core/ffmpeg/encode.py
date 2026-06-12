@@ -17,6 +17,7 @@ manage the subprocess lifecycle (progress parsing, cancellation, exit
 codes).
 """
 
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -28,9 +29,23 @@ from videokidnapper.core.ffmpeg._internals import (
 )
 from videokidnapper.core.ffmpeg.filters import (
     _assemble_video_filters, _build_audio_speed,
-    _build_image_overlay_chain, _build_scale_filter,
+    _build_image_overlay_chain, _build_palettegen_filter,
+    _build_paletteuse_filter, _build_scale_filter, _gif_loop_flag,
 )
 from videokidnapper.core.ffmpeg.probe import get_video_info
+
+
+def _mkstemp_path(suffix):
+    """Create a closed, empty temp file and return its Path.
+
+    ``tempfile.mktemp`` (the old approach) only reserved a *name*, so two
+    concurrent exports — reachable since the Batch Export tab — could race
+    to the same palette path. ``mkstemp`` creates the file atomically;
+    ffmpeg's ``-y`` overwrites it happily.
+    """
+    fd, name = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+    return Path(name)
 
 
 # ---------------------------------------------------------------------------
@@ -160,101 +175,106 @@ def trim_to_gif(input_path, start, end, preset_name, output_path,
     # single extra lossy pass before it.
     valid_images = [L for L in (image_layers or []) if (L or {}).get("path")]
     if valid_images:
-        intermediate = Path(tempfile.mktemp(suffix=".mp4"))
+        intermediate = _mkstemp_path(".mp4")
 
         def intermediate_progress(p):
             if progress_callback:
                 # Intermediate encode gets the first half of the bar.
                 progress_callback(p * 0.5)
 
-        mp4_options = dict(options)
-        # Force libx264 for the intermediate — the final GIF is
-        # palette-reduced anyway, so HW encoder speed > quality.
-        mp4_options["hw_encoder"] = "off"
-        result = trim_to_video(
-            str(input_path), start, end, preset_name, str(intermediate),
-            text_layers=text_layers,
-            image_layers=image_layers,
-            progress_callback=intermediate_progress,
-            cancel_event=cancel_event,
-            options=mp4_options,
-        )
-        if not result or (cancel_event and cancel_event.is_set()):
+        try:
+            mp4_options = dict(options)
+            # Force libx264 for the intermediate — the final GIF is
+            # palette-reduced anyway, so HW encoder speed > quality.
+            mp4_options["hw_encoder"] = "off"
+            result = trim_to_video(
+                str(input_path), start, end, preset_name, str(intermediate),
+                text_layers=text_layers,
+                image_layers=image_layers,
+                progress_callback=intermediate_progress,
+                cancel_event=cancel_event,
+                options=mp4_options,
+            )
+            if not result or (cancel_event and cancel_event.is_set()):
+                return None
+
+            # Now GIF-encode the intermediate. Re-invoke trim_to_gif
+            # without image_layers and pointing at the new input. Text
+            # layers are already baked in, so skip them too.
+            def gif_half_progress(p):
+                if progress_callback:
+                    progress_callback(0.5 + p * 0.5)
+
+            return trim_to_gif(
+                str(intermediate),
+                start=0.0,
+                end=duration,
+                preset_name=preset_name,
+                output_path=output_path,
+                text_layers=None,
+                image_layers=None,
+                progress_callback=gif_half_progress,
+                cancel_event=cancel_event,
+                options={k: v for k, v in options.items()
+                         if k not in ("aspect_preset", "crop", "rotate", "speed")},
+            )
+        finally:
             intermediate.unlink(missing_ok=True)
-            return None
 
-        # Now GIF-encode the intermediate. Re-invoke trim_to_gif
-        # without image_layers and pointing at the new input. Text
-        # layers are already baked in, so skip them too.
-        def gif_half_progress(p):
-            if progress_callback:
-                progress_callback(0.5 + p * 0.5)
-
-        gif_result = trim_to_gif(
-            str(intermediate),
-            start=0.0,
-            end=duration,
-            preset_name=preset_name,
-            output_path=output_path,
-            text_layers=None,
-            image_layers=None,
-            progress_callback=gif_half_progress,
-            cancel_event=cancel_event,
-            options={k: v for k, v in options.items()
-                     if k not in ("aspect_preset", "crop", "rotate", "speed")},
-        )
-        intermediate.unlink(missing_ok=True)
-        return gif_result
-
-    palette_path = Path(tempfile.mktemp(suffix=".png"))
+    palette_path = _mkstemp_path(".png")
 
     filters = [f"fps={preset['fps']}"]
     filters.extend(_assemble_video_filters(preset_name, info, text_layers, options))
     filter_str = ",".join(filters)
 
-    cmd1 = [
-        _get_ffmpeg(), "-y",
-        "-ss", str(start),
-        "-i", str(input_path),
-        "-t", str(duration),
-        "-vf", f"{filter_str},palettegen=max_colors={preset['gif_colors']}",
-        str(palette_path),
-    ]
-    subprocess.run(cmd1, capture_output=True, timeout=180, **_run_kwargs())
+    palettegen = _build_palettegen_filter(
+        preset["gif_colors"], options.get("gif_stats_mode", "full"))
+    paletteuse = _build_paletteuse_filter(options.get("gif_dither", "bayer"))
 
-    if cancel_event and cancel_event.is_set():
-        palette_path.unlink(missing_ok=True)
-        return None
+    try:
+        cmd1 = [
+            _get_ffmpeg(), "-y",
+            "-ss", str(start),
+            "-i", str(input_path),
+            "-t", str(duration),
+            "-vf", f"{filter_str},{palettegen}",
+            str(palette_path),
+        ]
+        subprocess.run(cmd1, capture_output=True, timeout=180, **_run_kwargs())
 
-    if progress_callback:
-        progress_callback(0.3)
+        if cancel_event and cancel_event.is_set():
+            return None
 
-    cmd2 = [
-        _get_ffmpeg(), "-y",
-        "-ss", str(start),
-        "-i", str(input_path),
-        "-i", str(palette_path),
-        "-t", str(duration),
-        "-lavfi", f"{filter_str} [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=5",
-        "-loop", "0",
-        str(output_path),
-    ]
-    process = subprocess.Popen(
-        cmd2, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,
-        **_run_kwargs(),
-    )
-
-    def gif_progress(p):
         if progress_callback:
-            progress_callback(0.3 + p * 0.7)
+            progress_callback(0.3)
 
-    tail = _parse_progress(process, duration, gif_progress, cancel_event)
-    process.wait()
-    palette_path.unlink(missing_ok=True)
-    if process.returncode != 0:
-        _log_ffmpeg_failure(cmd2, process.returncode, tail)
-        return None
-    return output_path
+        cmd2 = [
+            _get_ffmpeg(), "-y",
+            "-ss", str(start),
+            "-i", str(input_path),
+            "-i", str(palette_path),
+            "-t", str(duration),
+            "-lavfi", f"{filter_str} [x]; [x][1:v] {paletteuse}",
+            "-loop", str(_gif_loop_flag(options.get("gif_loop", 0))),
+            str(output_path),
+        ]
+        process = subprocess.Popen(
+            cmd2, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,
+            **_run_kwargs(),
+        )
+
+        def gif_progress(p):
+            if progress_callback:
+                progress_callback(0.3 + p * 0.7)
+
+        tail = _parse_progress(process, duration, gif_progress, cancel_event)
+        process.wait()
+        if process.returncode != 0:
+            _log_ffmpeg_failure(cmd2, process.returncode, tail)
+            return None
+        return output_path
+    finally:
+        palette_path.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +323,8 @@ def frames_to_video(frame_dir, fps, preset_name, output_path,
 
 
 def frames_to_gif(frame_dir, fps, preset_name, output_path,
-                  progress_callback=None, cancel_event=None):
+                  progress_callback=None, cancel_event=None,
+                  options=None):
     preset = PRESETS[preset_name]
     frame_dir = Path(frame_dir)
     frames = sorted(frame_dir.glob("frame_*.png"))
@@ -311,7 +332,8 @@ def frames_to_gif(frame_dir, fps, preset_name, output_path,
         return None
 
     duration = len(frames) / fps
-    palette_path = Path(tempfile.mktemp(suffix=".png"))
+    options = options or {}
+    palette_path = _mkstemp_path(".png")
 
     filters = [f"fps={preset['fps']}"]
     scale = _build_scale_filter(preset_name)
@@ -319,44 +341,49 @@ def frames_to_gif(frame_dir, fps, preset_name, output_path,
         filters.append(scale)
     filter_str = ",".join(filters)
 
-    cmd1 = [
-        _get_ffmpeg(), "-y",
-        "-framerate", str(fps),
-        "-i", str(frame_dir / "frame_%06d.png"),
-        "-vf", f"{filter_str},palettegen=max_colors={preset['gif_colors']}",
-        str(palette_path),
-    ]
-    subprocess.run(cmd1, capture_output=True, timeout=180, **_run_kwargs())
+    palettegen = _build_palettegen_filter(
+        preset["gif_colors"], options.get("gif_stats_mode", "full"))
+    paletteuse = _build_paletteuse_filter(options.get("gif_dither", "bayer"))
 
-    if cancel_event and cancel_event.is_set():
-        palette_path.unlink(missing_ok=True)
-        return None
+    try:
+        cmd1 = [
+            _get_ffmpeg(), "-y",
+            "-framerate", str(fps),
+            "-i", str(frame_dir / "frame_%06d.png"),
+            "-vf", f"{filter_str},{palettegen}",
+            str(palette_path),
+        ]
+        subprocess.run(cmd1, capture_output=True, timeout=180, **_run_kwargs())
 
-    if progress_callback:
-        progress_callback(0.3)
+        if cancel_event and cancel_event.is_set():
+            return None
 
-    cmd2 = [
-        _get_ffmpeg(), "-y",
-        "-framerate", str(fps),
-        "-i", str(frame_dir / "frame_%06d.png"),
-        "-i", str(palette_path),
-        "-lavfi", f"{filter_str} [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=5",
-        "-loop", "0",
-        str(output_path),
-    ]
-    process = subprocess.Popen(
-        cmd2, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,
-        **_run_kwargs(),
-    )
-
-    def gif_progress(p):
         if progress_callback:
-            progress_callback(0.3 + p * 0.7)
+            progress_callback(0.3)
 
-    tail = _parse_progress(process, duration, gif_progress, cancel_event)
-    process.wait()
-    palette_path.unlink(missing_ok=True)
-    if process.returncode != 0:
-        _log_ffmpeg_failure(cmd2, process.returncode, tail)
-        return None
-    return output_path
+        cmd2 = [
+            _get_ffmpeg(), "-y",
+            "-framerate", str(fps),
+            "-i", str(frame_dir / "frame_%06d.png"),
+            "-i", str(palette_path),
+            "-lavfi", f"{filter_str} [x]; [x][1:v] {paletteuse}",
+            "-loop", str(_gif_loop_flag(options.get("gif_loop", 0))),
+            str(output_path),
+        ]
+        process = subprocess.Popen(
+            cmd2, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,
+            **_run_kwargs(),
+        )
+
+        def gif_progress(p):
+            if progress_callback:
+                progress_callback(0.3 + p * 0.7)
+
+        tail = _parse_progress(process, duration, gif_progress, cancel_event)
+        process.wait()
+        if process.returncode != 0:
+            _log_ffmpeg_failure(cmd2, process.returncode, tail)
+            return None
+        return output_path
+    finally:
+        palette_path.unlink(missing_ok=True)
