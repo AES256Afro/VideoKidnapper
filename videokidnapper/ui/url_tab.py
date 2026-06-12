@@ -12,7 +12,7 @@ import customtkinter as ctk
 
 from videokidnapper.config import PRESETS, EXPORT_FORMATS, SUPPORTED_PLATFORMS
 from videokidnapper.core.downloader import (
-    cleanup_temp, detect_platform, download_video,
+    cleanup_temp, detect_platform, download_video, resolve_cookies,
 )
 from videokidnapper.core.ffmpeg_backend import (
     concat_clips_with_transition, get_video_info,
@@ -36,7 +36,17 @@ from videokidnapper.utils.srt_parser import parse_srt_file, srt_to_text_layers
 from videokidnapper.utils.time_format import seconds_to_hms, hms_to_seconds
 
 
-BROWSER_CHOICES = ["(no cookies)", "chrome", "firefox", "edge", "brave", "opera"]
+COOKIE_FILE_CHOICE = "Cookies file…"
+BROWSER_CHOICES = ["(no cookies)", "chrome", "firefox", "edge", "brave", "opera",
+                   COOKIE_FILE_CHOICE]
+
+
+def _cookie_file_label(path):
+    """Short dropdown label for a configured cookies file."""
+    name = Path(path).name
+    if len(name) > 18:
+        name = name[:15] + "..."
+    return f"file: {name}"
 
 
 class UrlTab(ctk.CTkScrollableFrame):
@@ -141,8 +151,7 @@ class UrlTab(ctk.CTkScrollableFrame):
             cookie_row, text="Cookies from",
             font=T.font(T.SIZE_SM), text_color=T.TEXT_DIM,
         ).pack(side="left", padx=(0, 4))
-        initial = settings.get("cookies_browser") or "(no cookies)"
-        self.cookies_var = ctk.StringVar(value=initial)
+        self.cookies_var = ctk.StringVar(value=self._cookie_label_from_settings())
         ctk.CTkOptionMenu(
             cookie_row, variable=self.cookies_var, values=BROWSER_CHOICES, width=130,
             fg_color=T.BG_RAISED, button_color=T.BG_HOVER,
@@ -345,17 +354,36 @@ class UrlTab(ctk.CTkScrollableFrame):
     # ------------------------------------------------------------------
     # Cookies
     # ------------------------------------------------------------------
+    def _cookie_label_from_settings(self):
+        """The dropdown label matching whatever cookie source is persisted."""
+        cookie_file = settings.get("cookies_file") or ""
+        if cookie_file:
+            return _cookie_file_label(cookie_file)
+        return settings.get("cookies_browser") or "(no cookies)"
+
     def _on_cookies_change(self, value):
-        if value == "(no cookies)":
-            settings.set("cookies_browser", "")
+        if value == COOKIE_FILE_CHOICE:
+            path = filedialog.askopenfilename(
+                title="Choose a cookies.txt export",
+                filetypes=[("Cookies file", "*.txt"), ("All files", "*.*")],
+            )
+            if path:
+                settings.update({"cookies_file": path, "cookies_browser": ""})
+                self.cookies_var.set(_cookie_file_label(path))
+                self._notify(f"Using cookies file: {Path(path).name}", "info")
+            else:
+                # Picker cancelled: snap the dropdown back to what's active.
+                self.cookies_var.set(self._cookie_label_from_settings())
+        elif value == "(no cookies)":
+            settings.update({"cookies_browser": "", "cookies_file": ""})
         else:
-            settings.set("cookies_browser", value)
+            settings.update({"cookies_browser": value, "cookies_file": ""})
 
     def _get_cookies(self):
-        browser = settings.get("cookies_browser") or ""
-        if browser:
-            return {"browser": browser}
-        return None
+        return resolve_cookies(
+            settings.get("cookies_browser") or "",
+            settings.get("cookies_file") or "",
+        )
 
     # ------------------------------------------------------------------
     # URL entry + paste
@@ -478,7 +506,9 @@ class UrlTab(ctk.CTkScrollableFrame):
                 self._notify("Download cancelled", "warn")
             else:
                 print(f"Download error: {result['error']}", file=sys.stderr)
-                error_text = f"Error: {result['error'][:80]}"
+                # 160 chars so actionable hints (cookie fixes, update
+                # suggestions) survive the truncation.
+                error_text = f"Error: {result['error'][:160]}"
                 # A failure that smells like a stale extractor gets an
                 # actionable hint — the fix is the button one row up.
                 from videokidnapper.utils import ytdlp_update

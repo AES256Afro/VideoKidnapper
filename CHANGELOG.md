@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
+- **Cookies file support in the UI.** The "Cookies from" dropdown grew a **Cookies file…** entry that opens a file picker for a `cookies.txt` export (from extensions like "Get cookies.txt LOCALLY"). The backend always supported cookie files; the UI just never exposed them. The chosen file shows as `file: <name>` in the dropdown, picking a browser or "(no cookies)" clears it, and cancelling the picker reverts cleanly. This is the reliable path on Windows now that Chrome's App-Bound Encryption blocks `--cookies-from-browser`.
+
+### Fixed
+
+- **Raw "Could not copy Chrome cookie database" errors replaced with an actionable message.** Cookie-read failures (database locked by a running browser, DPAPI / App-Bound decryption failures) now explain the three escape routes up front: close the browser fully and retry, switch the dropdown to firefox, or use a cookies file. The URL tab's error line also shows up to 160 characters (was 80) so hints like this survive truncation.
+
+### Added
+
 - **Blurred-background aspect fill.** A new **Fill** dropdown next to Aspect in Export Options: **Crop** (the historical center-crop) or **Blur fill**, which fits the whole frame over a scaled, blurred copy of itself — the standard Shorts / Reels / TikTok look for 16:9 → 9:16 conversion, with no pixels lost and no black bars. Compiles to a `split / scale / boxblur / overlay` filtergraph slotted into the same chain position as the aspect crop; blur radius scales with the canvas so 480p and 4K look alike. Persisted via settings schema v6 (additive migration from v5); the default reproduces the historical crop exactly.
 - **`_build_aspect_fill_blur`** in `core/ffmpeg/filters.py` — pure builder with the same defer-to-explicit-crop and invalid-input no-op semantics as `_build_aspect_crop`. Canvas dimensions are forced even for yuv420p.
 

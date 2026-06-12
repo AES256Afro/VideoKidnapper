@@ -199,9 +199,52 @@ def download_video(url, progress_callback=None, cancel_event=None, cookies=None,
     return result
 
 
+def resolve_cookies(browser="", file=""):
+    """Turn the persisted cookie settings into a ``download_video`` arg.
+
+    A cookies file wins over a browser choice (the UI clears one when
+    the other is picked, but a hand-edited settings file may carry
+    both). Returns ``None`` when neither is configured.
+    """
+    if file:
+        return {"file": file}
+    if browser:
+        return {"browser": browser}
+    return None
+
+
+# Error fragments that mean "yt-dlp could not get cookies out of the
+# browser" rather than anything about the video itself. Chrome locks
+# its cookie database while running, and Chrome 127+ on Windows
+# additionally encrypts it (App-Bound Encryption) in a way yt-dlp
+# cannot bypass even when the browser is closed.
+_COOKIE_ERROR_SIGNS = (
+    "could not copy",          # "Could not copy Chrome cookie database"
+    "failed to decrypt",
+    "app bound",
+    "app-bound",
+    "dpapi",
+    "could not find",          # "could not find chrome cookies database"
+)
+
+
+def _is_cookie_error(msg):
+    low = str(msg or "").lower()
+    return "cookie" in low and any(sign in low for sign in _COOKIE_ERROR_SIGNS)
+
+
 def _friendly_error(msg, platform):
     """Attach platform-specific hints to common yt-dlp failures."""
     low = msg.lower()
+    if _is_cookie_error(msg):
+        # Front-loaded actions: the status bar truncates long errors, so
+        # the fix has to fit in the first line.
+        return (
+            "Browser cookies unreadable. Close the browser fully and retry, "
+            "switch Cookies to firefox, or pick 'Cookies file' and use a "
+            "cookies.txt export. For public videos, '(no cookies)' works. "
+            f"(raw: {msg[:120]})"
+        )
     if "login" in low or "private" in low or "not available" in low or "unavailable" in low:
         if platform == "Instagram":
             return (
