@@ -365,7 +365,7 @@ class VideoPlayer(ctk.CTkFrame):
             return image
 
         overlay = image.convert("RGBA")
-        draw = ImageDraw.Draw(overlay)
+        measure = ImageDraw.Draw(overlay)
         w, h = overlay.size
 
         # Rebuild the bbox table every time so hit-testing stays in sync with
@@ -381,23 +381,42 @@ class VideoPlayer(ctk.CTkFrame):
             if not (start <= timestamp <= end):
                 continue
 
+            # Normalise line endings the same way the drawtext builder does
+            # so the preview and the export wrap identically.
+            text = text.replace("\r\n", "\n").replace("\r", "\n")
+
             fontsize = max(6, int(layer.get("fontsize", 24)))
             try:
-                font_path = _font_path_for_preview(layer.get("font", "Arial"))
+                font_path = _font_path_for_preview(
+                    layer.get("font", "Arial"),
+                    bold=bool(layer.get("bold")),
+                    italic=bool(layer.get("italic")),
+                )
                 font = ImageFont.truetype(font_path, fontsize)
             except Exception:
                 font = ImageFont.load_default()
 
             try:
-                bbox = draw.textbbox((0, 0), text, font=font)
+                bbox = measure.multiline_textbbox((0, 0), text, font=font,
+                                                  spacing=0)
                 tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
             except AttributeError:
-                tw, th = draw.textsize(text, font=font)
+                tw, th = measure.textsize(text, font=font)
 
             x, y = _resolve_position(
                 layer.get("position", ""), w, h, tw, th, pad=20,
             )
 
+            # Each layer renders on its own transparent scratch image that
+            # is alpha-composited onto the frame. Drawing translucent fills
+            # straight onto the frame does NOT blend — PIL's ImageDraw
+            # overwrites pixels — so the box / shadow / `white@0.5`
+            # watermark would preview opaque while exporting translucent.
+            scratch = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(scratch)
+
+            # Draw order mirrors ffmpeg's drawtext: box, then shadow,
+            # then bordered glyphs.
             if layer.get("box"):
                 # Match ffmpeg drawtext's boxborderw=8 default for Subtitle.
                 pad = int(layer.get("boxborderw", 8))
@@ -406,8 +425,35 @@ class VideoPlayer(ctk.CTkFrame):
                     fill=(0, 0, 0, 160),
                 )
 
-            color = _parse_color(layer.get("fontcolor", "white"))
-            draw.text((x, y), text, fill=color, font=font)
+            color = _parse_color_rgba(layer.get("fontcolor", "white"))
+            try:
+                sx = int(layer.get("shadowx", 0) or 0)
+                sy = int(layer.get("shadowy", 0) or 0)
+                borderw = max(0, int(layer.get("borderw", 0) or 0))
+            except (TypeError, ValueError):
+                sx = sy = borderw = 0
+
+            if sx or sy:
+                shadow_rgba = _parse_color_rgba(
+                    layer.get("shadowcolor", "black@0.7"))
+                draw.multiline_text(
+                    (x + sx, y + sy), text, fill=shadow_rgba,
+                    font=font, spacing=0,
+                )
+
+            if borderw:
+                stroke_fill = _parse_color_rgba(
+                    layer.get("bordercolor", "black"))
+                draw.multiline_text(
+                    (x, y), text, fill=color, font=font, spacing=0,
+                    stroke_width=borderw, stroke_fill=stroke_fill,
+                )
+            else:
+                draw.multiline_text(
+                    (x, y), text, fill=color, font=font, spacing=0,
+                )
+
+            overlay = Image.alpha_composite(overlay, scratch)
 
             # Record the hit-test bbox in source-pixel space; include the
             # box border so users can grab the edge comfortably.
@@ -931,9 +977,9 @@ class VideoPlayer(ctk.CTkFrame):
 # Helpers for the preview overlay
 # ---------------------------------------------------------------------------
 
-def _font_path_for_preview(font_name):
+def _font_path_for_preview(font_name, bold=False, italic=False):
     from videokidnapper.ui.text_layers import _find_font_path
-    return _find_font_path(font_name)
+    return _find_font_path(font_name, bold=bold, italic=italic)
 
 
 def _pos_map(pad):
@@ -1033,3 +1079,19 @@ def _parse_color(value):
         except ValueError:
             return (255, 255, 255)
     return _NAMED_COLORS.get(v.lower(), (255, 255, 255))
+
+
+def _parse_color_rgba(value, default_alpha=255):
+    """Like ``_parse_color`` but honours ffmpeg's ``color@alpha`` suffix.
+
+    ``black@0.7`` resolves to ``(0, 0, 0, 178)`` so shadows composite with
+    the same translucency the export renders.
+    """
+    rgb = _parse_color(value)
+    alpha = default_alpha
+    if value and "@" in value:
+        try:
+            alpha = max(0, min(255, int(float(value.split("@", 1)[1]) * 255)))
+        except ValueError:
+            pass
+    return (*rgb, alpha)
