@@ -157,6 +157,14 @@ class UrlTab(ctk.CTkScrollableFrame):
             font=T.font(T.SIZE_XS), text_color=T.TEXT_DIM,
         ).pack(side="left")
 
+        # yt-dlp self-update — a stale extractor is the most common cause
+        # of "this video won't download", so keep the fix one click away.
+        self.update_ytdlp_btn = button(
+            cookie_row, "⟳ Update yt-dlp", variant="ghost",
+            width=120, height=26, command=self._update_ytdlp,
+        )
+        self.update_ytdlp_btn.pack(side="right")
+
         # Status + progress
         self.status_label = ctk.CTkLabel(
             url_card, text="Enter a video URL and click Download",
@@ -439,6 +447,27 @@ class UrlTab(ctk.CTkScrollableFrame):
         if text:
             self.status_label.configure(text=text, text_color=T.TEXT_MUTED)
 
+    def _update_ytdlp(self):
+        """Upgrade yt-dlp on a worker thread; report via status + toast."""
+        from videokidnapper.utils import ytdlp_update
+
+        self.update_ytdlp_btn.configure(state="disabled", text="Updating...")
+        self.status_label.configure(
+            text="Updating yt-dlp...", text_color=T.TEXT_MUTED)
+
+        def worker():
+            ok, msg = ytdlp_update.update_via_pip()
+            if self.winfo_exists():
+                self.after(0, self._on_ytdlp_updated, ok, msg)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_ytdlp_updated(self, ok, msg):
+        self.update_ytdlp_btn.configure(state="normal", text="⟳ Update yt-dlp")
+        color = T.TEXT_MUTED if ok else T.DANGER
+        self.status_label.configure(text=msg[:100], text_color=color)
+        self._notify(msg[:100], "info" if ok else "error")
+
     def _on_download_complete(self, result):
         self.download_btn.configure(state="normal", text="  ⬇  Download")
         self.url_entry.configure(state="normal")
@@ -449,8 +478,14 @@ class UrlTab(ctk.CTkScrollableFrame):
                 self._notify("Download cancelled", "warn")
             else:
                 print(f"Download error: {result['error']}", file=sys.stderr)
+                error_text = f"Error: {result['error'][:80]}"
+                # A failure that smells like a stale extractor gets an
+                # actionable hint — the fix is the button one row up.
+                from videokidnapper.utils import ytdlp_update
+                if ytdlp_update.looks_like_extractor_failure(result["error"]):
+                    error_text += "  — yt-dlp may be outdated; try ⟳ Update yt-dlp"
                 self.status_label.configure(
-                    text=f"Error: {result['error'][:80]}", text_color=T.DANGER,
+                    text=error_text, text_color=T.DANGER,
                 )
                 self._notify(f"Download failed: {result['error'][:60]}", "error")
             self.download_progress.set(0)

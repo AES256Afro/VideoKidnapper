@@ -55,6 +55,10 @@ def _build_ydl_opts(url, ffmpeg_dir, progress_hook, cookies=None):
         "http_headers": {"User-Agent": _DEFAULT_UA},
         "retries": 3,
         "fragment_retries": 3,
+        # Resume partially-downloaded files instead of restarting — with
+        # the outer retry loop in download_video, a dropped connection
+        # at 90% picks up at 90%, not at zero.
+        "continuedl": True,
     }
     if ffmpeg_dir:
         opts["ffmpeg_location"] = ffmpeg_dir
@@ -78,7 +82,44 @@ def _build_ydl_opts(url, ffmpeg_dir, progress_hook, cookies=None):
     return opts, platform
 
 
-def download_video(url, progress_callback=None, cancel_event=None, cookies=None):
+# Error-text fragments that point at a transient network problem rather
+# than a permanent failure (private video, unsupported URL, bad cookies).
+# Lowercase substrings, matched against the stripped yt-dlp error text.
+_TRANSIENT_ERROR_SIGNS = (
+    "timed out",
+    "timeout",
+    "connection reset",
+    "connection refused",
+    "connection aborted",
+    "temporary failure",
+    "temporarily unavailable",
+    "incomplete read",
+    "incompleteread",
+    "http error 429",
+    "http error 500",
+    "http error 502",
+    "http error 503",
+    "http error 504",
+    "remote end closed",
+    "ssl",
+    "getaddrinfo failed",
+    "network is unreachable",
+)
+
+
+def _is_transient_error(msg):
+    """True when a download error is worth retrying."""
+    low = str(msg or "").lower()
+    return any(sign in low for sign in _TRANSIENT_ERROR_SIGNS)
+
+
+def _retry_delay(attempt):
+    """Backoff schedule for download retries: 2s, 4s, 8s, capped at 8s."""
+    return min(2 ** attempt, 8)
+
+
+def download_video(url, progress_callback=None, cancel_event=None, cookies=None,
+                   max_attempts=3):
     import yt_dlp
 
     _ensure_temp_dir()
@@ -107,32 +148,54 @@ def download_video(url, progress_callback=None, cancel_event=None, cookies=None)
     opts, platform = _build_ydl_opts(url, ffmpeg_dir, progress_hook, cookies=cookies)
     result["platform"] = platform
 
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            # Some extractors (Reddit galleries, Twitter threads) return a
-            # playlist-like dict with `entries`; yt-dlp still downloads the
-            # first video because `noplaylist=True`, so unwrap it here.
-            if info.get("entries"):
-                entries = [e for e in info["entries"] if e]
-                if entries:
-                    info = entries[0]
-            result["title"] = info.get("title") or info.get("id") or "Unknown"
-            if info.get("requested_downloads"):
-                result["path"] = info["requested_downloads"][0]["filepath"]
-            else:
-                result["path"] = ydl.prepare_filename(info)
-                base, _ = os.path.splitext(result["path"])
-                mp4_path = base + ".mp4"
-                if os.path.exists(mp4_path):
-                    result["path"] = mp4_path
-    except Exception as e:
-        err_msg = re.sub(r"\x1b\[[0-9;]*m", "", str(e))
-        if "cancelled" in err_msg.lower():
-            result["error"] = "cancelled"
-        else:
-            result["error"] = _friendly_error(err_msg, platform)
+    # Outer retry loop for transient network failures. yt-dlp's own
+    # ``retries`` handles per-request HTTP retries; this loop catches the
+    # failures that surface as a raised error after those are exhausted
+    # (mid-download connection drops, rate-limit bursts, flaky DNS).
+    # ``continuedl`` makes each retry resume the partial file.
+    last_error = None
+    for attempt in range(1, max(1, int(max_attempts)) + 1):
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                # Some extractors (Reddit galleries, Twitter threads) return a
+                # playlist-like dict with `entries`; yt-dlp still downloads the
+                # first video because `noplaylist=True`, so unwrap it here.
+                if info.get("entries"):
+                    entries = [e for e in info["entries"] if e]
+                    if entries:
+                        info = entries[0]
+                result["title"] = info.get("title") or info.get("id") or "Unknown"
+                if info.get("requested_downloads"):
+                    result["path"] = info["requested_downloads"][0]["filepath"]
+                else:
+                    result["path"] = ydl.prepare_filename(info)
+                    base, _ = os.path.splitext(result["path"])
+                    mp4_path = base + ".mp4"
+                    if os.path.exists(mp4_path):
+                        result["path"] = mp4_path
+            return result
+        except Exception as e:
+            err_msg = re.sub(r"\x1b\[[0-9;]*m", "", str(e))
+            if "cancelled" in err_msg.lower():
+                result["error"] = "cancelled"
+                return result
+            last_error = err_msg
+            if attempt < max_attempts and _is_transient_error(err_msg):
+                if progress_callback:
+                    progress_callback(
+                        0.0,
+                        f"Connection hiccup — retrying ({attempt + 1}/{max_attempts})...",
+                    )
+                # Event.wait doubles as an interruptible sleep: returns True
+                # the moment the user cancels mid-backoff.
+                if cancel_event.wait(_retry_delay(attempt)):
+                    result["error"] = "cancelled"
+                    return result
+                continue
+            break
 
+    result["error"] = _friendly_error(last_error or "unknown error", platform)
     return result
 
 
