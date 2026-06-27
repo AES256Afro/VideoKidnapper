@@ -207,6 +207,7 @@ class AudioVideoPlayer:
         the Tk event loop responsive; the daemon threads die on their
         own once they see the stop event.
         """
+        was_running = self._running
         self._stop_event.set()
         self._running = False
         # Tear down audio first — the OS stream holds real hardware.
@@ -225,7 +226,11 @@ class AudioVideoPlayer:
             except Exception:
                 pass
             self._audio_proc = None
-        self._fire_finished("stopped")
+        # Only fire "stopped" if something was actually playing. play()
+        # calls stop() to tear down any prior session; on a fresh player
+        # (nothing running) that must not spuriously notify the UI.
+        if was_running:
+            self._fire_finished("stopped")
 
     # ------------------------------------------------------------------
     def _fire_finished(self, reason):
@@ -311,6 +316,26 @@ class AudioVideoPlayer:
                     break
                 self._clock.mark(samples_this_chunk)
         finally:
+            # Release the hardware stream and ffmpeg process. On a user
+            # stop() these are already torn down (both teardowns are
+            # idempotent); on a *natural* end stop() never runs, so
+            # without this the OutputStream would leak until the next
+            # play() — accumulating open device handles across clips.
+            stream = self._audio_stream
+            if stream is not None:
+                try:
+                    stream.stop()
+                    stream.close()
+                except Exception:
+                    pass
+                self._audio_stream = None
+            proc = self._audio_proc
+            if proc is not None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+                self._audio_proc = None
             # Audio EOF means natural end of clip — fire finished so
             # the UI can update the play-button label.
             if not self._stop_event.is_set():

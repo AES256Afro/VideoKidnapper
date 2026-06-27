@@ -40,7 +40,7 @@ def get_video_info(input_path):
     # every failure mode in ProbeError with a short, human-readable reason.
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=10,
+            cmd, capture_output=True, text=True, timeout=10, **_run_kwargs(),
         )
     except FileNotFoundError as exc:
         raise ProbeError(f"ffprobe not found on PATH: {exc}") from exc
@@ -66,7 +66,14 @@ def get_video_info(input_path):
             video_stream = s
         elif s.get("codec_type") == "audio" and audio_stream is None:
             audio_stream = s
-    duration = float(data.get("format", {}).get("duration", 0))
+    # Some containers/streams (image inputs, certain HLS/live captures)
+    # report duration as the literal string "N/A"; float() would raise a
+    # naked ValueError that escapes the ProbeError funnel this function
+    # promises. Fall back to 0.0 instead.
+    try:
+        duration = float(data.get("format", {}).get("duration", 0))
+    except (TypeError, ValueError):
+        duration = 0.0
     width = int(video_stream.get("width", 0)) if video_stream else 0
     height = int(video_stream.get("height", 0)) if video_stream else 0
     fps_str = video_stream.get("r_frame_rate", "30/1") if video_stream else "30/1"

@@ -131,14 +131,20 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
         overlay_chain, final_label, _inputs = _build_image_overlay_chain(
             valid_images, base_label="vbase", video_dur=duration,
         )
-        fc = f"[0:v]{base_chain}[vbase];{overlay_chain}"
-        cmd += [
-            "-filter_complex", fc,
-            "-map", f"[{final_label}]",
-        ]
-        # Explicitly map audio from input 0 (optional — ``?`` lets
-        # ffmpeg skip when the source has no audio).
-        cmd += ["-map", "0:a?"]
+        if overlay_chain:
+            fc = f"[0:v]{base_chain}[vbase];{overlay_chain}"
+            cmd += [
+                "-filter_complex", fc,
+                "-map", f"[{final_label}]",
+            ]
+            # Explicitly map audio from input 0 (optional — ``?`` lets
+            # ffmpeg skip when the source has no audio).
+            cmd += ["-map", "0:a?"]
+        elif filters:
+            # Every overlay layer had invalid timing and was dropped, so
+            # there's nothing to compose. Don't emit a filter_complex with
+            # a dangling ``;`` (ffmpeg rejects it) — fall back to -vf.
+            cmd += ["-vf", ",".join(filters)]
     elif filters:
         cmd += ["-vf", ",".join(filters)]
     cmd += ["-movflags", "+faststart", str(output_path)]
@@ -216,7 +222,14 @@ def trim_to_gif(input_path, start, end, preset_name, output_path,
                 progress_callback=gif_half_progress,
                 cancel_event=cancel_event,
                 options={k: v for k, v in options.items()
-                         if k not in ("aspect_preset", "crop", "rotate", "speed")},
+                         if k not in (
+                             "aspect_preset", "crop", "rotate", "speed",
+                             # The intermediate MP4 already baked these in;
+                             # keeping them would double-apply the eq= color
+                             # grade (and re-run the text fade) on the GIF pass.
+                             "color_brightness", "color_contrast",
+                             "color_saturation", "color_gamma", "text_fade",
+                         )},
             )
         finally:
             intermediate.unlink(missing_ok=True)
