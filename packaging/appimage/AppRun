@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
+#
+# AppImage entry point. Prepends the bundled ffmpeg/ffprobe to PATH so
+# the app's shutil.which() lookup finds them without any code changes,
+# then launches the PyInstaller one-dir binary.
+HERE="$(dirname "$(readlink -f "$0")")"
+export PATH="$HERE/usr/bin:$PATH"
+exec "$HERE/usr/app/VideoKidnapper" "$@"
