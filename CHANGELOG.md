@@ -2,30 +2,7 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-
-- **Cookies file support in the UI.** The "Cookies from" dropdown grew a **Cookies file…** entry that opens a file picker for a `cookies.txt` export (from extensions like "Get cookies.txt LOCALLY"). The backend always supported cookie files; the UI just never exposed them. The chosen file shows as `file: <name>` in the dropdown, picking a browser or "(no cookies)" clears it, and cancelling the picker reverts cleanly. This is the reliable path on Windows now that Chrome's App-Bound Encryption blocks `--cookies-from-browser`.
-
-### Fixed
-
-- **Raw "Could not copy Chrome cookie database" errors replaced with an actionable message.** Cookie-read failures (database locked by a running browser, DPAPI / App-Bound decryption failures) now explain the three escape routes up front: close the browser fully and retry, switch the dropdown to firefox, or use a cookies file. The URL tab's error line also shows up to 160 characters (was 80) so hints like this survive truncation.
-
-### Added
-
-- **Blurred-background aspect fill.** A new **Fill** dropdown next to Aspect in Export Options: **Crop** (the historical center-crop) or **Blur fill**, which fits the whole frame over a scaled, blurred copy of itself — the standard Shorts / Reels / TikTok look for 16:9 → 9:16 conversion, with no pixels lost and no black bars. Compiles to a `split / scale / boxblur / overlay` filtergraph slotted into the same chain position as the aspect crop; blur radius scales with the canvas so 480p and 4K look alike. Persisted via settings schema v6 (additive migration from v5); the default reproduces the historical crop exactly.
-- **`_build_aspect_fill_blur`** in `core/ffmpeg/filters.py` — pure builder with the same defer-to-explicit-crop and invalid-input no-op semantics as `_build_aspect_crop`. Canvas dimensions are forced even for yuv420p.
-
-### Added
-
-- **⟳ Update yt-dlp button** on the URL tab's cookies row. A stale extractor is the most common cause of "this video won't download" — the fix is now one click: upgrades via pip on a worker thread and reports the old/new version (with a restart hint when the old module is already loaded). Bundled `.exe` builds get a clear pointer to the releases page instead, since pip can't install into a PyInstaller bundle.
-- **Outdated-extractor hint on failures.** When a download error matches known stale-extractor signatures ("Unable to extract...", "Unsupported URL", HTTP 403, nsig failures), the error line appends "yt-dlp may be outdated; try ⟳ Update yt-dlp" so users aren't left guessing.
-- **`videokidnapper/utils/ytdlp_update.py`** — version probe (installed vs. PyPI), date-version comparison, frozen-build detection, and the extractor-failure heuristic. All network paths take short timeouts and never raise.
-
-### Fixed
-
-- **Downloads now retry transient network failures and resume partial files.** `download_video` wraps yt-dlp in a bounded retry loop (3 attempts, 2s/4s backoff) that triggers only on transient signatures — timeouts, connection resets, HTTP 429/5xx, DNS hiccups — never on permanent failures like private videos or unsupported URLs. `continuedl` is enabled so each retry resumes the partial download instead of starting over; a mid-backoff cancel takes effect immediately.
+## [1.3.0] — 2026-07-02
 
 ### Added
 
@@ -36,39 +13,39 @@ All notable changes to this project are documented here. The format is based on 
 - **Bold / italic text.** B / I checkboxes per layer. The font resolver now finds style-variant files next to the regular face (`arialbd.ttf`, `ariali.ttf`, `georgiab.ttf`, `trebucit.ttf`, `calibriz.ttf`, …) with graceful fallback: missing Bold Italic tries Bold, then Italic, then regular — a missing variant can never fail an export.
 - **Multiline captions.** The text input is now a wrapping 2-line textbox; embedded newlines render as real line breaks in both the preview and the export (drawtext renders `\n` natively). `\r\n` / `\r` are normalised so SRT files and Windows clipboard text can't smuggle tofu glyphs.
 - **"Caption" style preset** — white text, 2px black outline, no box, bottom center. The social-standard look in one click, alongside Subtitle / Title / Watermark / Custom.
-
-### Fixed
-
-- **Preview rendered translucent text elements as opaque.** PIL's `ImageDraw` overwrites pixels rather than alpha-blending, so the subtitle background box (`black@0.6`) and the Watermark preset's `white@0.5` text previewed fully opaque while exporting translucent — a real preview/export divergence. Text layers now render per-layer on a transparent scratch image that is alpha-composited onto the frame, so preview translucency finally matches the export.
-
-### Added
-
+- **Blurred-background aspect fill.** A new **Fill** dropdown next to Aspect in Export Options: **Crop** (the historical center-crop) or **Blur fill**, which fits the whole frame over a scaled, blurred copy of itself — the standard Shorts / Reels / TikTok look for 16:9 → 9:16 conversion, with no pixels lost and no black bars. Compiles to a `split / scale / boxblur / overlay` filtergraph slotted into the same chain position as the aspect crop; blur radius scales with the canvas so 480p and 4K look alike. Persisted via settings schema v6 (additive migration from v5); the default reproduces the historical crop exactly.
+- **`_build_aspect_fill_blur`** in `core/ffmpeg/filters.py` — pure builder with the same defer-to-explicit-crop and invalid-input no-op semantics as `_build_aspect_crop`. Canvas dimensions are forced even for yuv420p.
 - **GIF palette options: dither, palette stats mode, loop count.** New "GIF" row in Export Options with three dropdowns, all persisted across launches (settings schema v5, additive migration from v4):
   - **Dither** — Bayer (the previous hardcoded default: patterned retro look, smaller files), Floyd-Steinberg (smoother gradients, the GIPHY look), Sierra (middle ground), or None (flat-color sources like screen recordings compress dramatically better without dithering).
   - **Palette** — Full frame (previous behavior) or Motion (`palettegen=stats_mode=diff`), which weights the palette toward pixels that change between frames — a visible quality win for clips with static backgrounds.
   - **Loop** — Forever (previous behavior), Once, or 2× / 3× / 5×.
   Defaults reproduce the old hardcoded pipeline exactly, so existing users' GIFs are byte-identical until they touch the new controls.
 - **`_build_palettegen_filter` / `_build_paletteuse_filter` / `_gif_loop_flag`** in `core/ffmpeg/filters.py` — pure builders with clamping and unknown-value fallbacks, so a hand-edited settings file can't produce a command ffmpeg rejects. `frames_to_gif` grew an optional `options=` param so the screen-record path can use the same knobs.
-
-### Fixed
-
-- **Race-prone GIF palette temp files.** `trim_to_gif` / `frames_to_gif` reserved palette paths with the deprecated `tempfile.mktemp`, which only reserves a *name* — two concurrent GIF exports (reachable since the Batch Export tab) could collide on the same palette file. Now uses `mkstemp` (atomic creation) and `try/finally` cleanup, so a failed or cancelled encode can no longer leave orphan palette PNGs or intermediate MP4s behind.
-
-### Added
-
+- **⟳ Update yt-dlp button** on the URL tab's cookies row. A stale extractor is the most common cause of "this video won't download" — the fix is now one click: upgrades via pip on a worker thread and reports the old/new version (with a restart hint when the old module is already loaded). Bundled `.exe` builds get a clear pointer to the releases page instead, since pip can't install into a PyInstaller bundle.
+- **Outdated-extractor hint on failures.** When a download error matches known stale-extractor signatures ("Unable to extract...", "Unsupported URL", HTTP 403, nsig failures), the error line appends "yt-dlp may be outdated; try ⟳ Update yt-dlp" so users aren't left guessing.
+- **`videokidnapper/utils/ytdlp_update.py`** — version probe (installed vs. PyPI), date-version comparison, frozen-build detection, and the extractor-failure heuristic. All network paths take short timeouts and never raise.
+- **Cookies file support in the UI.** The "Cookies from" dropdown grew a **Cookies file…** entry that opens a file picker for a `cookies.txt` export (from extensions like "Get cookies.txt LOCALLY"). The backend always supported cookie files; the UI just never exposed them. The chosen file shows as `file: <name>` in the dropdown, picking a browser or "(no cookies)" clears it, and cancelling the picker reverts cleanly. This is the reliable path on Windows now that Chrome's App-Bound Encryption blocks `--cookies-from-browser`.
 - **Drag image overlays anywhere on the frame.** Click and drag any image, logo, sticker, or **animated GIF** overlay on the Trim preview — it moves in lockstep under the cursor and the exported video / GIF renders at the dragged position, not the anchor. Picking a new entry from the Position dropdown (Top Left, Center, …) snaps the overlay back to the anchor so the dropdown label is always truthful. Works the same way text-layer drag already does.
 - **Explicit `x` / `y` in the image-layer data.** When either axis is unset (sentinel `-1`), the preview and ffmpeg backend fall back to the anchor; when both are set, they win as source-video pixel coords. `_overlay_position_expr` grew optional `x=` / `y=` params that clamp negatives to 0 so a drag near the edge can't produce an off-canvas overlay.
 - **`ImageLayersPanel.set_layer_position(index, x, y)`** and **`VideoPlayer.set_image_position_callback(cb)`** — twin public hooks that mirror the text-drag pair, so any future drag source (pen, gesture, plugin) can drive image positioning without patching widget internals.
-
-### Fixed
-
-- **Theme toggle felt broken.** Clicking the ☀ / ☾ chip in the header used to silently save the new theme and emit a status-bar toast with "restart to apply" — easy to miss, and the app didn't visibly re-theme, so the button felt dead. Now clicking pops a small "Theme set to X. Restart now?" dialog with **Restart now** / **Later**. Picking Restart cleanly relaunches the process (dev `python main.py`, `python -m videokidnapper`, and PyInstaller `.exe` all handled). The button icon also flips immediately on click — visual confirmation the preference saved, even if you pick Later.
-
-### Added
-
 - **Paste an image into the video.** `Ctrl+V` on the Trim tab now grabs whatever image is on the clipboard — a screenshot, a "Copy image" from a browser, or a PNG / JPG / WebP / GIF / BMP file copied in Explorer / Finder — and drops it in as a new image overlay. Bitmap data is saved as PNG into the app temp dir; file-path clipboards use the file as-is (so animated GIFs keep their animation). The Image Overlays panel also grows a **📋 Paste from clipboard** button for discoverability, wired to the same path. The URL tab's existing `Ctrl+V` (paste URL text) is unaffected — the shortcut dispatcher routes by active tab.
 - **`videokidnapper/utils/clipboard_image.py`** — pure helper `grab_clipboard_image(temp_dir=None)` that never raises: PIL missing, clipboard unreachable (headless Linux without xclip / wl-paste), write-permission denied, non-image file paths — all resolve to `None` so the UI can uniformly toast "no image in clipboard."
 - **`ImageLayersPanel.add_layer_from_path(path)`** — public hook so both the clipboard path and any future drag-drop route can pre-populate a new layer's image path without touching widget internals.
+
+### Fixed
+
+- **Export-pipeline bughunt (nine verified bugs, all with regression tests where unit-testable).** An infinite loop in the audio-speed filter builder on non-positive speeds (hung the encode thread — speed is now clamped to 0.1–100×); a drawtext position without a colon aborting the whole encode instead of falling back to bottom-center; both concat loops busy-waiting at 100% CPU without draining ffmpeg's stderr (a chatty encode could fill the pipe buffer and deadlock — replaced with a stderr-draining thread and `wait(timeout=)`, plus the missing `-loglevel error` on `concat_clips`); GIF exports with image overlays double-applying the `eq=` color grade (baked into the intermediate MP4, then re-applied on the GIF pass); a filtergraph ending in a dangling `;` (all overlay layers with invalid timing) being rejected by ffmpeg instead of falling back to `-vf`; `get_video_info()` crashing with a naked `ValueError` on "N/A" durations (image/HLS inputs) instead of routing through the `ProbeError` funnel; and a console-window flash on probe calls under Windows.
+- **Playback:** starting playback no longer fires a spurious `on_finished("stopped")` callback to the UI the instant it begins, and the sounddevice output stream is torn down at natural end-of-clip instead of leaking.
+- **Stale thumbnail strip:** the cache key now includes duration and thumb count, so regenerating the strip for a different trim range can't return thumbnails from the previous range.
+- **Downloads now retry transient network failures and resume partial files.** `download_video` wraps yt-dlp in a bounded retry loop (3 attempts, 2s/4s backoff) that triggers only on transient signatures — timeouts, connection resets, HTTP 429/5xx, DNS hiccups — never on permanent failures like private videos or unsupported URLs. `continuedl` is enabled so each retry resumes the partial download instead of starting over; a mid-backoff cancel takes effect immediately.
+- **Raw "Could not copy Chrome cookie database" errors replaced with an actionable message.** Cookie-read failures (database locked by a running browser, DPAPI / App-Bound decryption failures) now explain the three escape routes up front: close the browser fully and retry, switch the dropdown to firefox, or use a cookies file. The URL tab's error line also shows up to 160 characters (was 80) so hints like this survive truncation.
+- **Preview rendered translucent text elements as opaque.** PIL's `ImageDraw` overwrites pixels rather than alpha-blending, so the subtitle background box (`black@0.6`) and the Watermark preset's `white@0.5` text previewed fully opaque while exporting translucent — a real preview/export divergence. Text layers now render per-layer on a transparent scratch image that is alpha-composited onto the frame, so preview translucency finally matches the export.
+- **Race-prone GIF palette temp files.** `trim_to_gif` / `frames_to_gif` reserved palette paths with the deprecated `tempfile.mktemp`, which only reserves a *name* — two concurrent GIF exports (reachable since the Batch Export tab) could collide on the same palette file. Now uses `mkstemp` (atomic creation) and `try/finally` cleanup, so a failed or cancelled encode can no longer leave orphan palette PNGs or intermediate MP4s behind.
+- **Theme toggle felt broken.** Clicking the ☀ / ☾ chip in the header used to silently save the new theme and emit a status-bar toast with "restart to apply" — easy to miss, and the app didn't visibly re-theme, so the button felt dead. Now clicking pops a small "Theme set to X. Restart now?" dialog with **Restart now** / **Later**. Picking Restart cleanly relaunches the process (dev `python main.py`, `python -m videokidnapper`, and PyInstaller `.exe` all handled). The button icon also flips immediately on click — visual confirmation the preference saved, even if you pick Later.
+
+### Tests
+
+- 416 tests, including new regression coverage for the export-pipeline and playback fixes above.
 
 ## [1.2.0] — 2026-04-18
 
@@ -232,6 +209,7 @@ First public release. The overhaul that turned the project from a YouTube-only G
 
 - 124 tests covering URL platform detection, share-intent URL construction, ffmpeg filter math (crop clamping, aspect-crop, fade-alpha expression, hardware encoder picking and probing), settings persistence + schema migration, SRT parser, size estimator, LRU cache, and the DnD payload parser.
 
+[1.3.0]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.3.0
 [1.2.0]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.2.0
 [1.1.0]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.1.0
 [1.0.0]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.0.0
