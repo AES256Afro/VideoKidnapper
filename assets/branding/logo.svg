@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- VideoKidnapper mark: beanie + domino mask burglar head.
+       Eye holes are true cutouts (fill-rule evenodd) so the mark works
+       on any background. Single-color: recolor by changing the fill. -->
+  <g fill="#2860D0">
+    <!-- beanie dome -->
+    <path d="M 140 228 C 140 138 372 138 372 228 Z"/>
+    <!-- beanie cuff -->
+    <path d="M 148 236 L 364 236 Q 384 236 384 257 Q 384 278 364 278 L 148 278 Q 128 278 128 257 Q 128 236 148 236 Z"/>
+    <!-- domino mask with eye holes knocked out -->
+    <path fill-rule="evenodd" d="
+      M 120 330
+      C 120 296 180 288 256 288
+      C 332 288 392 296 392 330
+      C 392 376 344 398 300 382
+      C 280 375 270 368 256 368
+      C 242 368 232 375 212 382
+      C 168 398 120 376 120 330 Z
+      M 234.4 340.9 A 40 24 10 0 1 157.6 327.1 A 40 24 10 0 1 234.4 340.9 Z
+      M 354.4 327.1 A 40 24 -10 0 1 277.6 340.9 A 40 24 -10 0 1 354.4 327.1 Z
+    "/>
+  </g>
+</svg>
