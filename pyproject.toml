@@ -68,7 +68,7 @@ dev = [
 videokidnapper = "videokidnapper.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/AES256Afro/VideoKidnapper"
+Homepage = "https://videokidnapper.com"
 Repository = "https://github.com/AES256Afro/VideoKidnapper"
 Issues = "https://github.com/AES256Afro/VideoKidnapper/issues"
 Changelog = "https://github.com/AES256Afro/VideoKidnapper/blob/main/CHANGELOG.md"
