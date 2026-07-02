@@ -17,6 +17,13 @@ on:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
       - "v[0-9]+.[0-9]+.[0-9]+-*"
+  # Self-test on PRs that touch the Linux packaging (build + smoke
+  # test only; the attach job is gated to tags/dispatch below).
+  pull_request:
+    paths:
+      - ".github/workflows/appimage.yml"
+      - "packaging/videokidnapper-linux.spec"
+      - "packaging/appimage/**"
   # Manual dispatch: rebuild for an existing tag, or build a test
   # artifact from any branch (leave `tag` empty to skip the release
   # attach and just get the CI artifact).
