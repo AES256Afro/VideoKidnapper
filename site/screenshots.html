@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<!-- SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+     SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Screenshots — VideoKidnapper</title>
+  <meta name="description" content="A visual tour of VideoKidnapper: trimming, captions, batch downloads, GIF tuning, export options, and more.">
+  <link rel="icon" type="image/png" href="assets/branding/logo-512.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a class="brand" href="./"><img src="assets/branding/logo-white.svg" alt=""> VideoKidnapper</a>
+    <div class="nav-links">
+      <a href="./#features">Features</a>
+      <a href="screenshots.html">Screenshots</a>
+      <a href="./#download">Download</a>
+      <a href="./#linux">Linux install</a>
+      <a href="https://github.com/AES256Afro/VideoKidnapper">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" style="padding-bottom: 8px;">
+  <h1>A visual tour</h1>
+  <p class="tagline">Every screenshot is the real app — the dark theme you see is the default.</p>
+</header>
+
+<div class="container">
+
+  <div class="shot">
+    <h3>The whole flow in ten seconds</h3>
+    <p class="caption">Load a clip, drag the trim handles, drop a caption on it, export a GIF. That's the core loop VideoKidnapper is built around.</p>
+    <img src="assets/screenshots/demo.gif" alt="Animated demo: trimming a video, adding a caption, exporting a GIF">
+  </div>
+
+  <div class="shot">
+    <h3>Trim Video — loaded and working</h3>
+    <p class="caption">Thumbnail strip for instant seeking, live waveform, a queued range ready to export, and a Caption-style text layer with outline — rendered on the preview exactly as ffmpeg will export it. Bold/italic toggles, multiline captions, and per-layer timing are all in the panel on the right.</p>
+    <img src="assets/screenshots/trim_loaded.png" alt="Trim tab with a video loaded, queued range, and caption text layer">
+  </div>
+
+  <div class="shot">
+    <h3>Trim Video — the empty state tells you everything</h3>
+    <p class="caption">Click the preview, drag a file in, or open one from disk. Record Screen captures your monitor straight into the trim workflow; Import SRT turns a subtitle file into time-synced caption layers.</p>
+    <img src="assets/screenshots/trim_empty.png" alt="Trim tab empty state showing every way to load a video">
+  </div>
+
+  <div class="shot">
+    <h3>Export Options — every knob in one panel</h3>
+    <p class="caption">Speed, rotate, aspect presets with Crop or Blur-fill (the Shorts/Reels look), text fade, color grading, concat transitions — and the GIF row: dither algorithm, motion-weighted palette, loop count.</p>
+    <img src="assets/screenshots/export_options.png" alt="Expanded export options panel with GIF tuning controls">
+  </div>
+
+  <div class="shot">
+    <h3>URL Download — paste a link, get a clip</h3>
+    <p class="caption">The platform chip lights up when it recognizes the URL: YouTube, Instagram, X/Twitter, Reddit, Bluesky, Facebook. Browser-cookie support handles private videos; downloads retry and resume automatically.</p>
+    <img src="assets/screenshots/url_download.png" alt="URL download tab with platform detection chips">
+  </div>
+
+  <div class="shot">
+    <h3>Batch downloads</h3>
+    <p class="caption">Paste a list of URLs, download sequentially with per-row status, then hit Use to send any finished video straight into the trim workflow.</p>
+    <img src="assets/screenshots/url_batch.png" alt="Batch download panel with multiple URLs and per-row status">
+  </div>
+
+  <div class="shot">
+    <h3>History — your last 25 exports</h3>
+    <p class="caption">Format, quality preset, timestamp, and size for every export, with one-click Open and Reveal-in-folder.</p>
+    <img src="assets/screenshots/history.png" alt="History tab listing recent exports">
+  </div>
+
+  <div class="shot">
+    <h3>Debug — real errors, not a generic toast</h3>
+    <p class="caption">Level-colored logs capture everything, including full tracebacks from background threads. When a download or encode fails, the actual reason is here.</p>
+    <img src="assets/screenshots/debug.png" alt="Debug tab with color-coded log levels">
+  </div>
+
+  <div class="shot">
+    <h3>Setup — prerequisites handle themselves</h3>
+    <p class="caption">FFmpeg missing? The Setup dialog downloads a portable build or hands you the exact commands for your OS. Optional extras (drag-and-drop, live audio playback, Whisper captions) are one checkbox each.</p>
+    <img src="assets/screenshots/setup.png" alt="Setup dialog listing prerequisites with install buttons">
+  </div>
+
+  <div class="cta-row" style="margin: 24px 0 56px;">
+    <a class="btn primary" href="./#download">⬇ Get VideoKidnapper</a>
+    <a class="btn" href="https://github.com/AES256Afro/VideoKidnapper">View source on GitHub</a>
+  </div>
+
+</div>
+
+<footer>
+  <p>
+    <a href="https://github.com/AES256Afro/VideoKidnapper">GitHub</a> ·
+    <a href="https://pypi.org/project/videokidnapper/">PyPI</a> ·
+    <a href="https://github.com/AES256Afro/VideoKidnapper/blob/main/CHANGELOG.md">Changelog</a> ·
+    <a href="https://github.com/AES256Afro/VideoKidnapper/issues">Issues</a>
+  </p>
+  <p class="fine">VideoKidnapper is licensed under Apache-2.0. Downloading from platforms may be subject to their terms of service and applicable copyright law — you are responsible for how you use it.</p>
+</footer>
+
+</body>
+</html>

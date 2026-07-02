@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<!-- SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+     SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VideoKidnapper — download, trim &amp; caption clips into GIFs and MP4s</title>
+  <meta name="description" content="Free, open-source desktop tool: download clips from YouTube, X, Instagram, Reddit and more, trim them, add pixel-accurate captions, and export polished GIFs or MP4s. Fully offline, no watermark, no account.">
+  <link rel="icon" type="image/png" href="assets/branding/logo-512.png">
+  <link rel="stylesheet" href="styles.css">
+  <meta property="og:title" content="VideoKidnapper">
+  <meta property="og:description" content="Download, trim, and caption clips into polished GIFs or MP4s — fully offline, no watermark, no account.">
+  <meta property="og:image" content="https://aes256afro.github.io/VideoKidnapper/assets/branding/logo-512.png">
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a class="brand" href="./"><img src="assets/branding/logo-white.svg" alt=""> VideoKidnapper</a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="screenshots.html">Screenshots</a>
+      <a href="#download">Download</a>
+      <a href="#linux">Linux install</a>
+      <a href="https://github.com/AES256Afro/VideoKidnapper">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <img class="logo" src="assets/branding/logo-white.svg" alt="VideoKidnapper logo — a balaclava">
+  <h1>VideoKidnapper</h1>
+  <p class="tagline">Download, trim, and caption clips into polished GIFs or MP4s —
+    fully offline, no watermark, no account.</p>
+  <div class="cta-row">
+    <a class="btn primary" id="dl-win" href="https://github.com/AES256Afro/VideoKidnapper/releases/latest">⬇ Download for Windows</a>
+    <a class="btn" id="dl-linux" href="https://github.com/AES256Afro/VideoKidnapper/releases/latest/download/VideoKidnapper-x86_64.AppImage">⬇ Download for Linux</a>
+    <a class="btn" href="https://github.com/AES256Afro/VideoKidnapper">★ Star on GitHub</a>
+  </div>
+  <p class="badges" id="version-badge">Free &amp; open source · Apache-2.0 · Windows + Linux</p>
+  <img class="demo" src="assets/screenshots/demo.gif" alt="Animated tour of VideoKidnapper trimming and captioning a clip">
+</header>
+
+<section id="features">
+  <div class="container">
+    <h2>Everything between “saw a clip” and “posted it”</h2>
+    <p class="lede">One app handles the whole trip: grab the clip, cut it, caption it, and export something that looks right on every platform — without your video ever leaving your machine.</p>
+    <div class="features-grid">
+      <div class="feature"><div class="icon">🎯</div><h3>Multi-platform downloads</h3>
+        <p>Paste a link from YouTube, Instagram, X/Twitter, Reddit, Bluesky, or Facebook. Batch queues, automatic retries with resume, and one-click yt-dlp updates keep it working.</p></div>
+      <div class="feature"><div class="icon">✂️</div><h3>Multi-range trimming</h3>
+        <p>Queue any number of cuts from one source with a thumbnail strip, live waveform, and frame-accurate in/out points — export separately or concatenate with transitions.</p></div>
+      <div class="feature"><div class="icon">💬</div><h3>Pixel-accurate captions</h3>
+        <p>Text layers with outline, shadow, bold/italic, multiline wrap, per-layer timing and fades. What you see in the preview is exactly what ffmpeg exports.</p></div>
+      <div class="feature"><div class="icon">🗣️</div><h3>Whisper auto-captions</h3>
+        <p>One click transcribes the trim range into time-synced caption layers. SRT/VTT import works too — drop the file, get layers.</p></div>
+      <div class="feature"><div class="icon">🖼️</div><h3>Image &amp; logo overlays</h3>
+        <p>Watermarks, reaction stickers, animated GIF overlays — drag them anywhere on the frame with per-layer scale, opacity, and timing. Paste straight from the clipboard.</p></div>
+      <div class="feature"><div class="icon">🎞️</div><h3>GIFs that fit</h3>
+        <p>Dither algorithm, motion-weighted palettes, and loop control — tuned two-pass encoding instead of the muddy default every other tool ships.</p></div>
+      <div class="feature"><div class="icon">📱</div><h3>Shorts-ready aspect fill</h3>
+        <p>16:9 → 9:16 with the blurred-background fill look (or a clean crop), aspect presets for every platform, plus speed, rotate, mute, and color grading.</p></div>
+      <div class="feature"><div class="icon">⚡</div><h3>Hardware encoding</h3>
+        <p>NVENC, QuickSync, VideoToolbox, and AMF are probed automatically with clean software fallback. Screen recording is built in, too.</p></div>
+      <div class="feature"><div class="icon">🔒</div><h3>Private by design</h3>
+        <p>No upload, no account, no telemetry, no watermark. Apache-2.0 open source with a plugin API — your clips stay on your disk.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="download">
+  <div class="container">
+    <h2>Download</h2>
+    <p class="lede">No Python required for any of these. <span id="latest-note">Latest release on <a href="https://github.com/AES256Afro/VideoKidnapper/releases/latest">GitHub</a>.</span></p>
+    <div class="dl-grid">
+      <div class="dl-card">
+        <h3>🪟 Windows</h3>
+        <p class="sub">Windows 10/11, 64-bit</p>
+        <a class="btn primary" id="dl-win-setup" href="https://github.com/AES256Afro/VideoKidnapper/releases/latest">Installer (Setup.exe)</a>
+        <a class="btn" href="https://github.com/AES256Afro/VideoKidnapper/releases/latest/download/VideoKidnapper.exe">Portable .exe</a>
+        <p class="alt">The installer adds a Start Menu entry and clean uninstall. The portable build is a single file — download and double-click. FFmpeg auto-installs on first launch via the ⚙ Setup dialog.</p>
+      </div>
+      <div class="dl-card">
+        <h3>🐧 Linux</h3>
+        <p class="sub">Ubuntu 22.04+, Debian 12+, Fedora 36+, Bazzite, SteamOS</p>
+        <a class="btn primary" href="https://github.com/AES256Afro/VideoKidnapper/releases/latest/download/VideoKidnapper-x86_64.AppImage">AppImage (FFmpeg included)</a>
+        <a class="btn" id="dl-deb" href="https://github.com/AES256Afro/VideoKidnapper/releases/latest">.deb package</a>
+        <p class="alt">The AppImage runs anywhere — including immutable distros like Bazzite. Debian/Ubuntu users can also add the APT repo below for automatic updates.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="linux">
+  <div class="container">
+    <h2>Installing on Linux</h2>
+    <p class="lede">Pick whichever style fits your distro. Every route gives you the same app.</p>
+
+    <h4 class="install-h">AppImage <span class="tagchip">any distro · Bazzite / SteamOS friendly</span></h4>
+    <div class="codeblock"><button class="copy">Copy</button><pre>wget https://github.com/AES256Afro/VideoKidnapper/releases/latest/download/VideoKidnapper-x86_64.AppImage
+chmod +x VideoKidnapper-x86_64.AppImage
+./VideoKidnapper-x86_64.AppImage</pre></div>
+    <p class="install-note">FFmpeg is bundled — nothing else to install. For an app-menu entry and icon, add it with <a href="https://flathub.org/apps/it.mijorus.gearlever">Gear Lever</a>.</p>
+
+    <h4 class="install-h">APT repository <span class="tagchip">Ubuntu · Debian · Mint — auto-updates</span></h4>
+    <div class="codeblock"><button class="copy">Copy</button><pre>sudo install -d /etc/apt/keyrings
+curl -fsSL https://aes256afro.github.io/apt/videokidnapper.asc | sudo tee /etc/apt/keyrings/videokidnapper.asc &gt; /dev/null
+echo "deb [signed-by=/etc/apt/keyrings/videokidnapper.asc] https://aes256afro.github.io/apt stable main" | sudo tee /etc/apt/sources.list.d/videokidnapper.list
+sudo apt update &amp;&amp; sudo apt install videokidnapper</pre></div>
+    <p class="install-note">One-time setup; new versions then arrive through your normal <code>sudo apt upgrade</code>.</p>
+
+    <h4 class="install-h">Direct .deb <span class="tagchip">Ubuntu · Debian — no repo setup</span></h4>
+    <div class="codeblock"><button class="copy">Copy</button><pre>wget "$(curl -fsSL https://api.github.com/repos/AES256Afro/VideoKidnapper/releases/latest | grep -o 'https://[^"]*_amd64\.deb')"
+sudo apt install ./videokidnapper_*_amd64.deb</pre></div>
+
+    <h4 class="install-h">pip <span class="tagchip">any distro with Python 3.9+</span></h4>
+    <div class="codeblock"><button class="copy">Copy</button><pre>sudo apt install python3-pip python3-tk ffmpeg xclip
+pip install "videokidnapper[all]"
+videokidnapper</pre></div>
+  </div>
+</section>
+
+<footer>
+  <p>
+    <a href="https://github.com/AES256Afro/VideoKidnapper">GitHub</a> ·
+    <a href="https://pypi.org/project/videokidnapper/">PyPI</a> ·
+    <a href="https://github.com/AES256Afro/VideoKidnapper/blob/main/CHANGELOG.md">Changelog</a> ·
+    <a href="https://github.com/AES256Afro/VideoKidnapper/issues">Issues</a>
+  </p>
+  <p class="fine">VideoKidnapper is licensed under Apache-2.0. Downloading from platforms may be subject to their terms of service and applicable copyright law — you are responsible for how you use it. The app is a personal utility for video you have the right to use.</p>
+</footer>
+
+<script>
+// Copy buttons for the install code blocks.
+document.querySelectorAll('.codeblock .copy').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    navigator.clipboard.writeText(btn.nextElementSibling.textContent).then(function () {
+      btn.textContent = 'Copied!';
+      setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+    });
+  });
+});
+
+// Resolve exact versioned asset links from the latest GitHub release.
+// Static fallbacks (the hrefs already in the HTML) cover API failures.
+fetch('https://api.github.com/repos/AES256Afro/VideoKidnapper/releases/latest')
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (rel) {
+    if (!rel || !rel.assets) return;
+    function asset(re) {
+      var a = rel.assets.find(function (a) { return re.test(a.name); });
+      return a ? a.browser_download_url : null;
+    }
+    var setup = asset(/^VideoKidnapper-Setup-.*\.exe$/);
+    var deb = asset(/_amd64\.deb$/);
+    if (setup) {
+      document.getElementById('dl-win-setup').href = setup;
+      document.getElementById('dl-win').href = setup;
+    }
+    if (deb) document.getElementById('dl-deb').href = deb;
+    if (rel.tag_name) {
+      document.getElementById('version-badge').textContent =
+        'Free & open source · Apache-2.0 · Windows + Linux · latest: ' + rel.tag_name;
+    }
+  })
+  .catch(function () { /* fallbacks stay in place */ });
+</script>
+
+</body>
+</html>

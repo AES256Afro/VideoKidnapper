@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
+#
+# Deploy the marketing site (site/) to GitHub Pages whenever it or the
+# assets it embeds change on main. The artifact is site/ plus the
+# screenshots and branding folders copied in, so the site references
+# them with plain relative paths and there is exactly one source of
+# truth for images (the same files the README uses).
+
+name: Website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "assets/screenshots/**"
+      - "assets/branding/**"
+      - ".github/workflows/website.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build & deploy Pages
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Assemble site artifact
+        run: |
+          mkdir -p _site/assets
+          cp -r site/. _site/
+          cp -r assets/screenshots _site/assets/screenshots
+          cp -r assets/branding _site/assets/branding
+          ls -R _site | head -30
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
