@@ -87,5 +87,10 @@ packages = [
     "videokidnapper.utils",
 ]
 
+[tool.setuptools.package-data]
+# The window/taskbar icon ships inside the package so pip installs and
+# the PyInstaller bundle both find it via Path(__file__).
+videokidnapper = ["assets/*"]
+
 [tool.setuptools.dynamic]
 version = { attr = "videokidnapper.__version__" }
