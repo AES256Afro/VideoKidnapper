@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format is based on 
 ### Added
 
 - **Brand identity: the robber-head logo.** A beanie + domino-mask burglar head as a flat single-color pictogram (eye holes are true cutouts, so the mark works on any background). Master SVGs live in `assets/branding/`; a multi-size `icon.ico` + `icon.png` ship inside the package. The icon now shows on the app window and taskbar, the `VideoKidnapper.exe` file and its Start Menu shortcut, the Inno Setup wizard, the Programs & Features entry, and the README header.
+- **Linux AppImage.** `VideoKidnapper-x86_64.AppImage` — download, `chmod +x`, run. PyInstaller one-dir bundle + FFmpeg (BtbN GPL build, source linked in the release notes) squashed by appimagetool; `AppRun` prepends the bundled FFmpeg to `PATH` so the existing lookup finds it unchanged. Built on ubuntu-22.04 for a glibc 2.35 floor: Ubuntu 22.04+, Debian 12+, Fedora 36+, Bazzite, SteamOS 3+. New workflow `appimage.yml` attaches it to every release; manual dispatch builds test artifacts from any branch.
 
 ## [1.3.0] — 2026-07-02
 

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=VideoKidnapper
+GenericName=Video Clip & GIF Editor
+Comment=Trim, caption, and export video clips and GIFs; download from the open web
+Exec=VideoKidnapper %f
+Icon=videokidnapper
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;

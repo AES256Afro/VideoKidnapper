@@ -169,7 +169,26 @@ Entry fields swallow shortcuts so typing into them doesn't scrub the video.
 
 Download **`VideoKidnapper.exe`** from the [latest release](https://github.com/AES256Afro/VideoKidnapper/releases/latest), double-click to run. FFmpeg is still an external prereq — the app's **⚙ Setup** dialog will auto-install a portable copy on first launch if one isn't on PATH.
 
-### Option B — PyPI (recommended if you have Python)
+### Option B — Linux AppImage (no Python required)
+
+Download **`VideoKidnapper-x86_64.AppImage`** from the [latest release](https://github.com/AES256Afro/VideoKidnapper/releases/latest):
+
+```bash
+chmod +x VideoKidnapper-x86_64.AppImage
+./VideoKidnapper-x86_64.AppImage
+```
+
+FFmpeg is bundled — nothing else to install. Works on any glibc 2.35+ distro: Ubuntu 22.04+, Debian 12+, Fedora 36+, and immutable distros like **Bazzite**, SteamOS 3+, and Silverblue (where the AppImage is the recommended route since you can't layer packages). For an app-menu entry + icon, add it with [Gear Lever](https://flathub.org/apps/it.mijorus.gearlever).
+
+On **Ubuntu** you can alternatively install from PyPI:
+
+```bash
+sudo apt install python3-pip python3-tk ffmpeg xclip
+pip install "videokidnapper[all]"
+videokidnapper
+```
+
+### Option C — PyPI (recommended if you have Python)
 
 ```bash
 pip install videokidnapper            # core install
@@ -180,7 +199,7 @@ videokidnapper --help                 # CLI mode
 
 You still need FFmpeg on `PATH` (or use the in-app **⚙ Setup** dialog after first launch to auto-install a portable copy on Windows).
 
-### Option C — Clone and install (contributors / latest `main`)
+### Option D — Clone and install (contributors / latest `main`)
 
 ### 1. Install Python 3.9 – 3.14
 
