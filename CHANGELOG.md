@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`apt-get install videokidnapper`.** Every release now ships `videokidnapper_X.Y.Z_amd64.deb` (same PyInstaller bundle as the AppImage, but `Depends: ffmpeg` instead of bundling it) and publishes it to a signed APT repository served from GitHub Pages ([`AES256Afro/apt`](https://github.com/AES256Afro/apt)). One-time source setup, then updates flow through `apt upgrade`. The deb also installs a launcher-menu entry and icon.
+
 ## [1.4.0] — 2026-07-02
 
 ### Security
