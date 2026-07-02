@@ -1,22 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <!-- White variant of the VideoKidnapper mark, for dark backgrounds.
        Geometry must stay identical to logo.svg. -->
-  <g fill="#FFFFFF">
-    <!-- beanie dome -->
-    <path d="M 140 228 C 140 138 372 138 372 228 Z"/>
-    <!-- beanie cuff -->
-    <path d="M 148 236 L 364 236 Q 384 236 384 257 Q 384 278 364 278 L 148 278 Q 128 278 128 257 Q 128 236 148 236 Z"/>
-    <!-- domino mask with eye holes knocked out -->
-    <path fill-rule="evenodd" d="
-      M 120 330
-      C 120 296 180 288 256 288
-      C 332 288 392 296 392 330
-      C 392 376 344 398 300 382
-      C 280 375 270 368 256 368
-      C 242 368 232 375 212 382
-      C 168 398 120 376 120 330 Z
-      M 234.4 340.9 A 40 24 10 0 1 157.6 327.1 A 40 24 10 0 1 234.4 340.9 Z
-      M 354.4 327.1 A 40 24 -10 0 1 277.6 340.9 A 40 24 -10 0 1 354.4 327.1 Z
-    "/>
-  </g>
+  <path fill="#FFFFFF" fill-rule="evenodd" d="
+    M 152 430
+    C 140 384 132 330 132 276
+    C 132 150 190 96 256 96
+    C 322 96 380 150 380 276
+    C 380 330 372 384 360 430
+    C 320 446 192 446 152 430 Z
+    M 247.5 269.2 A 52 27 8 0 1 144.5 254.8 A 52 27 8 0 1 247.5 269.2 Z
+    M 367.5 254.8 A 52 27 -8 0 1 264.5 269.2 A 52 27 -8 0 1 367.5 254.8 Z
+    M 286 362 A 30 20 0 0 1 226 362 A 30 20 0 0 1 286 362 Z
+  "/>
 </svg>
