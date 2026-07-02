@@ -52,7 +52,11 @@ def extract_thumbnail_strip(video_path, duration, count=10):
     thumbnails = []
     for i in range(count):
         ts = interval * i + interval / 2
-        frame = get_frame_at(video_path, ts, cache_key=(str(video_path), f"thumb_{i}"))
+        # The cache key must encode the duration/count the timestamp was
+        # derived from — otherwise a strip regenerated for a different trim
+        # range returns the previous range's stale thumbnails.
+        key = (str(video_path), f"thumb_{count}_{round(duration, 2)}_{i}")
+        frame = get_frame_at(video_path, ts, cache_key=key)
         if frame:
             thumbnails.append(frame)
     return thumbnails

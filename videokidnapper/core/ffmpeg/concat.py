@@ -19,6 +19,7 @@ crossfade lines up perfectly: transition k starts at
 
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 from videokidnapper.core.ffmpeg._internals import (
@@ -26,6 +27,36 @@ from videokidnapper.core.ffmpeg._internals import (
     _run_kwargs, pick_video_encoder,
 )
 from videokidnapper.core.ffmpeg.probe import get_video_info
+
+
+def _wait_for_concat(process, cancel_event, progress_callback):
+    """Wait for an ffmpeg concat process without busy-spinning.
+
+    A background thread drains ``stderr`` so a chatty ffmpeg can't fill the
+    OS pipe buffer (~64 KB) and deadlock against a parent that never reads
+    it. The main thread blocks on ``wait(timeout=...)`` — checking the
+    cancel flag and ticking progress between waits instead of pegging a CPU
+    core at 100%. Returns ``True`` on clean exit, ``False`` on cancel.
+    """
+    drain = threading.Thread(
+        target=lambda p: [None for _ in iter(p.readline, "")],
+        args=(process.stderr,), daemon=True,
+    )
+    drain.start()
+    while True:
+        if cancel_event and cancel_event.is_set():
+            process.kill()
+            process.wait()
+            drain.join(timeout=1.0)
+            return False
+        try:
+            process.wait(timeout=0.2)
+            break
+        except subprocess.TimeoutExpired:
+            if progress_callback:
+                progress_callback(0.5)
+    drain.join(timeout=1.0)
+    return True
 
 
 # Supported transition kinds for ``concat_clips_with_transition``:
@@ -193,12 +224,8 @@ def concat_clips_with_transition(
         cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,
         **_run_kwargs(),
     )
-    while process.poll() is None:
-        if cancel_event and cancel_event.is_set():
-            process.kill()
-            return None
-        if progress_callback:
-            progress_callback(0.5)
+    if not _wait_for_concat(process, cancel_event, progress_callback):
+        return None
     if progress_callback:
         progress_callback(1.0)
     return output_path if process.returncode == 0 else None
@@ -224,7 +251,7 @@ def concat_clips(input_paths, output_path, progress_callback=None, cancel_event=
                 fh.write(f"file '{safe}'\n")
 
         cmd = [
-            _get_ffmpeg(), "-y",
+            _get_ffmpeg(), "-y", "-hide_banner", "-loglevel", "error",
             "-f", "concat",
             "-safe", "0",
             "-i", str(list_path),
@@ -236,13 +263,9 @@ def concat_clips(input_paths, output_path, progress_callback=None, cancel_event=
             cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,
             **_run_kwargs(),
         )
-        # No accurate progress for copy-only concat — just poll completion.
-        while process.poll() is None:
-            if cancel_event and cancel_event.is_set():
-                process.kill()
-                return None
-            if progress_callback:
-                progress_callback(0.5)
+        # No accurate progress for copy-only concat — just tick the bar.
+        if not _wait_for_concat(process, cancel_event, progress_callback):
+            return None
         if progress_callback:
             progress_callback(1.0)
         return output_path if process.returncode == 0 else None

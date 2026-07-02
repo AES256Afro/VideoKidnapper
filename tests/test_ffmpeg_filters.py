@@ -39,6 +39,20 @@ def test_audio_speed_chains_beyond_range():
     assert f.count("atempo=") >= 2
 
 
+def test_audio_speed_negative_does_not_hang():
+    # Regression: a non-positive speed used to spin the chaining loop
+    # forever (each ``remaining /= 0.5`` doubled the magnitude, never
+    # reaching >= 0.5). It must terminate and produce a valid filter.
+    f = _build_audio_speed(-1.0)
+    assert "atempo=" in f
+
+
+def test_audio_speed_zeroish_clamps():
+    # Tiny/zero speeds clamp to the positive floor rather than diverging.
+    f = _build_audio_speed(0.0001)
+    assert "atempo=" in f
+
+
 def test_crop_returns_none_when_missing():
     info = {"width": 1920, "height": 1080}
     assert _build_crop_filter(None, info) is None

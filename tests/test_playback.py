@@ -9,7 +9,9 @@ in the sync rule without opening an audio device.
 """
 import time
 
-from videokidnapper.core.playback import AudioClock, is_available
+from videokidnapper.core.playback import (
+    AudioClock, AudioVideoPlayer, is_available,
+)
 
 
 def test_fresh_clock_returns_base_time():
@@ -64,3 +66,32 @@ def test_zero_sample_rate_falls_back_to_wall_clock_only():
 def test_is_available_is_boolean():
     # Whether deps are installed depends on the env — just pin the shape.
     assert isinstance(is_available(), bool)
+
+
+def test_stop_on_fresh_player_does_not_fire_finished():
+    # Regression: play() calls stop() to tear down any prior session.
+    # On a fresh player (nothing running) that must NOT spuriously fire
+    # on_finished("stopped") — which would make the UI flip the play
+    # button back to "Play" the instant playback starts.
+    calls = []
+    p = AudioVideoPlayer(
+        "nonexistent.mp4",
+        render_callback=lambda img, ts: None,
+        on_finished=lambda reason: calls.append(reason),
+    )
+    p.stop()
+    assert calls == []
+
+
+def test_stop_while_running_fires_finished_once():
+    # When something is actually playing, stop() reports "stopped" exactly
+    # once.
+    calls = []
+    p = AudioVideoPlayer(
+        "nonexistent.mp4",
+        render_callback=lambda img, ts: None,
+        on_finished=lambda reason: calls.append(reason),
+    )
+    p._running = True  # simulate an active session without opening a device
+    p.stop()
+    assert calls == ["stopped"]
