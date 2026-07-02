@@ -130,6 +130,10 @@ def _build_audio_speed(speed):
         speed = float(speed or 1.0)
     except (TypeError, ValueError):
         speed = 1.0
+    # Guard the chaining loops below: a non-positive speed would make
+    # ``remaining < 0.5`` forever (each ``/= 0.5`` doubles the magnitude),
+    # hanging the encode thread. Clamp to a sane positive range.
+    speed = max(0.1, min(100.0, speed))
     if abs(speed - 1.0) < 0.001:
         return None
     stages = []
@@ -187,7 +191,12 @@ def _build_drawtext_filter(layer, fade=0.0):
     fontsize = int(layer.get("fontsize", 24))
     fontcolor = layer.get("fontcolor", "white")
     pos_expr = layer.get("position", "(w-tw)/2:h-th-20")
-    x_expr, y_expr = pos_expr.split(":", 1)
+    # A drawtext position is an "x:y" pair. A stale/hand-edited layer with
+    # no colon (e.g. "center") would make the unpack raise ValueError and
+    # abort the whole encode; fall back to bottom-center instead.
+    if ":" not in str(pos_expr):
+        pos_expr = "(w-tw)/2:h-th-20"
+    x_expr, y_expr = str(pos_expr).split(":", 1)
     start_t = float(layer.get("start", 0))
     end_t = float(layer.get("end", 999999))
     layer_fade = float(layer.get("fade", fade) or 0.0)
