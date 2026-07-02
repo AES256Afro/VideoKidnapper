@@ -180,7 +180,18 @@ chmod +x VideoKidnapper-x86_64.AppImage
 
 FFmpeg is bundled — nothing else to install. Works on any glibc 2.35+ distro: Ubuntu 22.04+, Debian 12+, Fedora 36+, and immutable distros like **Bazzite**, SteamOS 3+, and Silverblue (where the AppImage is the recommended route since you can't layer packages). For an app-menu entry + icon, add it with [Gear Lever](https://flathub.org/apps/it.mijorus.gearlever).
 
-On **Ubuntu** you can alternatively install from PyPI:
+On **Ubuntu / Debian / Mint** you can instead use the APT repository — one-time setup, then updates arrive through normal `apt upgrade`:
+
+```bash
+sudo install -d /etc/apt/keyrings
+curl -fsSL https://aes256afro.github.io/apt/videokidnapper.asc | sudo tee /etc/apt/keyrings/videokidnapper.asc > /dev/null
+echo "deb [signed-by=/etc/apt/keyrings/videokidnapper.asc] https://aes256afro.github.io/apt stable main" | sudo tee /etc/apt/sources.list.d/videokidnapper.list
+sudo apt update && sudo apt install videokidnapper
+```
+
+(Or grab the `.deb` from the release page and `sudo apt install ./videokidnapper_*.deb` — same package, no repo setup, no auto-updates.)
+
+PyPI also works if you prefer pip:
 
 ```bash
 sudo apt install python3-pip python3-tk ffmpeg xclip
