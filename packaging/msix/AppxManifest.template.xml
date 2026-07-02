@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+     SPDX-License-Identifier: Apache-2.0
+
+     MSIX manifest template. build-msix.ps1 substitutes the {{...}}
+     placeholders. For Microsoft Store submissions, Identity Name /
+     Publisher / PublisherDisplayName MUST be the exact values Partner
+     Center shows under Product identity after reserving the app name -
+     the Store re-signs the package and rejects mismatches. -->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 desktop rescap">
+
+  <Identity
+    Name="{{IDENTITY_NAME}}"
+    Publisher="{{PUBLISHER}}"
+    Version="{{VERSION}}"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>VideoKidnapper</DisplayName>
+    <PublisherDisplayName>{{PUBLISHER_DISPLAY}}</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <!-- 17763 = Windows 10 1809, the MSIX baseline. The app itself
+         documents Windows 10+ (installer.iss MinVersion). -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="VideoKidnapper" Executable="VideoKidnapper.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="VideoKidnapper"
+        Description="Trim, caption, and export video clips and GIFs; download from the open web."
+        BackgroundColor="#0D1117"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile
+          Wide310x150Logo="Assets\Wide310x150Logo.png"
+          Square310x310Logo="Assets\Square310x310Logo.png" />
+      </uap:VisualElements>
+      <Extensions>
+        <!-- `videokidnapper` on PATH — CLI parity with the pip/deb
+             installs, and lets CI/container tests run headless. -->
+        <uap3:Extension Category="windows.appExecutionAlias" Executable="VideoKidnapper.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap3:AppExecutionAlias>
+            <desktop:ExecutionAlias Alias="videokidnapper.exe" />
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- Full-trust desktop app: required for the PyInstaller exe,
+         ffmpeg subprocesses, and yt-dlp's browser-cookie reads. -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>
