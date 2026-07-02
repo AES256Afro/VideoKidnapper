@@ -3,6 +3,7 @@
 import sys
 import traceback
 import webbrowser
+from pathlib import Path
 
 import customtkinter as ctk
 
@@ -24,6 +25,7 @@ class App(ctk.CTk):
         self.geometry(WINDOW_SIZE)
         self.minsize(*MIN_WINDOW_SIZE)
         self.configure(fg_color=T.BG_BASE)
+        self._set_window_icon()
 
         # Turn DnD on BEFORE any widget is created so their
         # drop_target_register() calls succeed during __init__.
@@ -42,6 +44,33 @@ class App(ctk.CTk):
         self._install_exception_handler()
         self._load_plugins()
         self._maybe_check_for_update()
+
+    # ------------------------------------------------------------------
+    def _set_window_icon(self):
+        """Apply the packaged robber-head icon to the window / taskbar.
+
+        Never fatal: headless test environments, exotic Tk builds, or a
+        stripped install simply keep the default icon. On Windows the
+        .ico path wins (crisp multi-size taskbar rendering); iconphoto
+        covers Linux/macOS. CustomTkinter re-asserts its own default
+        icon shortly after startup on Windows, so we re-apply ours a
+        beat later.
+        """
+        assets = Path(__file__).resolve().parent / "assets"
+        ico, png = assets / "icon.ico", assets / "icon.png"
+        try:
+            if sys.platform == "win32" and ico.exists():
+                self.iconbitmap(str(ico))
+                self.after(300, lambda: self.iconbitmap(str(ico)))
+            if png.exists():
+                import tkinter as tk
+
+                # Keep a reference — Tk drops the icon if the PhotoImage
+                # is garbage-collected.
+                self._icon_image = tk.PhotoImage(file=str(png))
+                self.iconphoto(True, self._icon_image)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     def _build_ui(self):

@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Brand identity: the robber-head logo.** A beanie + domino-mask burglar head as a flat single-color pictogram (eye holes are true cutouts, so the mark works on any background). Master SVGs live in `assets/branding/`; a multi-size `icon.ico` + `icon.png` ship inside the package. The icon now shows on the app window and taskbar, the `VideoKidnapper.exe` file and its Start Menu shortcut, the Inno Setup wizard, the Programs & Features entry, and the README header.
+
 ## [1.3.0] — 2026-07-02
 
 ### Added

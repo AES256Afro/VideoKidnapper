@@ -37,7 +37,12 @@ except Exception:
 # Pillow's ImageTk needs tk itself, which PyInstaller bundles automatically.
 pil_datas = collect_data_files("PIL")
 
-datas = ctk_datas + dnd_datas + pil_datas
+datas = ctk_datas + dnd_datas + pil_datas + [
+    # Window/taskbar icon: dest mirrors the package layout so
+    # Path(__file__).parent / "assets" resolves inside the bundle.
+    ("../videokidnapper/assets/icon.ico", "videokidnapper/assets"),
+    ("../videokidnapper/assets/icon.png", "videokidnapper/assets"),
+]
 binaries = ctk_binaries + dnd_binaries
 hiddenimports = ctk_hiddenimports + dnd_hiddenimports + [
     # yt_dlp subpackages occasionally slip past the auto-discovery;
@@ -90,4 +95,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    # Robber-head brand icon: shows in Explorer, taskbar, and the
+    # Start Menu shortcut the Inno Setup installer creates.
+    icon="../videokidnapper/assets/icon.ico",
 )

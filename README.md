@@ -1,4 +1,9 @@
+<div align="center">
+  <img src="assets/branding/logo.svg" width="140" alt="VideoKidnapper — masked robber logo"/>
+
 # VideoKidnapper
+
+</div>
 
 A dark-themed desktop tool for trimming videos, downloading clips from the open web, and exporting polished GIFs or MP4s with text overlays — from any supported platform.
 

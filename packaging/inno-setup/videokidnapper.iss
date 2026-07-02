@@ -52,6 +52,11 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 
+; Brand icon: the Setup wizard's own .exe icon, and the icon shown in
+; Programs & Features next to the uninstall entry.
+SetupIconFile=..\..\videokidnapper\assets\icon.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
+
 ; Install per-user by default (no admin prompt on modern Windows). A
 ; user with admin privileges can still choose machine-wide install via
 ; the "Install for all users" question in the wizard.
