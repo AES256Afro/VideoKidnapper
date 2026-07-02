@@ -46,7 +46,7 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "customtkinter>=5.2.0,<6.0",
+    "customtkinter>=5.2.0,<7.0",
     "Pillow>=10.0.0,<13.0",
     "mss>=9.0.0,<11.0",
     "yt-dlp>=2024.0.0",
