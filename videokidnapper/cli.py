@@ -13,6 +13,18 @@ import argparse
 import sys
 from pathlib import Path
 
+# Legacy Windows consoles decode stdout as cp1252, which can't encode
+# characters like "→" in progress lines — print() then raises
+# UnicodeEncodeError and kills the CLI job (found via the MSIX
+# container's attached-pipe console). Degrade to replacement chars
+# instead of crashing; harmless everywhere else.
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(errors="replace")
+        except Exception:
+            pass
+
 
 def _cli_main(args):
     """Run a single trim/download-and-trim operation without the GUI."""

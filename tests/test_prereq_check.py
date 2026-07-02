@@ -99,3 +99,51 @@ def test_has_any_missing_when_everything_present(monkeypatch):
     assert prereq_check.has_any_missing(required_only=True) is False
     # When counting optional, the tkinterdnd2 gap counts.
     assert prereq_check.has_any_missing(required_only=False) is True
+
+
+# ---------------------------------------------------------------------------
+# ffmpeg_check binary resolution (frozen-app bundled lookup)
+# ---------------------------------------------------------------------------
+
+def test_find_ffmpeg_frozen_checks_next_to_executable(tmp_path, monkeypatch):
+    """A frozen app must find ffmpeg bundled next to its own exe.
+
+    PATH inside the MSIX container is unreliable (the activation broker
+    does not rebuild it from the registry), so the packaged app ships
+    ffmpeg at <exe dir>/assets/ffmpeg/bin and the resolver must look
+    there without any PATH help.
+    """
+    import os
+    from videokidnapper.utils import ffmpeg_check
+
+    exe_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    bundled = tmp_path / "assets" / "ffmpeg" / "bin" / exe_name
+    bundled.parent.mkdir(parents=True)
+    bundled.write_bytes(b"stub")
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "VideoKidnapper.exe"))
+    with patch.object(ffmpeg_check.shutil, "which", return_value=None):
+        found = ffmpeg_check.find_ffmpeg()
+    assert found == bundled
+
+
+def test_find_ffmpeg_none_when_absent(tmp_path, monkeypatch):
+    from videokidnapper.utils import ffmpeg_check
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "VideoKidnapper.exe"))
+    with patch.object(ffmpeg_check.shutil, "which", return_value=None):
+        # No bundled copy in tmp_path and (crucially) no PATH hit: the
+        # repo-relative fallback may exist on dev machines, so only
+        # assert the *type* contract — Path or None, never a crash.
+        found = ffmpeg_check.find_ffmpeg()
+    assert found is None or found.exists()
+
+
+def test_find_ffmpeg_prefers_path(monkeypatch):
+    from pathlib import Path
+    from videokidnapper.utils import ffmpeg_check
+
+    with patch.object(ffmpeg_check.shutil, "which", return_value="/usr/bin/ffmpeg"):
+        assert ffmpeg_check.find_ffmpeg() == Path("/usr/bin/ffmpeg")

@@ -6,7 +6,13 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
+- **Microsoft Store / MSIX packaging.** `packaging/msix/` builds `VideoKidnapper.msix` from the same PyInstaller exe (manifest, balaclava Store tiles, `build-msix.ps1`). Store distribution gets Microsoft-signed packages — no SmartScreen warning — for a $19 one-time developer registration. FFmpeg is bundled into the package because the MSIX app container does not inherit PATH. A `videokidnapper` execution alias gives CLI parity with the pip/deb installs. See `packaging/msix/README.md`.
 - **`apt-get install videokidnapper`.** Every release now ships `videokidnapper_X.Y.Z_amd64.deb` (same PyInstaller bundle as the AppImage, but `Depends: ffmpeg` instead of bundling it) and publishes it to a signed APT repository served from GitHub Pages ([`AES256Afro/apt`](https://github.com/AES256Afro/apt)). One-time source setup, then updates flow through `apt upgrade`. The deb also installs a launcher-menu entry and icon.
+
+### Fixed
+
+- **FFmpeg now resolves next to the app executable, not just on PATH.** `find_ffmpeg` / `find_ffprobe` check `<exe dir>/assets/ffmpeg/bin` when the app is frozen, so packaged builds that bundle their own FFmpeg work even where PATH isn't propagated (notably inside the MSIX app container, where the activation broker doesn't rebuild PATH from the registry). Regression tests cover the frozen-app lookup.
+- **CLI no longer crashes on legacy Windows consoles.** Progress lines containing characters like `→` raised `UnicodeEncodeError` under a cp1252 console (e.g. plain `cmd.exe`, or an attached pipe), aborting the run before export. stdout/stderr are now reconfigured to replace un-encodable characters instead of crashing.
 
 ## [1.4.0] — 2026-07-02
 
