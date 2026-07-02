@@ -3,6 +3,8 @@
 
 # VideoKidnapper
 
+**[videokidnapper.com](https://videokidnapper.com)** · [Downloads](https://github.com/AES256Afro/VideoKidnapper/releases/latest) · [Screenshots](https://videokidnapper.com/screenshots.html)
+
 </div>
 
 A dark-themed desktop tool for trimming videos, downloading clips from the open web, and exporting polished GIFs or MP4s with text overlays — from any supported platform.

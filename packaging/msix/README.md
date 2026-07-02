@@ -40,10 +40,14 @@ Container findings (2026-07-02, Windows 11 Pro):
 - With FFmpeg bundled, a real CLI export (ffmpeg subprocess, temp files,
   output written outside the container) succeeds.
 
+## CI
+
+`.github/workflows/msix.yml` builds the Store `.msix` on every tag push (exe → BtbN GPL FFmpeg bundle → `build-msix.ps1`) and uploads it as a CI artifact. It reads the Partner Center identity from repository **variables** `MSIX_IDENTITY_NAME` / `MSIX_PUBLISHER` / `MSIX_PUBLISHER_DISPLAY`; until those are set it falls back to the dev identity and names the artifact `*-dev-unsigned`. The artifact is intentionally not attached to GitHub Releases — end users can't install an unsigned MSIX; it exists to be uploaded to Partner Center.
+
 ## Store submission (per release)
 
-1. **One-time:** register a Partner Center individual developer account ($19) at https://partner.microsoft.com/dashboard/registration and reserve the app name **VideoKidnapper**. Under *Product management → Product identity* you get three values.
-2. Build with the real identity (values from step 1):
+1. **One-time:** register a Partner Center individual developer account ($19) at https://partner.microsoft.com/dashboard/registration and reserve the app name **VideoKidnapper**. Under *Product management → Product identity* you get three values — set them as the repo variables above.
+2. Or build locally with the real identity (values from step 1):
 
 ```powershell
 .\packaging\msix\build-msix.ps1 -ExePath dist\VideoKidnapper.exe -Version X.Y.Z.0 `
