@@ -143,7 +143,7 @@ jobs:
           sudo apt-get remove -y videokidnapper
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: VideoKidnapper-linux
           path: |
@@ -163,7 +163,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Download built AppImage
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: VideoKidnapper-linux
           path: dist/
@@ -200,7 +200,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download built packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: VideoKidnapper-linux
           path: dist/
