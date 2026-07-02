@@ -2,7 +2,11 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.0] — 2026-07-02
+
+### Security
+
+- **Pillow version cap raised (`<12.0` → `<13.0`).** The old upper bound forced installs onto Pillow 11.x, which is affected by two moderate advisories fixed in 12.2.0. Python 3.10+ now resolves a patched Pillow (3.9 stays on 11.x — Pillow 12 dropped 3.9 support); the shipped `.exe` and AppImage bundle the patched version.
 
 ### Added
 
@@ -216,6 +220,7 @@ First public release. The overhaul that turned the project from a YouTube-only G
 
 - 124 tests covering URL platform detection, share-intent URL construction, ffmpeg filter math (crop clamping, aspect-crop, fade-alpha expression, hardware encoder picking and probing), settings persistence + schema migration, SRT parser, size estimator, LRU cache, and the DnD payload parser.
 
+[1.4.0]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.4.0
 [1.3.0]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.3.0
 [1.2.0]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.2.0
 [1.1.0]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.1.0
