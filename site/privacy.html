@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<!-- SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+     SPDX-License-Identifier: Apache-2.0
+     Web rendering of docs/PRIVACY.md — keep the two in sync. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy — VideoKidnapper</title>
+  <meta name="description" content="VideoKidnapper runs entirely on your machine and collects no personal data, analytics, or telemetry.">
+  <link rel="icon" type="image/png" href="assets/branding/logo-512.png">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .policy { max-width: 780px; margin: 0 auto; padding: 24px 0 56px; }
+    .policy h2 { font-size: 1.4rem; margin: 34px 0 10px; }
+    .policy p, .policy li { color: var(--text-muted); }
+    .policy li { margin: 6px 0 6px 18px; }
+    .policy strong { color: var(--text); }
+    .policy code { background: var(--bg-raised); border-radius: 4px; padding: 1px 6px; font-size: .88em; }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a class="brand" href="./"><img src="assets/branding/logo-white.svg" alt=""> VideoKidnapper</a>
+    <div class="nav-links">
+      <a href="./#features">Features</a>
+      <a href="screenshots.html">Screenshots</a>
+      <a href="./#download">Download</a>
+      <a href="https://github.com/AES256Afro/VideoKidnapper">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" style="padding-bottom: 0;">
+  <h1>Privacy Policy</h1>
+  <p class="tagline">Last updated: 2026-07-02</p>
+</header>
+
+<div class="container policy">
+  <p>VideoKidnapper is a desktop application that runs entirely on your own machine.
+  <strong>It does not collect, store, or transmit any personal data, usage analytics,
+  telemetry, or crash reports to the project maintainer or to any third party.</strong></p>
+
+  <h2>What stays local</h2>
+  <p>Every piece of data the app touches stays on your computer:</p>
+  <ul>
+    <li>Videos you open, trim, or export.</li>
+    <li>URLs you paste and the corresponding downloaded files (saved wherever you configure — defaults to your Downloads folder).</li>
+    <li>Text captions, image overlays, crops, and every other edit you make inside the app.</li>
+    <li>Your settings file at <code>~/.videokidnapper_settings.json</code> (output folder, theme, recent-export history).</li>
+    <li>Cookie data the app reads from your browser to download private / age-gated videos you have access to. This is read locally by <code>yt-dlp</code> and is never transmitted anywhere except to the video host you are downloading from, using your existing session.</li>
+  </ul>
+  <p>Nothing on this list leaves your computer at any point.</p>
+
+  <h2>Network activity</h2>
+  <p>VideoKidnapper makes outbound connections only to servers you direct it to, or to well-known public services required for a core feature:</p>
+  <ul>
+    <li><strong>User-initiated downloads.</strong> When you paste a URL and click Download, the app (via <code>yt-dlp</code>) contacts the host of that URL directly. No VideoKidnapper server sits in the middle — none exists.</li>
+    <li><strong>Update check.</strong> Once per launch, the app makes an anonymous query to the public GitHub API to see whether a newer version exists. No identifying information is sent, and the check can be disabled in the Setup dialog.</li>
+    <li><strong>Optional AI captions (opt-in, off by default).</strong> If you install the optional <code>faster-whisper</code> extra, the speech model is downloaded from Hugging Face on first use and cached. Your audio never leaves your computer — transcription runs entirely offline.</li>
+  </ul>
+  <p>No other network activity exists in the codebase — it's <a href="https://github.com/AES256Afro/VideoKidnapper">open source</a>, so you can audit this yourself.</p>
+
+  <h2>No account system, no logins, no cloud</h2>
+  <p>VideoKidnapper has no user accounts, no registration, no data sync, and no backend server that processes user data.</p>
+
+  <h2>Third-party software</h2>
+  <p>The app bundles or optionally depends on open-source projects — <code>ffmpeg</code>, <code>yt-dlp</code>, <code>customtkinter</code>, <code>Pillow</code>, and others — each with its own upstream license. None of them phone home in the way VideoKidnapper uses them.</p>
+
+  <h2>Changes to this policy</h2>
+  <p>If the app's data-handling posture ever changes (for example, opt-in crash reporting in some future release), this page and the <a href="https://github.com/AES256Afro/VideoKidnapper/blob/main/docs/PRIVACY.md">repository copy of this policy</a> will be updated in the same release, with a changelog entry calling it out.</p>
+
+  <h2>Contact</h2>
+  <p>Questions or concerns can be filed as a <a href="https://github.com/AES256Afro/VideoKidnapper/issues">GitHub issue</a>.</p>
+</div>
+
+<footer>
+  <p>
+    <a href="https://github.com/AES256Afro/VideoKidnapper">GitHub</a> ·
+    <a href="https://pypi.org/project/videokidnapper/">PyPI</a> ·
+    <a href="./">videokidnapper.com</a>
+  </p>
+</footer>
+
+</body>
+</html>
