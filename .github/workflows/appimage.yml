@@ -1,16 +1,17 @@
 # SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
 #
-# On every tag push (v*.*.*), build a Linux AppImage (PyInstaller
-# one-dir + bundled LGPL FFmpeg) and attach it to the GitHub Release.
+# On every tag push (v*.*.*), build the Linux artifacts from one
+# PyInstaller one-dir bundle:
+#   - VideoKidnapper-x86_64.AppImage (bundled FFmpeg; Bazzite/SteamOS)
+#   - videokidnapper_<ver>_amd64.deb (Depends: ffmpeg; Ubuntu/Debian)
+# then attach both to the GitHub Release and publish the .deb to the
+# signed APT repo at AES256Afro/apt (GitHub Pages), so
+# `apt-get install videokidnapper` works after the one-time repo add.
 # Mirrors installer.yml's structure; independent of the other release
 # workflows so a failure in one doesn't block the others.
-#
-# What users get: download VideoKidnapper-x86_64.AppImage, chmod +x,
-# double-click. No Python install, no FFmpeg install, no root. Works on
-# glibc 2.35+ distros (Ubuntu 22.04+, Fedora 36+, Bazzite, SteamOS 3+).
 
-name: Linux AppImage
+name: Linux packages
 
 on:
   push:
@@ -24,6 +25,7 @@ on:
       - ".github/workflows/appimage.yml"
       - "packaging/videokidnapper-linux.spec"
       - "packaging/appimage/**"
+      - "packaging/deb/**"
   # Manual dispatch: rebuild for an existing tag, or build a test
   # artifact from any branch (leave `tag` empty to skip the release
   # attach and just get the CI artifact).
@@ -39,7 +41,7 @@ permissions:
 
 jobs:
   build:
-    name: Build AppImage
+    name: Build AppImage + deb
     # Oldest supported LTS = oldest glibc the binary requires = widest
     # distro compatibility. Bump deliberately, not by adopting -latest.
     runs-on: ubuntu-22.04
@@ -110,11 +112,43 @@ jobs:
           chmod +x VideoKidnapper-x86_64.AppImage
           ./VideoKidnapper-x86_64.AppImage --appimage-extract-and-run --help
 
+      - name: Resolve deb version
+        id: version
+        shell: bash
+        # Tag → 1.4.0; dispatch with tag → same; PR/self-test builds get
+        # a throwaway 0.0.0+dev version (never published anywhere).
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag }}" ]; then
+            raw="${{ github.event.inputs.tag }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            raw="${GITHUB_REF_NAME}"
+          else
+            raw="v0.0.0+dev${GITHUB_RUN_NUMBER}"
+          fi
+          echo "version=${raw#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build .deb
+        run: |
+          packaging/deb/build-deb.sh \
+            "${{ steps.version.outputs.version }}" \
+            dist/VideoKidnapper \
+            "videokidnapper_${{ steps.version.outputs.version }}_amd64.deb"
+
+      - name: Smoke-test .deb — install + --help
+        # Real dpkg install on the runner: catches broken symlinks,
+        # missing Depends, and control-file mistakes.
+        run: |
+          sudo apt-get install -y ./videokidnapper_*.deb
+          videokidnapper --help
+          sudo apt-get remove -y videokidnapper
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: VideoKidnapper-linux
-          path: VideoKidnapper-x86_64.AppImage
+          path: |
+            VideoKidnapper-x86_64.AppImage
+            videokidnapper_*_amd64.deb
           retention-days: 30
 
   attach:
@@ -144,15 +178,78 @@ jobs:
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Upload AppImage to release
+      - name: Upload Linux artifacts to release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ steps.tag.outputs.tag }}"
+          shopt -s nullglob
+          assets=(dist/VideoKidnapper-x86_64.AppImage dist/videokidnapper_*_amd64.deb)
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" dist/VideoKidnapper-x86_64.AppImage --clobber
+            gh release upload "$tag" "${assets[@]}" --clobber
           else
-            gh release create "$tag" dist/VideoKidnapper-x86_64.AppImage \
+            gh release create "$tag" "${assets[@]}" \
               --title "$tag" \
-              --notes $'Linux build for '"$tag"$'.\n\n- `VideoKidnapper-x86_64.AppImage` — download, `chmod +x`, run. FFmpeg included; no Python required. Works on glibc 2.35+ distros (Ubuntu 22.04+, Fedora 36+, Bazzite, SteamOS 3+).\n\nThe bundled FFmpeg is a GPL build from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (source available there per the GPL).'
+              --notes $'Linux builds for '"$tag"$'.\n\n- `VideoKidnapper-x86_64.AppImage` — download, `chmod +x`, run. FFmpeg included; no Python required. Works on glibc 2.35+ distros (Ubuntu 22.04+, Fedora 36+, Bazzite, SteamOS 3+).\n- `videokidnapper_*_amd64.deb` — Ubuntu/Debian package (`sudo apt install ./videokidnapper_*.deb`), or add the [APT repo](https://github.com/AES256Afro/apt) once and get updates via `apt upgrade`.\n\nThe AppImage\'s bundled FFmpeg is a GPL build from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) (source available there per the GPL); the .deb depends on your distro\'s ffmpeg instead.'
           fi
+
+  publish-apt:
+    name: Publish to APT repo
+    needs: attach
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download built packages
+        uses: actions/download-artifact@v4
+        with:
+          name: VideoKidnapper-linux
+          path: dist/
+
+      - name: Import signing key
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+        run: |
+          echo "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
+          gpg --list-secret-keys --keyid-format long
+
+      - name: Clone apt repo (deploy key)
+        env:
+          APT_REPO_DEPLOY_KEY: ${{ secrets.APT_REPO_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$APT_REPO_DEPLOY_KEY" > ~/.ssh/apt_deploy
+          chmod 600 ~/.ssh/apt_deploy
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/apt_deploy" \
+            git clone git@github.com:AES256Afro/apt.git apt-repo
+
+      - name: Add package + regenerate signed indexes
+        run: |
+          cd apt-repo
+          mkdir -p pool/main/v/videokidnapper dists/stable/main/binary-amd64
+          cp ../dist/videokidnapper_*_amd64.deb pool/main/v/videokidnapper/
+          # Package index (paths relative to repo root, per APT spec)
+          apt-ftparchive --arch amd64 packages pool > dists/stable/main/binary-amd64/Packages
+          gzip -9 -kf dists/stable/main/binary-amd64/Packages
+          # Release + signatures
+          apt-ftparchive \
+            -o APT::FTPArchive::Release::Origin="VideoKidnapper" \
+            -o APT::FTPArchive::Release::Label="VideoKidnapper" \
+            -o APT::FTPArchive::Release::Suite="stable" \
+            -o APT::FTPArchive::Release::Codename="stable" \
+            -o APT::FTPArchive::Release::Components="main" \
+            -o APT::FTPArchive::Release::Architectures="amd64" \
+            release dists/stable > dists/stable/Release
+          gpg --batch --yes -abs -o dists/stable/Release.gpg dists/stable/Release
+          gpg --batch --yes --clearsign -o dists/stable/InRelease dists/stable/Release
+
+      - name: Commit and push
+        env:
+          APT_REPO_DEPLOY_KEY_PATH: ~/.ssh/apt_deploy
+        run: |
+          cd apt-repo
+          git config user.name "videokidnapper-ci"
+          git config user.email "sinth.tek@gmail.com"
+          git add -A
+          git commit -m "videokidnapper $(basename ../dist/videokidnapper_*_amd64.deb .deb | cut -d_ -f2)"
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/apt_deploy" git push
