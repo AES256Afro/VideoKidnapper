@@ -1,10 +1,10 @@
 <div align="center">
-  <img src="assets/branding/logo.svg" width="140" alt="VideoKidnapper — masked robber logo"/>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/branding/logo-lockup.png">
+    <img src="assets/branding/logo-lockup-onlight.png" width="460" alt="VideoKidnapper">
+  </picture>
 
-# VideoKidnapper
-
-**[videokidnapper.com](https://videokidnapper.com)** · [Downloads](https://github.com/AES256Afro/VideoKidnapper/releases/latest) · [Screenshots](https://videokidnapper.com/screenshots.html)
-
+  <p><strong><a href="https://videokidnapper.com">videokidnapper.com</a></strong> · <a href="https://github.com/AES256Afro/VideoKidnapper/releases/latest">Downloads</a> · <a href="https://videokidnapper.com/screenshots.html">Screenshots</a></p>
 </div>
 
 A dark-themed desktop tool for trimming videos, downloading clips from the open web, and exporting polished GIFs or MP4s with text overlays — from any supported platform.
