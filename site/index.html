@@ -34,11 +34,11 @@
   <p class="tagline">Download, trim, and caption clips into polished GIFs or MP4s —
     fully offline, no watermark, no account.</p>
   <div class="cta-row">
-    <a class="btn primary" id="dl-win" href="https://github.com/AES256Afro/VideoKidnapper/releases/latest">⬇ Download for Windows</a>
+    <a class="btn primary" href="https://apps.microsoft.com/detail/9N4BMTK8Q7KG"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="10" height="10" fill="#F25022"/><rect x="13" y="1" width="10" height="10" fill="#7FBA00"/><rect x="1" y="13" width="10" height="10" fill="#00A4EF"/><rect x="13" y="13" width="10" height="10" fill="#FFB900"/></svg> Get it from Microsoft Store</a>
     <a class="btn" id="dl-linux" href="https://github.com/AES256Afro/VideoKidnapper/releases/latest/download/VideoKidnapper-x86_64.AppImage">⬇ Download for Linux</a>
     <a class="btn" href="https://github.com/AES256Afro/VideoKidnapper">★ Star on GitHub</a>
   </div>
-  <p class="badges" id="version-badge">Free &amp; open source · Apache-2.0 · Windows + Linux</p>
+  <p class="badges" id="version-badge">Free &amp; open source · Apache-2.0 · On the Microsoft Store · Windows + Linux</p>
   <img class="demo" src="assets/screenshots/demo.gif" alt="Animated tour of VideoKidnapper trimming and captioning a clip">
 </header>
 
@@ -77,9 +77,10 @@
       <div class="dl-card">
         <h3>🪟 Windows</h3>
         <p class="sub">Windows 10/11, 64-bit</p>
-        <a class="btn primary" id="dl-win-setup" href="https://github.com/AES256Afro/VideoKidnapper/releases/latest">Installer (Setup.exe)</a>
+        <a class="btn primary" href="https://apps.microsoft.com/detail/9N4BMTK8Q7KG"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="1" y="1" width="10" height="10" fill="#F25022"/><rect x="13" y="1" width="10" height="10" fill="#7FBA00"/><rect x="1" y="13" width="10" height="10" fill="#00A4EF"/><rect x="13" y="13" width="10" height="10" fill="#FFB900"/></svg> Microsoft Store</a>
+        <a class="btn" id="dl-win-setup" href="https://github.com/AES256Afro/VideoKidnapper/releases/latest">Installer (Setup.exe)</a>
         <a class="btn" href="https://github.com/AES256Afro/VideoKidnapper/releases/latest/download/VideoKidnapper.exe">Portable .exe</a>
-        <p class="alt">The installer adds a Start Menu entry and clean uninstall. The portable build is a single file — download and double-click. FFmpeg auto-installs on first launch via the ⚙ Setup dialog.</p>
+        <p class="alt"><strong>Microsoft Store is the easiest</strong> — signed by Microsoft (no security warning) and auto-updates. The installer adds a Start Menu entry and clean uninstall; the portable build is a single double-click file. FFmpeg auto-installs on first launch.</p>
       </div>
       <div class="dl-card">
         <h3>🐧 Linux</h3>
@@ -155,14 +156,13 @@ fetch('https://api.github.com/repos/AES256Afro/VideoKidnapper/releases/latest')
     }
     var setup = asset(/^VideoKidnapper-Setup-.*\.exe$/);
     var deb = asset(/_amd64\.deb$/);
-    if (setup) {
-      document.getElementById('dl-win-setup').href = setup;
-      document.getElementById('dl-win').href = setup;
-    }
-    if (deb) document.getElementById('dl-deb').href = deb;
+    var winSetup = document.getElementById('dl-win-setup');
+    if (setup && winSetup) winSetup.href = setup;
+    var debBtn = document.getElementById('dl-deb');
+    if (deb && debBtn) debBtn.href = deb;
     if (rel.tag_name) {
       document.getElementById('version-badge').textContent =
-        'Free & open source · Apache-2.0 · Windows + Linux · latest: ' + rel.tag_name;
+        'Free & open source · Apache-2.0 · On the Microsoft Store · Windows + Linux · latest: ' + rel.tag_name;
     }
   })
   .catch(function () { /* fallbacks stay in place */ });
