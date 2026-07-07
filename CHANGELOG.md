@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **The downloader is now the front door.** The URL tab is renamed **Kidnap Social Media Downloader**, moved to the first position, and is the default view on launch — paste a link, download, edit.
+- **Ctrl+V is clipboard-aware from any tab.** Pasting a video/GIF link anywhere in the app switches to the Kidnap downloader with the URL filled in and the matching platform chip lit. Non-link clipboards keep their old behavior (an image pastes as an overlay on Trim; plain text lands in the URL entry on the downloader). Single-token http(s)/www links only — sentences, file paths, and multi-line clipboards are never hijacked.
+- **Platform chips no longer masquerade as buttons.** The YouTube/Instagram/X/Reddit/Bluesky/Facebook pills never did anything on click but had borders and hover states that said otherwise. They're now honest passive indicators — muted until the pasted URL matches, then lit in the platform's brand color — and the reclaimed space above the URL entry now shows the actual flow: *paste → download → trim, caption & export*.
+- **The Setup dialog now shows its work.** Everything missing is pre-selected (installing what's absent is the default; unticking is the opt-out), a plan line spells out exactly what clicking Install will do ("FFmpeg (portable download, no admin), tkinterdnd2 (pip)"), and a new in-app console streams the real script output live — every pip line and FFmpeg download step. When it finishes, the console summarizes what was installed or failed, and the **↻ Relaunch to apply** button lights up and takes focus. The elevated-terminal route remains as an explicit "Advanced" fallback, and it now prints the exact commands it will run into the console first.
+
+### Fixed
+
+- **Setup-installed FFmpeg now survives a restart of the packaged app.** The portable-FFmpeg install destination resolved inside PyInstaller's per-run temp extraction dir for frozen builds, so the binaries vanished on relaunch. Frozen builds now install next to the executable, where the resolver already looks.
+- **pip installs from the packaged app fail fast with an explanation** instead of re-invoking the app exe as if it were Python (Python packages are bundled in frozen builds; only FFmpeg can need installing).
+
 ## [1.4.1] — 2026-07-02
 
 ### Added
