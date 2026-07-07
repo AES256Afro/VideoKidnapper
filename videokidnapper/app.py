@@ -44,9 +44,15 @@ class App(ctk.CTk):
         self.ffmpeg_path, self.ffprobe_path = check_ffmpeg()
 
         if not self.ffmpeg_path:
+            # Missing prereqs → auto-install and continue, no dead-end.
             self._show_setup_landing()
             return
 
+        self._start_main_ui()
+
+    def _start_main_ui(self):
+        """Build the real app UI. Called on boot when prereqs are present,
+        or from the landing after a successful auto-install."""
         self.plugins = []   # [DiscoveredPlugin] — populated by _load_plugins
 
         self._build_ui()
@@ -460,7 +466,7 @@ class App(ctk.CTk):
     # ------------------------------------------------------------------
     def _open_setup_dialog(self):
         from videokidnapper.ui.setup_dialog import SetupDialog
-        SetupDialog(self)
+        SetupDialog(self, on_relaunch=self._restart_app)
 
     # ------------------------------------------------------------------
     # Shortcuts overlay (? key / header chip)
@@ -630,43 +636,152 @@ class App(ctk.CTk):
 
     # ------------------------------------------------------------------
     def _show_setup_landing(self):
-        """Shown when FFmpeg is missing — funnels the user into Setup."""
-        frame = ctk.CTkFrame(self, fg_color="transparent")
-        frame.place(relx=0.5, rely=0.5, anchor="center")
+        """Missing prereqs → auto-install what's needed, then continue.
 
-        ctk.CTkLabel(
-            frame, text="⚠",
-            font=T.font(48, "bold"),
-            text_color=T.WARN,
-        ).pack(pady=(0, 8))
+        No dead end: the install starts on its own, streams progress, and
+        drops the user straight into the app when it's done (FFmpeg needs
+        no restart). Only if the auto-install fails do the manual Setup /
+        Retry / Exit controls appear.
+        """
+        from videokidnapper.utils import prereq_check
+        self._setup_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self._setup_frame.place(relx=0.5, rely=0.5, anchor="center")
 
-        ctk.CTkLabel(
-            frame, text="Prerequisites Missing",
-            font=T.font(T.SIZE_HERO, "bold"),
-            text_color=T.TEXT,
-        ).pack(pady=(0, 6))
+        self._setup_icon = ctk.CTkLabel(
+            self._setup_frame, text="⚙",
+            font=T.font(48, "bold"), text_color=T.ACCENT,
+        )
+        self._setup_icon.pack(pady=(0, 8))
 
-        ctk.CTkLabel(
-            frame,
-            text=(
-                "VideoKidnapper can install what it needs for you.\n"
-                "Open Setup to pick features and install their requirements."
-            ),
-            font=T.font(T.SIZE_LG),
-            text_color=T.TEXT_MUTED,
-            justify="center",
-        ).pack(pady=(0, 20))
+        self._setup_title = ctk.CTkLabel(
+            self._setup_frame, text="Setting up VideoKidnapper",
+            font=T.font(T.SIZE_HERO, "bold"), text_color=T.TEXT,
+        )
+        self._setup_title.pack(pady=(0, 6))
 
+        missing = prereq_check.missing_required()
+        plan = prereq_check.describe_install_plan(missing)
+        self._setup_msg = ctk.CTkLabel(
+            self._setup_frame,
+            text=f"Installing: {plan}" if plan
+                 else "Checking prerequisites…",
+            font=T.font(T.SIZE_MD), text_color=T.TEXT_MUTED,
+            justify="center", wraplength=460,
+        )
+        self._setup_msg.pack(pady=(0, 14))
+
+        self._setup_progress = ctk.CTkProgressBar(
+            self._setup_frame, width=380, height=8,
+            progress_color=T.ACCENT, fg_color=T.BG_RAISED, corner_radius=4,
+        )
+        self._setup_progress.set(0)
+        self._setup_progress.pack(pady=(0, 16))
+
+        self._setup_btnrow = ctk.CTkFrame(self._setup_frame, fg_color="transparent")
+        self._setup_btnrow.pack()
+
+        # Kick off the install after the window has painted, so the user
+        # sees the progress UI rather than a frozen splash.
+        self.after(300, lambda: self._auto_install_prereqs(missing))
+
+    def _auto_install_prereqs(self, missing):
+        from videokidnapper.utils import prereq_check
+        if not missing:
+            # Nothing actually missing (e.g. a probe false-negative that
+            # the detection fix already resolved) — just go.
+            self._finish_setup_and_launch()
+            return
+
+        # Worker thread NEVER touches Tk. It writes progress into a plain
+        # dict; a main-thread poller (after-loop) reads it and updates the
+        # UI. This is the only thread-safe way to drive Tk from a worker.
+        self._install_state = {
+            "frac": 0.0, "note": "", "done": False,
+            "installed": None, "failures": None,
+        }
+
+        def progress(frac, note):
+            self._install_state["frac"] = max(0.0, min(1.0, frac))
+            if note:
+                self._install_state["note"] = note
+
+        def worker():
+            installed, failures = prereq_check.install_missing(
+                missing, progress_cb=progress,
+            )
+            self._install_state["installed"] = installed
+            self._install_state["failures"] = failures
+            self._install_state["done"] = True
+
+        import threading
+        threading.Thread(target=worker, daemon=True).start()
+        self._poll_install()
+
+    def _poll_install(self):
+        st = getattr(self, "_install_state", None)
+        if st is None or not self.winfo_exists():
+            return
+        self._setup_progress.set(st["frac"])
+        if st["note"]:
+            self._setup_msg.configure(text=st["note"])
+        if st["done"]:
+            self._on_auto_install_done(st["installed"], st["failures"])
+            return
+        self.after(120, self._poll_install)
+
+    def _on_auto_install_done(self, installed, failures):
+        from videokidnapper.utils import prereq_check
+        if failures:
+            self._setup_install_failed(failures)
+            return
+        # Re-detect FFmpeg for the encode path, then either restart (source
+        # build that installed pip packages) or continue in-process.
+        self.ffmpeg_path, self.ffprobe_path = check_ffmpeg()
+        if prereq_check.install_needs_restart(installed):
+            self._setup_msg.configure(text="Installed — restarting…")
+            self.after(600, self._restart_app)
+        else:
+            self._finish_setup_and_launch()
+
+    def _finish_setup_and_launch(self):
+        """Tear down the landing and build the real UI in the same process."""
+        if getattr(self, "_setup_frame", None) is not None:
+            self._setup_frame.destroy()
+            self._setup_frame = None
+        if not self.ffmpeg_path:
+            self.ffmpeg_path, self.ffprobe_path = check_ffmpeg()
+        self._start_main_ui()
+
+    def _retry_setup(self):
+        from videokidnapper.utils import prereq_check
+        self._setup_icon.configure(text="⚙", text_color=T.ACCENT)
+        self._setup_title.configure(text="Setting up VideoKidnapper")
+        for w in self._setup_btnrow.winfo_children():
+            w.destroy()
+        self._auto_install_prereqs(prereq_check.missing_required())
+
+    def _setup_install_failed(self, failures):
         from videokidnapper.ui.theme import button
-        btn_row = ctk.CTkFrame(frame, fg_color="transparent")
-        btn_row.pack()
-
+        names = ", ".join(k for k, _ in failures)
+        self._setup_icon.configure(text="⚠", text_color=T.WARN)
+        self._setup_title.configure(text="Couldn't finish setup")
+        self._setup_msg.configure(
+            text=f"Automatic install failed for: {names}.\n"
+                 "Open Setup to see the details and try the advanced options, "
+                 "or retry.",
+            text_color=T.TEXT_MUTED,
+        )
+        for w in self._setup_btnrow.winfo_children():
+            w.destroy()
         button(
-            btn_row, "  Open Setup", variant="primary",
-            width=160, command=self._open_setup_dialog,
+            self._setup_btnrow, "  Open Setup", variant="primary",
+            width=150, command=self._open_setup_dialog,
         ).pack(side="left", padx=4)
-
         button(
-            btn_row, "Exit", variant="secondary",
-            width=100, command=self.destroy,
+            self._setup_btnrow, "Retry", variant="secondary",
+            width=90, command=self._retry_setup,
+        ).pack(side="left", padx=4)
+        button(
+            self._setup_btnrow, "Exit", variant="ghost",
+            width=90, command=self.destroy,
         ).pack(side="left", padx=4)

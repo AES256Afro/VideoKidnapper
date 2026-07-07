@@ -180,3 +180,65 @@ def test_default_ffmpeg_install_dir_frozen_is_exe_relative(monkeypatch, tmp_path
     monkeypatch.setattr(sys, "executable", str(exe))
     dest = prereq_check.default_ffmpeg_install_dir()
     assert dest == tmp_path / "assets" / "ffmpeg" / "bin"
+
+
+def test_missing_required_excludes_optional(monkeypatch):
+    from videokidnapper.utils import prereq_check
+    # Everything present → nothing missing.
+    monkeypatch.setattr(prereq_check, "check_ffmpeg",
+                        lambda: {"installed": True})
+    monkeypatch.setattr(prereq_check, "check_python_package",
+                        lambda name: {"installed": True})
+    assert prereq_check.missing_required() == []
+
+
+def test_missing_required_reports_ffmpeg_and_pkgs(monkeypatch):
+    from videokidnapper.utils import prereq_check
+    monkeypatch.setattr(prereq_check, "check_ffmpeg",
+                        lambda: {"installed": False})
+
+    def fake_pkg(name):
+        return {"installed": name != "yt_dlp"}
+    monkeypatch.setattr(prereq_check, "check_python_package", fake_pkg)
+    missing = prereq_check.missing_required()
+    assert missing[0] == "ffmpeg"         # ffmpeg first
+    assert "yt_dlp" in missing
+    assert "tkinterdnd2" not in missing   # optional never gates startup
+
+
+def test_install_needs_restart_frozen_never(monkeypatch):
+    import sys
+    from videokidnapper.utils import prereq_check
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert prereq_check.install_needs_restart(["ffmpeg", "yt_dlp"]) is False
+
+
+def test_install_needs_restart_source_needs_it_for_pkgs(monkeypatch):
+    import sys
+    from videokidnapper.utils import prereq_check
+    monkeypatch.setattr(sys, "frozen", False, raising=False)
+    assert prereq_check.install_needs_restart(["ffmpeg"]) is False
+    assert prereq_check.install_needs_restart(["ffmpeg", "yt_dlp"]) is True
+
+
+def test_install_missing_orchestrates(monkeypatch):
+    from videokidnapper.utils import prereq_check
+    calls = []
+    monkeypatch.setattr(prereq_check, "install_ffmpeg_portable",
+                        lambda dest, progress_cb=None: (True, "ok"))
+    monkeypatch.setattr(prereq_check, "pip_install_streaming",
+                        lambda pkg, line_cb=None: (
+                            calls.append(pkg), (True, "ok"))[1])
+    installed, failures = prereq_check.install_missing(["ffmpeg", "yt_dlp"])
+    assert installed == ["ffmpeg", "yt_dlp"]
+    assert failures == []
+    assert calls == ["yt-dlp"]
+
+
+def test_install_missing_collects_failures(monkeypatch):
+    from videokidnapper.utils import prereq_check
+    monkeypatch.setattr(prereq_check, "install_ffmpeg_portable",
+                        lambda dest, progress_cb=None: (False, "network error"))
+    installed, failures = prereq_check.install_missing(["ffmpeg"])
+    assert installed == []
+    assert failures and failures[0][0] == "ffmpeg"
