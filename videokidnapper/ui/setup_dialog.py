@@ -2,15 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """Setup / Prerequisites dialog.
 
-Shows each prerequisite as a row: status icon, feature it enables, and a
-checkbox to opt into installing it. A "Select all missing" master checkbox
-toggles every unchecked row at once.
+The default path is one click: everything missing is pre-selected, a plan
+line says exactly what will be installed and how, and Install streams the
+real script output (pip lines, FFmpeg download progress) into an in-app
+console so nothing happens invisibly. When it finishes, the console shows
+what changed and the Relaunch button lights up.
 
-Required items are pre-checked; optional items start unchecked so the user
-has to opt in. Already-installed rows are disabled and show ✓.
-
-Install runs in a background thread; progress is piped back to the UI. On
-completion the user can Relaunch or just close.
+Already-installed rows are disabled and show ✓. The elevated-terminal
+route survives as an explicit "Advanced" fallback for users who prefer
+their package manager (winget/brew/apt).
 """
 
 import threading
@@ -66,7 +66,7 @@ class SetupDialog(ctk.CTkToplevel):
     def __init__(self, master, on_relaunch=None, **kwargs):
         super().__init__(master, **kwargs)
         self.title("VideoKidnapper — Setup")
-        self.geometry("680x560")
+        self.geometry("700x680")
         self.configure(fg_color=T.BG_BASE)
         self.transient(master.winfo_toplevel() if master else None)
         self.grab_set()
@@ -100,9 +100,18 @@ class SetupDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             header,
-            text="Pick the features you want and install their requirements.",
+            text="Everything missing is already selected — click Install and "
+                 "watch it happen in the console below.",
             font=T.font(T.SIZE_SM), text_color=T.TEXT_DIM,
         ).pack(anchor="w")
+
+        # The plan line: exactly what clicking Install will do.
+        self.plan_label = ctk.CTkLabel(
+            header, text="",
+            font=T.font(T.SIZE_SM, "bold"), text_color=T.ACCENT,
+            anchor="w", justify="left", wraplength=620,
+        )
+        self.plan_label.pack(anchor="w", pady=(4, 0))
 
         # "Select all missing" master checkbox
         master_row = ctk.CTkFrame(card, fg_color="transparent")
@@ -137,6 +146,20 @@ class SetupDialog(ctk.CTkToplevel):
         for feat in FEATURES:
             self._build_row(feat)
 
+        # In-app console: the install script's real output, live. Nothing
+        # happens invisibly — pip lines and the FFmpeg download progress
+        # land here as they happen.
+        self.console = ctk.CTkTextbox(
+            card, height=150,
+            font=T.font(T.SIZE_XS, mono=True),
+            fg_color="#0A0D12", text_color=T.TEXT_MUTED,
+            border_width=1, border_color=T.BORDER,
+            corner_radius=T.RADIUS_SM, wrap="none",
+        )
+        self.console.insert("end", "· Install output will appear here.\n")
+        self.console.configure(state="disabled")
+        self.console.pack(fill="x", padx=16, pady=(6, 2))
+
         # Progress + status footer
         self.progress = ctk.CTkProgressBar(
             card, height=8, progress_color=T.ACCENT,
@@ -156,20 +179,21 @@ class SetupDialog(ctk.CTkToplevel):
         actions.pack(fill="x", padx=16, pady=(4, 14))
 
         self.install_btn = button(
-            actions, "  Install Selected", variant="primary",
-            width=170, command=self._install_selected,
+            actions, "  ⬇  Install missing now", variant="primary",
+            width=190, command=self._install_selected,
         )
         self.install_btn.pack(side="left")
 
+        # Fallback for users who'd rather use winget/brew/apt themselves.
         self.terminal_btn = button(
-            actions, "Open Admin Terminal", variant="secondary",
+            actions, "Advanced: admin terminal", variant="ghost",
             width=180, command=self._open_admin_terminal,
         )
         self.terminal_btn.pack(side="left", padx=(8, 0))
 
         self.relaunch_btn = button(
-            actions, "Relaunch", variant="success",
-            width=120, command=self._relaunch,
+            actions, "↻  Relaunch to apply", variant="success",
+            width=170, command=self._relaunch,
         )
         self.relaunch_btn.configure(state="disabled")
         self.relaunch_btn.pack(side="right")
@@ -178,6 +202,37 @@ class SetupDialog(ctk.CTkToplevel):
             actions, "Close", variant="ghost",
             width=100, command=self.destroy,
         ).pack(side="right", padx=(0, 6))
+
+    # ------------------------------------------------------------------
+    def _console_write(self, line):
+        self.console.configure(state="normal")
+        self.console.insert("end", line.rstrip() + "\n")
+        self.console.see("end")
+        self.console.configure(state="disabled")
+
+    def _console_write_threadsafe(self, line):
+        if self.winfo_exists():
+            self.after(0, self._console_write, line)
+
+    def _update_plan(self):
+        """Reflect the current checkboxes as a what-will-happen sentence."""
+        chosen = [k for k, var in self._selected.items()
+                  if var.get() and not self._status.get(k, {}).get("installed")]
+        if chosen:
+            self.plan_label.configure(
+                text="Will install: " + prereq_check.describe_install_plan(chosen),
+                text_color=T.ACCENT,
+            )
+        elif any(not i.get("installed") for i in self._status.values()):
+            self.plan_label.configure(
+                text="Nothing selected — tick what you want installed.",
+                text_color=T.TEXT_DIM,
+            )
+        else:
+            self.plan_label.configure(
+                text="Everything is installed — you're good to go.",
+                text_color=T.SUCCESS,
+            )
 
     def _build_row(self, feat):
         frame = ctk.CTkFrame(
@@ -276,17 +331,19 @@ class SetupDialog(ctk.CTkToplevel):
                 row["icon"].configure(text="✓", text_color=T.SUCCESS)
                 row["checkbox"].configure(state="disabled")
                 self._selected[feat["key"]].set(False)
-                if info.get("version"):
-                    row["version"].configure(text=f"v{info['version']}")
-                elif info.get("path"):
+                ver = info.get("version") or ""
+                if ver and ver[0].isdigit():
+                    row["version"].configure(text=f"v{ver}")
+                elif ver or info.get("path"):
                     row["version"].configure(text="detected")
             else:
                 icon_color = T.DANGER if feat["required"] else T.WARN
                 row["icon"].configure(text="✗" if feat["required"] else "○",
                                       text_color=icon_color)
                 row["checkbox"].configure(state="normal")
-                # Required + missing → pre-check. Optional stays unchecked.
-                self._selected[feat["key"]].set(feat["required"])
+                # Missing → pre-checked, required or not: installing what's
+                # absent is the default; unticking is the opt-out.
+                self._selected[feat["key"]].set(True)
                 row["version"].configure(text="not installed")
 
         self._sync_master_checkbox()
@@ -304,6 +361,7 @@ class SetupDialog(ctk.CTkToplevel):
 
     def _sync_master_checkbox(self):
         """Reflect whether every enabled checkbox is currently checked."""
+        self._update_plan()
         togglable = [k for k, row in self._rows.items()
                      if str(row["checkbox"].cget("state")) == "normal"]
         if not togglable:
@@ -338,6 +396,7 @@ class SetupDialog(ctk.CTkToplevel):
 
     def _run_install(self, chosen):
         failures = []
+        installed = []
         total = len(chosen)
 
         def step_progress(base, frac, note):
@@ -345,46 +404,81 @@ class SetupDialog(ctk.CTkToplevel):
             if self.winfo_exists():
                 self.after(0, self._set_progress, overall, note)
 
+        self._console_write_threadsafe(
+            "── Installing: " + prereq_check.describe_install_plan(chosen))
+
         for idx, key in enumerate(chosen):
             if key == "ffmpeg":
+                dest = prereq_check.default_ffmpeg_install_dir()
+                self._console_write_threadsafe(f"→ FFmpeg portable → {dest}")
+
+                # The download hook fires constantly; only echo distinct
+                # notes to the console so it stays readable.
+                last_note = [""]
+
+                def ff_progress(p, note, i=idx):
+                    step_progress(i, p, note)
+                    if note != last_note[0]:
+                        last_note[0] = note
+                        self._console_write_threadsafe("  " + note)
+
                 ok, msg = prereq_check.install_ffmpeg_portable(
-                    prereq_check.default_ffmpeg_install_dir(),
-                    progress_cb=lambda p, note, i=idx: step_progress(i, p, note),
+                    dest, progress_cb=ff_progress,
                 )
             else:
-                step_progress(idx, 0.1, f"Installing {key}...")
-                ok, msg = prereq_check.pip_install(
-                    prereq_check._pip_name_for(key),
+                pkg = prereq_check._pip_name_for(key)
+                step_progress(idx, 0.1, f"Installing {pkg}...")
+                ok, msg = prereq_check.pip_install_streaming(
+                    pkg, line_cb=self._console_write_threadsafe,
                 )
-                step_progress(idx, 0.9, f"{key} {'OK' if ok else 'failed'}")
-            if not ok:
+                step_progress(idx, 0.9, f"{pkg} {'OK' if ok else 'failed'}")
+
+            if ok:
+                installed.append(key)
+                self._console_write_threadsafe(f"✓ {key} installed")
+            else:
                 failures.append((key, msg))
+                self._console_write_threadsafe(f"✗ {key} FAILED — {msg}")
 
         if self.winfo_exists():
-            self.after(0, self._install_finished, failures)
+            self.after(0, self._install_finished, failures, installed)
 
     def _set_progress(self, value, note):
         self.progress.set(max(0, min(1, value)))
         if note:
             self.status_label.configure(text=note, text_color=T.TEXT_MUTED)
 
-    def _install_finished(self, failures):
+    def _install_finished(self, failures, installed):
         self._installing = False
-        self.install_btn.configure(state="normal", text="  Install Selected")
+        self.install_btn.configure(state="normal", text="  ⬇  Install missing now")
         self._reload_status()
+
+        # Console summary: exactly what changed.
+        if installed:
+            self._console_write(
+                "── Done. Installed: " + ", ".join(installed))
+        if failures:
+            self._console_write(
+                "── Failed: " + ", ".join(k for k, _ in failures)
+                + "  (try the Advanced admin-terminal route)")
+
         if failures:
             first = failures[0]
             self.status_label.configure(
                 text=f"Failed: {first[0]} — {first[1][:80]}",
                 text_color=T.DANGER,
             )
-        else:
+        if installed and not failures:
             self.status_label.configure(
-                text="Install complete — relaunch to pick up changes.",
+                text="Install complete — hit Relaunch to start using it.",
                 text_color=T.SUCCESS,
             )
             self.progress.set(1.0)
+        if installed:
+            # Anything newly installed needs a restart to be picked up:
+            # make the relaunch button the obvious next step.
             self.relaunch_btn.configure(state="normal")
+            self.relaunch_btn.focus_set()
 
     # ------------------------------------------------------------------
     def _open_admin_terminal(self):
@@ -404,6 +498,10 @@ class SetupDialog(ctk.CTkToplevel):
                 text_color=T.TEXT_MUTED,
             )
             return
+        # Show exactly what the elevated terminal will run — no surprises.
+        self._console_write("── Admin terminal will run:")
+        for c in commands:
+            self._console_write("  " + c)
         ok, msg = prereq_check.open_admin_terminal(commands)
         color = T.SUCCESS if ok else T.DANGER
         self.status_label.configure(

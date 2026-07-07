@@ -265,24 +265,27 @@ class Toast(ctk.CTkFrame):
 # PlatformChip — small brand-colored pill for the URL tab
 # ---------------------------------------------------------------------------
 
-class PlatformChip(ctk.CTkButton):
-    """Clickable pill showing a supported platform."""
+class PlatformChip(ctk.CTkLabel):
+    """Passive pill indicating a supported platform.
 
-    def __init__(self, master, platform, on_click=None, **kwargs):
+    Deliberately NOT a button: it lights up in the platform's brand color
+    when the pasted URL matches, but clicking it does nothing — so it
+    must not look clickable (no border, no hover, muted until active).
+    """
+
+    def __init__(self, master, platform, **kwargs):
+        kwargs.pop("on_click", None)   # legacy arg from the button era
         color = T.PLATFORM_COLORS.get(platform, T.ACCENT)
         glyph = T.PLATFORM_GLYPHS.get(platform, "●")
         super().__init__(
             master,
-            text=f" {glyph}  {platform} ",
-            font=T.font(T.SIZE_SM, "bold"),
-            fg_color=T.BG_RAISED,
-            hover_color=color,
-            text_color=T.TEXT,
-            border_color=color,
-            border_width=1,
+            text=f"{glyph}  {platform}",
+            font=T.font(T.SIZE_SM),
+            fg_color="transparent",
+            text_color=T.TEXT_DIM,
             corner_radius=14,
             height=26,
-            command=(lambda: on_click(platform)) if on_click else None,
+            padx=8,
             **kwargs,
         )
         self._color = color
@@ -293,6 +296,7 @@ class PlatformChip(ctk.CTkButton):
             return
         self._active = active
         self.configure(
-            fg_color=self._color if active else T.BG_RAISED,
-            text_color=T.TEXT_ON_ACCENT if active else T.TEXT,
+            fg_color=self._color if active else "transparent",
+            text_color=T.TEXT_ON_ACCENT if active else T.TEXT_DIM,
+            font=T.font(T.SIZE_SM, "bold" if active else "normal"),
         )

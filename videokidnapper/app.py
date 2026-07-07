@@ -14,6 +14,16 @@ from videokidnapper.utils import settings
 from videokidnapper.utils.dnd import enable_dnd_for
 from videokidnapper.utils.ffmpeg_check import check_ffmpeg
 from videokidnapper.utils.github_update import check_async
+from videokidnapper.utils.urltools import looks_like_media_url
+
+# Tab titles in one place — position in _build_tabs decides order, and
+# CTkTabview selects the first tab added, so the downloader is both the
+# leftmost tab and the default view on launch.
+TAB_DOWNLOAD = "  ⬇  Kidnap Social Media Downloader  "
+TAB_TRIM     = "  ✂  Trim Video  "
+TAB_BATCH    = "  ⎆  Batch Export  "
+TAB_HISTORY  = "  ⌛  History  "
+TAB_DEBUG    = "  ⚙  Debug  "
 
 
 class App(ctk.CTk):
@@ -198,11 +208,11 @@ class App(ctk.CTk):
             font=T.font(T.SIZE_LG, "bold"), height=36,
         )
 
-        self.tabview.add("  ✂  Trim Video  ")
-        self.tabview.add("  ↓  URL Download  ")
-        self.tabview.add("  ⎆  Batch Export  ")
-        self.tabview.add("  ⌛  History  ")
-        self.tabview.add("  ⚙  Debug  ")
+        self.tabview.add(TAB_DOWNLOAD)   # first added = leftmost + default
+        self.tabview.add(TAB_TRIM)
+        self.tabview.add(TAB_BATCH)
+        self.tabview.add(TAB_HISTORY)
+        self.tabview.add(TAB_DEBUG)
 
         from videokidnapper.ui.batch_export_tab import BatchExportTab
         from videokidnapper.ui.debug_tab import DebugTab
@@ -210,21 +220,21 @@ class App(ctk.CTk):
         from videokidnapper.ui.trim_tab import TrimTab
         from videokidnapper.ui.url_tab import UrlTab
 
-        self.debug_tab = DebugTab(self.tabview.tab("  ⚙  Debug  "), self)
+        self.debug_tab = DebugTab(self.tabview.tab(TAB_DEBUG), self)
         self.debug_tab.pack(fill="both", expand=True)
 
-        self.trim_tab = TrimTab(self.tabview.tab("  ✂  Trim Video  "), self)
+        self.trim_tab = TrimTab(self.tabview.tab(TAB_TRIM), self)
         self.trim_tab.pack(fill="both", expand=True)
 
-        self.url_tab = UrlTab(self.tabview.tab("  ↓  URL Download  "), self)
+        self.url_tab = UrlTab(self.tabview.tab(TAB_DOWNLOAD), self)
         self.url_tab.pack(fill="both", expand=True)
 
         self.batch_export_tab = BatchExportTab(
-            self.tabview.tab("  ⎆  Batch Export  "), self,
+            self.tabview.tab(TAB_BATCH), self,
         )
         self.batch_export_tab.pack(fill="both", expand=True)
 
-        self.history_tab = HistoryTab(self.tabview.tab("  ⌛  History  "), self)
+        self.history_tab = HistoryTab(self.tabview.tab(TAB_HISTORY), self)
         self.history_tab.pack(fill="both", expand=True)
 
     # ------------------------------------------------------------------
@@ -247,7 +257,7 @@ class App(ctk.CTk):
         name = self.tabview.get()
         if "Trim" in name:
             return self.trim_tab
-        if "URL" in name:
+        if "Downloader" in name:
             return self.url_tab
         return None
 
@@ -269,11 +279,12 @@ class App(ctk.CTk):
         self.bind_all("<Control-E>", lambda e: self._shortcut(e, "keyboard_export"))
         self.bind_all("<Control-o>", lambda e: self._shortcut(e, "keyboard_open"))
         self.bind_all("<Control-O>", lambda e: self._shortcut(e, "keyboard_open"))
-        # Ctrl+V on the URL tab pastes the clipboard into the URL entry.
-        # Entries keep native paste because _editing_in_entry short-circuits
-        # the dispatcher; this binding only fires when focus is elsewhere.
-        self.bind_all("<Control-v>", lambda e: self._shortcut(e, "keyboard_paste_url"))
-        self.bind_all("<Control-V>", lambda e: self._shortcut(e, "keyboard_paste_url"))
+        # Ctrl+V routes by what's on the clipboard: a web link opens the
+        # Kidnap downloader from ANY tab; anything else falls through to
+        # the active tab's own paste (clipboard image → overlay on Trim).
+        # Entries keep native paste because _editing_in_entry short-circuits.
+        self.bind_all("<Control-v>", self._paste_shortcut)
+        self.bind_all("<Control-V>", self._paste_shortcut)
         # Undo / redo. `<Control-Z>` fires on Ctrl+Shift+Z; pair with
         # `<Control-y>` so users coming from any editor convention work.
         self.bind_all("<Control-z>",       lambda e: self._shortcut(e, "keyboard_undo"))
@@ -300,6 +311,26 @@ class App(ctk.CTk):
         fn = getattr(tab, method, None)
         if callable(fn):
             fn(*args)
+
+    def _paste_shortcut(self, event):
+        """Ctrl+V, clipboard-aware: a pasted link kidnaps from anywhere.
+
+        A single http(s)/www link switches to the downloader tab with the
+        URL filled in, regardless of which tab is active. Everything else
+        (images, plain text) defers to the active tab's own
+        keyboard_paste_url handler.
+        """
+        if self._editing_in_entry(event):
+            return
+        try:
+            data = self.clipboard_get()
+        except Exception:
+            data = ""
+        if looks_like_media_url(data or ""):
+            self.tabview.set(TAB_DOWNLOAD)
+            self.url_tab.receive_url(data.strip())
+            return
+        self._shortcut(event, "keyboard_paste_url")
 
     def _shortcut_shortcuts_overlay(self, event):
         # `?` inside a text entry should still type a literal `?`.
