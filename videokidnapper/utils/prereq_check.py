@@ -193,6 +193,70 @@ def pip_install_streaming(package, line_cb=None, user=True, upgrade=False, timeo
         return False, f"{type(e).__name__}: {e}"
 
 
+def missing_required():
+    """Keys of REQUIRED prereqs not currently present, in install order.
+
+    FFmpeg first (it's the common one and needs no restart), then any
+    required Python packages. Optional extras (tkinterdnd2) are excluded
+    — the app runs without them, so they must never gate startup.
+    """
+    keys = []
+    if not check_ffmpeg()["installed"]:
+        keys.append("ffmpeg")
+    name_to_key = {"customtkinter": "customtkinter", "Pillow": "PIL",
+                   "yt-dlp": "yt_dlp", "mss": "mss"}
+    for import_name, display, _desc, optional in REQUIRED_PACKAGES:
+        if optional:
+            continue
+        if not check_python_package(import_name)["installed"]:
+            keys.append(name_to_key.get(display, import_name))
+    return keys
+
+
+def install_missing(keys, line_cb=None, progress_cb=None):
+    """Install each key in ``keys``; return ``(installed, failures)``.
+
+    ``installed`` / ``failures`` are lists of keys. Pure orchestration
+    over the existing installers so the boot landing and the Setup
+    dialog share one code path.
+    """
+    installed, failures = [], []
+    total = max(1, len(keys))
+    for i, key in enumerate(keys):
+        if progress_cb:
+            progress_cb(i / total, f"Installing {key}…")
+        if key == "ffmpeg":
+            ok, msg = install_ffmpeg_portable(
+                default_ffmpeg_install_dir(),
+                progress_cb=(lambda p, note: (
+                    line_cb and note and line_cb(note),
+                    progress_cb and progress_cb((i + p) / total, note),
+                )) if (line_cb or progress_cb) else None,
+            )
+        else:
+            ok, msg = pip_install_streaming(_pip_name_for(key), line_cb=line_cb)
+        (installed if ok else failures).append(key if ok else (key, msg))
+        if line_cb:
+            line_cb(f"{'✓' if ok else '✗'} {key}"
+                    + ("" if ok else f" — {msg}"))
+    if progress_cb:
+        progress_cb(1.0, "Done")
+    return installed, failures
+
+
+def install_needs_restart(installed_keys):
+    """True if any installed key requires a process restart to take effect.
+
+    FFmpeg is a subprocess binary — usable immediately, no restart. A
+    Python package that was missing must be re-imported in a fresh
+    process. In a frozen build every Python dep is bundled, so only
+    FFmpeg is ever installable there → never a restart.
+    """
+    if getattr(sys, "frozen", False):
+        return False
+    return any(k != "ffmpeg" for k in installed_keys)
+
+
 def describe_install_plan(keys):
     """One human line saying what installing ``keys`` will actually do.
 
