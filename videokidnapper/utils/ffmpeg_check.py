@@ -47,12 +47,29 @@ def find_ffprobe():
 
 
 def check_ffmpeg():
+    """Return ``(ffmpeg, ffprobe)`` path strings, or ``(None, None)``.
+
+    Existence on disk is the gate — the same signal the Setup dialog
+    uses, so boot and Setup can never disagree (that mismatch trapped
+    users on the "Prerequisites Missing" landing while Setup insisted
+    everything was installed).
+
+    The ``-version`` call is a best-effort sanity probe only. A windowed
+    PyInstaller build has flaky subprocess stdio, so a probe hiccup must
+    NOT hide a working install — if the binaries are on disk we trust
+    them and let the encode path surface any real ffmpeg error.
+    """
     ffmpeg = find_ffmpeg()
     ffprobe = find_ffprobe()
-    if ffmpeg and ffprobe:
-        try:
-            subprocess.run([str(ffmpeg), "-version"], capture_output=True, timeout=5)
-            return str(ffmpeg), str(ffprobe)
-        except Exception:
-            pass
-    return None, None
+    if not (ffmpeg and ffprobe):
+        return None, None
+    try:
+        subprocess.run(
+            [str(ffmpeg), "-version"],
+            capture_output=True, timeout=8,
+            stdin=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+    except Exception:
+        pass  # trust the on-disk binary
+    return str(ffmpeg), str(ffprobe)

@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The "Prerequisites Missing" screen no longer traps you in a loop.** Boot detection and the Setup dialog used two different FFmpeg checks — boot ran `ffmpeg -version` as a subprocess (which fails intermittently in a windowed packaged build), while Setup only checked the files exist. So boot showed "missing" while Setup insisted everything was installed, and Install/Relaunch had nothing to do. Both now use the same existence check; the `-version` call is a best-effort probe that can no longer hide a working install. If FFmpeg is present, the app launches straight into the UI.
+- **Missing prerequisites now auto-install and continue into the app** — no dead-end landing. A "Setting up VideoKidnapper" screen installs what's missing (FFmpeg download, no admin), streams progress, and drops you into the app when done. FFmpeg needs no restart; a source checkout that had to install Python packages restarts automatically. If the install fails, clear **Open Setup / Retry / Exit** options appear.
+- **The Setup dialog's Relaunch button now works.** It was created without a relaunch callback and fell back to `os.execv`, which misbehaves for a packaged `.exe`; it now uses the app's reliable restart path.
+
 ## [1.5.0] — 2026-07-03
 
 ### Changed
