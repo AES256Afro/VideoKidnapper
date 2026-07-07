@@ -45,7 +45,7 @@ SHORTCUTS: dict[str, list[Shortcut]] = {
     "File & Export": [
         Shortcut("Ctrl+O",          "Open video file"),
         Shortcut("Ctrl+E",          "Export current trim"),
-        Shortcut("Ctrl+V",          "Paste — URL into URL tab, clipboard image as overlay on Trim tab"),
+        Shortcut("Ctrl+V",          "Paste — a video/GIF link opens the Kidnap downloader from any tab; a clipboard image becomes an overlay on Trim"),
     ],
     "Help": [
         Shortcut("?",               "Show this overlay"),

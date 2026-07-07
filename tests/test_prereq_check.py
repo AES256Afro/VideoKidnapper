@@ -147,3 +147,36 @@ def test_find_ffmpeg_prefers_path(monkeypatch):
 
     with patch.object(ffmpeg_check.shutil, "which", return_value="/usr/bin/ffmpeg"):
         assert ffmpeg_check.find_ffmpeg() == Path("/usr/bin/ffmpeg")
+
+
+def test_describe_install_plan():
+    from videokidnapper.utils.prereq_check import describe_install_plan
+    text = describe_install_plan(["ffmpeg", "yt_dlp", "tkinterdnd2"])
+    assert "FFmpeg (portable download" in text
+    assert "yt-dlp (pip)" in text
+    assert "tkinterdnd2 (pip)" in text
+
+
+def test_describe_install_plan_empty():
+    from videokidnapper.utils.prereq_check import describe_install_plan
+    assert describe_install_plan([]) == ""
+
+
+def test_pip_install_streaming_refuses_frozen(monkeypatch):
+    import sys
+    from videokidnapper.utils import prereq_check
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    ok, msg = prereq_check.pip_install_streaming("anything")
+    assert not ok
+    assert "bundled" in msg
+
+
+def test_default_ffmpeg_install_dir_frozen_is_exe_relative(monkeypatch, tmp_path):
+    import sys
+    from videokidnapper.utils import prereq_check
+    exe = tmp_path / "VideoKidnapper.exe"
+    exe.write_bytes(b"")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(exe))
+    dest = prereq_check.default_ffmpeg_install_dir()
+    assert dest == tmp_path / "assets" / "ffmpeg" / "bin"
