@@ -63,9 +63,11 @@ With a video loaded: thumbnail strip, waveform, a queued range (each queued rang
 
 The expanded **Export Options** panel: speed / rotate / aspect with the **Fill** mode dropdown (Crop or Blur fill), text fade, color grade sliders, concat transitions, and the GIF row (dither algorithm, palette stats mode, loop count).
 
-### URL Download
+### Kidnap Social Media Downloader
 
-![URL Download tab](assets/screenshots/url_download.png)
+The first tab and the default view: paste a link, download, edit.
+
+![Kidnap Social Media Downloader tab](assets/screenshots/url_download.png)
 
 Paste a URL and the matching platform chip lights up with its brand color. Supported platforms:
 
@@ -80,7 +82,7 @@ Paste a URL and the matching platform chip lights up with its brand color. Suppo
 
 **Cookies from** reads login cookies from Chrome / Firefox / Edge / Brave / Opera, or from a `cookies.txt` export via the **Cookies file…** picker, for Instagram and private X videos that require authentication. Note that current Windows Chrome locks and encrypts its cookie database (App-Bound Encryption), so direct Chrome reads often fail; close Chrome fully, switch to Firefox, or use a cookies file (the in-app error message walks you through exactly that). yt-dlp is invoked with platform-aware format selectors (progressive MP4 for X/Instagram, HLS-aware for Bluesky, video+audio muxing for Reddit), and downloads retry transient network failures with resume.
 
-![URL Download with batch panel](assets/screenshots/url_batch.png)
+![Batch download panel](assets/screenshots/url_batch.png)
 
 **Batch Download** takes a list of URLs (one per line), downloads them sequentially, and shows per-row status with a **Use** button that loads the finished video into the trim workflow. Stop at any time.
 
@@ -159,7 +161,7 @@ When a hardware encoder is available, CRF maps to the right flag per encoder (`-
 | **Ctrl+Y** / **Ctrl+Shift+Z** | Redo |
 | **Ctrl+E** | Export |
 | **Ctrl+O** | Open video file |
-| **Ctrl+V** | Paste URL (URL tab) |
+| **Ctrl+V** | Paste — a video/GIF link opens the Kidnap downloader from any tab; a clipboard image becomes an overlay on Trim |
 
 Entry fields swallow shortcuts so typing into them doesn't scrub the video.
 

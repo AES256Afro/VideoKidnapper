@@ -89,7 +89,7 @@ class UrlTab(ctk.CTkScrollableFrame):
         header_row.pack(fill="x", padx=14, pady=(12, 0))
 
         ctk.CTkLabel(
-            header_row, text="Video URL",
+            header_row, text="Kidnap a video",
             font=T.font(T.SIZE_XL, "bold"), text_color=T.TEXT,
         ).pack(side="left")
 
@@ -103,16 +103,30 @@ class UrlTab(ctk.CTkScrollableFrame):
         )
         self.platform_badge.pack(side="right")
 
+        # What-to-do line: this space used to be wasted on chips that only
+        # LOOKED clickable; now it tells the user the actual flow.
+        ctk.CTkLabel(
+            url_card,
+            text="1  Paste a video or GIF link (Ctrl+V works from any tab)   ·   "
+                 "2  Download   ·   3  Trim, caption & export below",
+            font=T.font(T.SIZE_SM), text_color=T.TEXT_MUTED, anchor="w",
+        ).pack(fill="x", padx=14, pady=(4, 0))
+
+        # Passive indicators — the matching one lights up as you paste.
         chip_row = ctk.CTkFrame(url_card, fg_color="transparent")
         chip_row.pack(fill="x", padx=14, pady=(6, 0))
         ctk.CTkLabel(
-            chip_row, text="Supports",
+            chip_row, text="Works with",
             font=T.font(T.SIZE_SM), text_color=T.TEXT_DIM,
         ).pack(side="left", padx=(0, 8))
         for platform in SUPPORTED_PLATFORMS.keys():
-            chip = PlatformChip(chip_row, platform, on_click=None)
+            chip = PlatformChip(chip_row, platform)
             chip.pack(side="left", padx=3)
             self._platform_chips[platform] = chip
+        ctk.CTkLabel(
+            chip_row, text="…and most sites yt-dlp knows",
+            font=T.font(T.SIZE_XS), text_color=T.TEXT_DIM,
+        ).pack(side="left", padx=(8, 0))
 
         # Input row
         input_row = ctk.CTkFrame(url_card, fg_color="transparent")
@@ -735,13 +749,21 @@ class UrlTab(ctk.CTkScrollableFrame):
         """URL tab has no 'open file' — focus the URL entry instead."""
         self.url_entry.focus_set()
 
-    def keyboard_paste_url(self):
-        """Ctrl+V on the URL tab: paste clipboard contents into the URL entry.
+    def receive_url(self, url):
+        """Fill the URL entry (from the app-level Ctrl+V router or any
+        other source), light up the matching platform chip, and focus the
+        entry so Enter starts the download immediately."""
+        self.url_entry.delete(0, "end")
+        self.url_entry.insert(0, url)
+        self.url_entry.focus_set()
+        self._on_url_typed(None)
+        self._notify("Link pasted — press Enter or click Download", "info")
 
-        Only fires when focus ISN'T already in an entry (App's entry-
-        guard handles that), so Tk's normal paste-inside-entry is
-        preserved. If the clipboard looks like a URL we also kick off
-        the typing-handler so the platform chip lights up immediately.
+    def keyboard_paste_url(self):
+        """Ctrl+V fallthrough on this tab for non-link clipboard text.
+
+        The app-level router already handles anything that looks like a
+        URL; plain text still lands in the entry so nothing feels eaten.
         """
         try:
             data = self.clipboard_get()
@@ -749,11 +771,7 @@ class UrlTab(ctk.CTkScrollableFrame):
             return
         if not data:
             return
-        data = data.strip()
-        self.url_entry.delete(0, "end")
-        self.url_entry.insert(0, data)
-        self.url_entry.focus_set()
-        self._on_url_typed(None)
+        self.receive_url(data.strip())
 
     # ------------------------------------------------------------------
     def _gather_ranges(self):

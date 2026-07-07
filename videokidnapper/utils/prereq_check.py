@@ -133,7 +133,15 @@ def install_ffmpeg_portable(dest_dir, progress_cb=None):
 
 
 def default_ffmpeg_install_dir():
-    """Where ``ffmpeg_check`` looks next to the project."""
+    """A directory ``ffmpeg_check`` will find again on the next launch.
+
+    Frozen builds must NOT use ``videokidnapper.__file__`` — that lives in
+    PyInstaller's per-run temp extraction dir, so anything installed there
+    evaporates on restart. The resolver checks next to the executable for
+    frozen apps, so install there instead.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "assets" / "ffmpeg" / "bin"
     import videokidnapper
     return Path(videokidnapper.__file__).resolve().parent.parent / "assets" / "ffmpeg" / "bin"
 
@@ -141,6 +149,64 @@ def default_ffmpeg_install_dir():
 # ---------------------------------------------------------------------------
 # pip installs
 # ---------------------------------------------------------------------------
+
+def pip_install_streaming(package, line_cb=None, user=True, upgrade=False, timeout=600):
+    """``pip install`` with each output line reported live via ``line_cb``.
+
+    Returns ``(ok, tail)`` like :func:`pip_install`. In a frozen build
+    there is no pip (and every Python dep is already bundled), so this
+    fails fast with an explanation instead of re-invoking the app exe.
+    """
+    if getattr(sys, "frozen", False):
+        return False, (
+            "pip is unavailable in the packaged app — Python packages are "
+            "already bundled inside it. Only FFmpeg can need installing."
+        )
+    cmd = [sys.executable, "-m", "pip", "install"]
+    if upgrade:
+        cmd.append("--upgrade")
+    if user:
+        cmd.append("--user")
+    cmd.append(package)
+    if line_cb:
+        line_cb("$ " + " ".join(cmd))
+    lines = []
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, errors="replace",
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        for line in proc.stdout:
+            line = line.rstrip()
+            if line:
+                lines.append(line)
+                if line_cb:
+                    line_cb(line)
+        proc.wait(timeout=timeout)
+        ok = proc.returncode == 0
+        return ok, "\n".join(lines[-10:]) or ("installed" if ok else "failed")
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        return False, f"pip install {package} timed out"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
+def describe_install_plan(keys):
+    """One human line saying what installing ``keys`` will actually do.
+
+    Pure — drives the "here's what will happen" label in the Setup
+    dialog before the user commits to anything.
+    """
+    parts = []
+    for key in keys:
+        if key == "ffmpeg":
+            parts.append("FFmpeg (portable download, no admin)")
+        else:
+            parts.append(f"{_pip_name_for(key)} (pip)")
+    return ", ".join(parts)
+
 
 def pip_install(package, user=True, upgrade=False, timeout=240):
     cmd = [sys.executable, "-m", "pip", "install"]

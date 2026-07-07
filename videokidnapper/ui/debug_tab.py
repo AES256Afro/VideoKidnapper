@@ -20,7 +20,15 @@ class LogCapture:
 
     def write(self, text):
         if self.original:
-            self.original.write(text)
+            try:
+                self.original.write(text)
+            except UnicodeEncodeError:
+                # cp1252 consoles can't take every glyph the app prints
+                # (tab names, arrows). Degrade the console copy — the
+                # Debug tab still gets the real text below.
+                enc = getattr(self.original, "encoding", None) or "ascii"
+                self.original.write(
+                    text.encode(enc, errors="replace").decode(enc))
         if text.strip():
             self.callback(text.strip(), self.tag)
 
