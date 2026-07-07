@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.5.1] — 2026-07-07
 
 ### Fixed
 
@@ -254,6 +254,7 @@ First public release. The overhaul that turned the project from a YouTube-only G
 
 - 124 tests covering URL platform detection, share-intent URL construction, ffmpeg filter math (crop clamping, aspect-crop, fade-alpha expression, hardware encoder picking and probing), settings persistence + schema migration, SRT parser, size estimator, LRU cache, and the DnD payload parser.
 
+[1.5.1]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.5.1
 [1.5.0]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.5.0
 [1.4.1]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.4.1
 [1.4.0]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.4.0
