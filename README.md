@@ -7,69 +7,39 @@
   <p><strong><a href="https://videokidnapper.com">videokidnapper.com</a></strong> · <a href="https://github.com/AES256Afro/VideoKidnapper/releases/latest">Downloads</a> · <a href="https://videokidnapper.com/screenshots.html">Screenshots</a></p>
 </div>
 
-A dark-themed desktop tool for trimming videos, downloading clips from the open web, and exporting polished GIFs or MP4s with text overlays — from any supported platform.
+Grab a video from the web, cut the part you want, caption it, and export a clean GIF or MP4. Everything runs on your PC. No watermark, no account, no upload.
 
 ![Animated tour of the app](assets/screenshots/demo.gif)
 
 ---
 
-## Highlights
+## What it does
 
-- **Multi-platform downloads** — YouTube, Instagram, Bluesky, Twitter/X, Reddit, Facebook
-- **Batch URL queue** — paste many links, download sequentially, pick one to edit
-- **Resilient downloads:** transient network failures retry automatically and resume the partial file, and a one-click **⟳ Update yt-dlp** button keeps the extractor current
-- **Pixel-accurate text overlays** — preview matches export (fontsize, position, box padding all match ffmpeg's output), with per-layer **outline, shadow, bold / italic, and multiline captions**
-- **Image / logo overlay track** — drop PNGs / JPGs as overlays with per-layer position, scale, opacity, and timing (watermarks, reaction stickers, brand bugs)
-- **Multi-range trimming** — queue N clips from one source, export individually or concatenate into one file
-- **Undo / redo** — Ctrl+Z / Ctrl+Y across text-layer edits, crop, trim range, and queued ranges (50-step history)
-- **Thumbnail strip** above the timeline — click any thumb to seek; the selected range is outlined in accent
-- **Snap-to-guides** when dragging text — horizontal / vertical center, padded edges, and peer-layer edges snap with dashed guide lines
-- **SRT import** — drop an SRT/VTT file to auto-populate time-synced text layers
-- **Whisper auto-captions** — one click transcribes the current trim range and imports the captions as text layers (requires optional [`faster-whisper`](https://github.com/guillaumekln/faster-whisper))
-- **Crop by click-drag** on the preview canvas, or pick an aspect-ratio preset (1:1, 9:16, 16:9, 4:5, 3:4)
-- **Export options** — speed (0.25×–4×), rotate, mute, audio-only MP3, text fade in/out, color grade sliders
-- **GIF tuning:** dither algorithm (Bayer / Floyd-Steinberg / Sierra / None), palette stats mode (Full frame / Motion), and loop count (Forever / Once / 2-5×)
-- **Blurred-background aspect fill:** convert 16:9 to 9:16 (or any aspect preset) with the Shorts / Reels fill look instead of cropping or black bars
-- **Hardware encoding** — auto-probes NVENC / QuickSync / VideoToolbox / AMF and falls back cleanly to libx264
-- **Screen recording** — capture your monitor and drop the result straight into the trim workflow
-- **Share to platform** — one click copies the exported file to clipboard and opens the compose page on YouTube, Instagram, Bluesky, X, Reddit, or Facebook
-- **Drag-and-drop** video files onto the preview (requires [`tkinterdnd2`](https://pypi.org/project/tkinterdnd2/))
-- **Real-time in-app playback with audio** — `imageio-ffmpeg` + `sounddevice` decode video frames and PCM audio into an audio-mastered playback loop. Falls back to an 8-fps frame-scrub preview when the optional deps aren't installed.
-- **Play in System Player** — still available as a fallback route, with full OS-player features
-- **Live waveform** above the timeline
-- **History tab** — recent exports with Open / Reveal actions
-- **Keyboard shortcuts** — Space play · J/L ±1s · I/O set in-out · Ctrl+E export · Ctrl+O open file
-- **Setup dialog** auto-installs missing prerequisites (FFmpeg portable + pip packages) or opens an elevated terminal with the right commands
-- **CLI mode** — `python main.py --url ... --start 10 --end 25 --format GIF`
-- **Plugin system** — third-party packages can add tabs and lifecycle hooks via the `videokidnapper.plugins` entry-point group; see [`docs/PLUGINS.md`](docs/PLUGINS.md) for the API
-- **Light / dark themes**
-- **Roadmap:** see [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's planned next (audio track, boomerang GIFs, size-targeted export, silence auto-cut, and more)
+- **Download from the web.** YouTube, Instagram, X, Reddit, Bluesky, Facebook, and 1,000+ other sites yt-dlp supports. Paste a link, press `Ctrl+V` from anywhere, or queue a batch. Reads browser cookies for private and age-gated videos.
+- **Trim to the exact moment.** Frame-accurate timeline with a waveform and thumbnail strip. Queue several cuts from one video, then export them separately or stitched with transitions.
+- **Captions that look right.** Text with outline, shadow, bold, italic, and multiple lines, and the preview matches the exported frame exactly. Auto-caption speech with Whisper, or import an `.srt` or `.vtt`.
+- **Overlays.** Logos, watermarks, and sticker or GIF overlays dragged anywhere on the frame, each with its own size, opacity, and timing. Paste an image straight from the clipboard.
+- **Export for the platform.** Tune GIFs (dither, palette, loop) or export hardware-encoded MP4s. Reframe 16:9 to 9:16 for Shorts, Reels, and TikTok with a blurred-background fill. Speed, rotate, mute, audio-only, and colour adjustment are built in.
+- **Record your screen** straight into the editor.
+- **Runs fully offline.** No upload, no account, no watermark. Open source, FFmpeg included.
+
+One tab does it all: open a file, record the screen, or paste a link, then trim, caption, and export in the same place. VideoKidnapper also has undo and redo, a Batch Export tab, an export History tab, keyboard shortcuts (`Space` play, `J`/`L` step, `I`/`O` in-out, `Ctrl+E` export), a CLI mode, and a [plugin API](docs/PLUGINS.md). See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what is next.
 
 ---
 
 ## Tabs & features
 
-### Trim Video
+### Kidnap & Trim
 
-![Trim Video empty state](assets/screenshots/trim_empty.png)
+One tab for the whole job. Load a video three ways (**Open Video File**, **Record Screen**, or paste a link), then trim, caption, and export in the same place.
 
-The empty state tells you every way to load a file: click the preview, drag one in, or use **Open Video File**. The **Record Screen** button captures your primary monitor for N seconds and drops the recording straight into the workflow. **Import SRT** reads an `.srt`/`.vtt` subtitle file and creates one time-synced text layer per caption. The timeline shows the waveform, a dual-handle range slider, and the `+ Queue / Crop / System / Play` controls. The status bar at the bottom lists the active keyboard shortcuts.
+![Kidnap & Trim with a video loaded, a caption, and a queued range](assets/screenshots/studio_loaded.png)
 
-![Trim Video with ranges queued + text overlay](assets/screenshots/trim_loaded.png)
+With a video loaded you get a thumbnail strip, a waveform, a dual-handle range slider, and queued ranges (each exports as its own clip, or they concatenate with transitions when "Concat queued ranges" is on). Captions expose per-layer controls: multiline text, bold, italic, outline, and shadow, and the caption renders on the preview exactly as it will export. **Import SRT** and **🗣 Auto-captions** (Whisper) both feed the same text-layer panel.
 
-With a video loaded: thumbnail strip, waveform, a queued range (each queued range exports as its own clip, or they concatenate when "Concat queued ranges" is on), and a Caption-style text layer showing the per-layer controls: multiline text box, bold / italic toggles, and the Outline / Shadow checkboxes. The outlined two-line caption renders on the preview exactly as it will export. Timestamp entries accept `HH:MM:SS.mmm` input.
+![The download bar and batch queue](assets/screenshots/studio_link.png)
 
-![Export Options expanded](assets/screenshots/export_options.png)
-
-The expanded **Export Options** panel: speed / rotate / aspect with the **Fill** mode dropdown (Crop or Blur fill), text fade, color grade sliders, concat transitions, and the GIF row (dither algorithm, palette stats mode, loop count).
-
-### Kidnap Social Media Downloader
-
-The first tab and the default view: paste a link, download, edit.
-
-![Kidnap Social Media Downloader tab](assets/screenshots/url_download.png)
-
-Paste a URL and the matching platform chip lights up with its brand color. Supported platforms:
+The **Kidnap from** bar detects the platform as you paste (or press `Ctrl+V` to drop a link in from anywhere in the app). Supported with brand chips:
 
 | Platform | Host patterns |
 |---|---|
@@ -80,11 +50,7 @@ Paste a URL and the matching platform chip lights up with its brand color. Suppo
 | **Reddit** | `reddit.com`, `redd.it`, `v.redd.it` (gallery-wrapped + video+audio auto-merged) |
 | **Facebook** | `facebook.com`, `fb.watch`, `fb.com`, `m.facebook.com` |
 
-**Cookies from** reads login cookies from Chrome / Firefox / Edge / Brave / Opera, or from a `cookies.txt` export via the **Cookies file…** picker, for Instagram and private X videos that require authentication. Note that current Windows Chrome locks and encrypts its cookie database (App-Bound Encryption), so direct Chrome reads often fail; close Chrome fully, switch to Firefox, or use a cookies file (the in-app error message walks you through exactly that). yt-dlp is invoked with platform-aware format selectors (progressive MP4 for X/Instagram, HLS-aware for Bluesky, video+audio muxing for Reddit), and downloads retry transient network failures with resume.
-
-![Batch download panel](assets/screenshots/url_batch.png)
-
-**Batch Download** takes a list of URLs (one per line), downloads them sequentially, and shows per-row status with a **Use** button that loads the finished video into the trim workflow. Stop at any time.
+…plus the 1,000+ other sites yt-dlp supports. **Cookies from** reads login cookies from Chrome / Firefox / Edge / Brave / Opera, or a `cookies.txt` export, for private/age-gated videos. (Windows Chrome encrypts its cookie DB, so close Chrome fully, use Firefox, or a cookies file; the in-app error explains it.) Downloads retry transient failures with resume, and **⟳ Update yt-dlp** keeps the extractor current. **Batch Download** takes a list of links, grabs them in order, and loads any finished one into the editor with **Use**.
 
 ### History
 
@@ -120,7 +86,7 @@ After a successful export, the Export dialog reveals a share panel with a captio
 
 ## Text layers
 
-Both tabs expose a collapsible **Text Layers** panel with per-layer controls:
+The editor exposes a collapsible **Text Layers** panel with per-layer controls:
 
 - **Style presets** — Subtitle (white-on-black box), Caption (white with black outline, the social-standard look), Title (large centered), Watermark (small corner), Custom
 - Per-layer font (all system fonts), size, color (8 presets + **Custom…** color picker), position (7 anchors)
@@ -169,11 +135,17 @@ Entry fields swallow shortcuts so typing into them doesn't scrub the video.
 
 ## Installation
 
-### Option A — Windows `.exe` (no Python required)
+### Option A — Windows (no Python required)
 
-Download **`VideoKidnapper.exe`** from the [latest release](https://github.com/AES256Afro/VideoKidnapper/releases/latest), double-click to run. FFmpeg is still an external prereq — the app's **⚙ Setup** dialog will auto-install a portable copy on first launch if one isn't on PATH.
+Get it from the **[Microsoft Store](https://apps.microsoft.com/detail/9N4BMTK8Q7KG)** (signed, auto-updates, no security warning), or download **`VideoKidnapper.exe`** / the Setup installer from the [latest release](https://github.com/AES256Afro/VideoKidnapper/releases/latest). Missing prerequisites auto-install on first launch.
 
-### Option B — Linux AppImage (no Python required)
+### Option B — macOS (no Python required)
+
+Download the `.dmg` for your Mac from the [latest release](https://github.com/AES256Afro/VideoKidnapper/releases/latest) — `…-macos-arm64.dmg` (Apple Silicon) or `…-macos-x86_64.dmg` (Intel) — and drag the app to Applications. FFmpeg is bundled.
+
+> The app isn't code-signed yet, so on first launch **right-click it → Open** (a plain double-click is blocked by Gatekeeper for unsigned apps). After that it opens normally.
+
+### Option C — Linux AppImage (no Python required)
 
 Download **`VideoKidnapper-x86_64.AppImage`** from the [latest release](https://github.com/AES256Afro/VideoKidnapper/releases/latest):
 
@@ -203,7 +175,7 @@ pip install "videokidnapper[all]"
 videokidnapper
 ```
 
-### Option C — PyPI (recommended if you have Python)
+### Option D — PyPI (recommended if you have Python)
 
 ```bash
 pip install videokidnapper            # core install
@@ -214,7 +186,7 @@ videokidnapper --help                 # CLI mode
 
 You still need FFmpeg on `PATH` (or use the in-app **⚙ Setup** dialog after first launch to auto-install a portable copy on Windows).
 
-### Option D — Clone and install (contributors / latest `main`)
+### Option E — Clone and install (contributors / latest `main`)
 
 ### 1. Install Python 3.9 – 3.14
 
