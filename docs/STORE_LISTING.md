@@ -38,6 +38,19 @@ More
 Record your screen straight into the editor. Free and open source. FFmpeg is included.
 ```
 
+### What's new in this version (Store field: "What's new in this version")
+
+User-facing changes only, no repo/doc housekeeping. Update this each
+release. For the update that follows the 1.5.0 currently on the Store:
+
+```
+- One place for everything: open a file, record your screen, or paste a link, then trim, caption, and export in the same tab. No more hopping between a download tab and a trim tab.
+- Paste a video or GIF link with Ctrl+V from anywhere in the app to start a download.
+- Smoother first run: if something it needs is missing, the app now installs it and opens on its own instead of stopping at a setup screen. The Relaunch button works reliably.
+- Clearer setup screen that shows exactly what it is installing while it happens.
+- Refreshed the app icon and look.
+```
+
 ### Product features (Store field: "Product features", one per line)
 
 Paste these one per line into the Store's "Product features" list:
