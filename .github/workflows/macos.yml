@@ -1,0 +1,156 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
+#
+# On every tag push (v*.*.*), build macOS .app bundles wrapped in .dmg
+# installers for both architectures and attach them to the GitHub
+# Release. FFmpeg is bundled (a .app has no reliable PATH — same
+# reasoning as the MSIX container and the AppImage's AppRun).
+#
+# Unsigned: without an Apple Developer certificate ($99/yr) the .app is
+# unsigned + un-notarized, so Gatekeeper blocks a double-click on first
+# run. Users right-click → Open once (documented on the release + site),
+# or install via `pip install videokidnapper`. Signing/notarization is a
+# budget decision tracked in docs/DISTRIBUTION-PLAN.md.
+
+name: macOS build
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  pull_request:
+    paths:
+      - ".github/workflows/macos.yml"
+      - "packaging/videokidnapper-macos.spec"
+      - "packaging/macos/**"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to attach the DMGs to (e.g. v1.6.0); empty = artifact only"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build .app + .dmg
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14      # Apple Silicon (arm64)
+            arch: arm64
+          - runner: macos-13      # Intel (x86_64)
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install "pyinstaller>=6.0"
+
+      - name: Build .app
+        run: |
+          python -m PyInstaller packaging/videokidnapper-macos.spec --noconfirm --clean
+          test -d "dist/VideoKidnapper.app"
+
+      - name: Bundle FFmpeg (static GPL builds)
+        # evermeet.cx ships notarized static ffmpeg/ffprobe for macOS
+        # (arm64 + x86_64 universal). GPL — source linked in the release
+        # notes, same policy as the Linux/Windows builds.
+        run: |
+          mkdir -p ffbin
+          for bin in ffmpeg ffprobe; do
+            curl -fsSL -o "$bin.zip" "https://evermeet.cx/ffmpeg/getrelease/$bin/zip"
+            unzip -o "$bin.zip" -d ffbin
+          done
+          RES="dist/VideoKidnapper.app/Contents/Resources/assets/ffmpeg/bin"
+          mkdir -p "$RES"
+          cp ffbin/ffmpeg ffbin/ffprobe "$RES/"
+          chmod +x "$RES/ffmpeg" "$RES/ffprobe"
+          "$RES/ffmpeg" -version | head -1
+
+      - name: Smoke-test — --help exits 0
+        # argparse runs before Tk needs a display (headless runner).
+        run: |
+          "dist/VideoKidnapper.app/Contents/MacOS/VideoKidnapper" --help
+
+      - name: Resolve version
+        id: v
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag }}" ]; then
+            raw="${{ github.event.inputs.tag }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            raw="${GITHUB_REF_NAME}"
+          else
+            raw="v0.0.0"
+          fi
+          echo "version=${raw#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build .dmg
+        run: |
+          brew install create-dmg
+          mkdir -p dmgroot
+          cp -R "dist/VideoKidnapper.app" dmgroot/
+          OUT="VideoKidnapper-${{ steps.v.outputs.version }}-macos-${{ matrix.arch }}.dmg"
+          create-dmg \
+            --volname "VideoKidnapper" \
+            --app-drop-link 450 180 \
+            --icon "VideoKidnapper.app" 150 180 \
+            --window-size 640 360 \
+            "$OUT" dmgroot/ || \
+            hdiutil create -volname "VideoKidnapper" -srcfolder dmgroot -ov -format UDZO "$OUT"
+          echo "dmg=$OUT" >> "$GITHUB_ENV"
+          ls -la "$OUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoKidnapper-macos-${{ matrix.arch }}
+          path: ${{ env.dmg }}
+          retention-days: 30
+
+  attach:
+    name: Attach DMGs to Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: VideoKidnapper-macos-*
+          path: dist/
+          merge-multiple: true
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          notes=$'macOS builds for '"$tag"$'.\n\n- Apple Silicon: `*-macos-arm64.dmg`  ·  Intel: `*-macos-x86_64.dmg`\n- Unsigned: on first launch, right-click the app → **Open** (Gatekeeper blocks a normal double-click for unsigned apps). FFmpeg is bundled.'
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/*.dmg --clobber
+          else
+            gh release create "$tag" dist/*.dmg --title "$tag" --notes "$notes"
+          fi
