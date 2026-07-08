@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **One tab does everything.** The separate "Trim Video" and downloader tabs are merged into a single **Kidnap & Trim** studio: load a file, record the screen, or paste a link — then trim, caption, and export in the same place. The two tabs had been carrying identical copies of the editor, which is exactly the duplication that made the app feel confusing. The download bar (link entry, platform chips, cookies, batch queue) is now a strip above the player; a finished download flows straight into the editor. `Ctrl+V` a link from anywhere still routes here.
+- **Plain-English description everywhere.** README, the Microsoft Store listing, and the in-app tagline are rewritten around what the app does — download, trim, caption, export — instead of "dark-themed." Canonical copy lives in `docs/STORE_LISTING.md`.
+- **Fresh screenshots** of the merged UI (README + website + Store).
+
+### Added
+
+- **macOS build.** `.dmg` installers for Apple Silicon and Intel, built on tag push by `.github/workflows/macos.yml` (PyInstaller `.app` + bundled FFmpeg + `create-dmg`). Unsigned for now — first launch is right-click → Open. See `packaging/macos/README.md`.
+
 ## [1.5.1] — 2026-07-07
 
 ### Fixed

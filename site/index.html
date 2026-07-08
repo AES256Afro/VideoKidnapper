@@ -83,6 +83,13 @@
         <p class="alt"><strong>Microsoft Store is the easiest</strong> — signed by Microsoft (no security warning) and auto-updates. The installer adds a Start Menu entry and clean uninstall; the portable build is a single double-click file. FFmpeg auto-installs on first launch.</p>
       </div>
       <div class="dl-card">
+        <h3>🍎 macOS</h3>
+        <p class="sub">macOS 11+ · Apple Silicon &amp; Intel</p>
+        <a class="btn primary" id="dl-mac-arm" href="https://github.com/AES256Afro/VideoKidnapper/releases/latest">Apple Silicon (.dmg)</a>
+        <a class="btn" id="dl-mac-intel" href="https://github.com/AES256Afro/VideoKidnapper/releases/latest">Intel (.dmg)</a>
+        <p class="alt">FFmpeg bundled. Not signed yet, so on first launch <strong>right-click the app → Open</strong> (unsigned apps are blocked from a plain double-click). Or <code>pip install videokidnapper</code>.</p>
+      </div>
+      <div class="dl-card">
         <h3>🐧 Linux</h3>
         <p class="sub">Ubuntu 22.04+, Debian 12+, Fedora 36+, Bazzite, SteamOS</p>
         <a class="btn primary" href="https://github.com/AES256Afro/VideoKidnapper/releases/latest/download/VideoKidnapper-x86_64.AppImage">AppImage (FFmpeg included)</a>
@@ -160,6 +167,11 @@ fetch('https://api.github.com/repos/AES256Afro/VideoKidnapper/releases/latest')
     if (setup && winSetup) winSetup.href = setup;
     var debBtn = document.getElementById('dl-deb');
     if (deb && debBtn) debBtn.href = deb;
+    var macArm = asset(/-macos-arm64\.dmg$/), macIntel = asset(/-macos-x86_64\.dmg$/);
+    var macArmBtn = document.getElementById('dl-mac-arm');
+    var macIntelBtn = document.getElementById('dl-mac-intel');
+    if (macArm && macArmBtn) macArmBtn.href = macArm;
+    if (macIntel && macIntelBtn) macIntelBtn.href = macIntel;
     if (rel.tag_name) {
       document.getElementById('version-badge').textContent =
         'Free & open source · Apache-2.0 · On the Microsoft Store · Windows + Linux · latest: ' + rel.tag_name;

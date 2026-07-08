@@ -115,6 +115,22 @@ class TrimTab(ctk.CTkScrollableFrame):
         )
         self.file_label.pack(side="left", padx=15)
 
+        # Divider between "local file" sources and "from a link".
+        ctk.CTkFrame(
+            source_card, height=1, fg_color=T.BORDER, corner_radius=0,
+        ).pack(fill="x", padx=14)
+
+        # Download-from-link strip: the whole old URL tab boiled down to
+        # this bar — a finished download flows into the same _load_path
+        # a local file uses, so there is exactly one editor.
+        from videokidnapper.ui.source_bar import DownloadBar
+        self.download_bar = DownloadBar(
+            source_card,
+            on_video_ready=self._on_downloaded_video,
+            notify=self._notify,
+        )
+        self.download_bar.pack(fill="x", padx=14, pady=(10, 12))
+
         # Preview (clickable + DnD-aware). Fixed height inside a scrollable
         # tab — the player letterboxes to preserve aspect ratio.
         self.player = VideoPlayer(
@@ -402,6 +418,16 @@ class TrimTab(ctk.CTkScrollableFrame):
             self._notify(f"Unsupported file type: {ext}", "warn")
             return
         self._load_path(path)
+
+    def _on_downloaded_video(self, path, platform=None, title=None):
+        """A DownloadBar download (single or batch) lands in the editor."""
+        self._load_path(path)
+        if platform:
+            self._notify(f"Kidnapped from {platform} — trim away", "success")
+
+    def receive_url(self, url):
+        """App-level Ctrl+V router hands pasted links to the download bar."""
+        self.download_bar.receive_url(url)
 
     def _load_path(self, path):
         # _restoring suppresses undo/redo recording during the flurry of

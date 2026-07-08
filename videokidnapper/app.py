@@ -17,13 +17,13 @@ from videokidnapper.utils.github_update import check_async
 from videokidnapper.utils.urltools import looks_like_media_url
 
 # Tab titles in one place — position in _build_tabs decides order, and
-# CTkTabview selects the first tab added, so the downloader is both the
-# leftmost tab and the default view on launch.
-TAB_DOWNLOAD = "  ⬇  Kidnap Social Media Downloader  "
-TAB_TRIM     = "  ✂  Trim Video  "
-TAB_BATCH    = "  ⎆  Batch Export  "
-TAB_HISTORY  = "  ⌛  History  "
-TAB_DEBUG    = "  ⚙  Debug  "
+# CTkTabview selects the first tab added. One studio tab does it all:
+# open a file, record the screen, or kidnap from a link — same trim /
+# caption / export pipeline either way.
+TAB_STUDIO  = "  ⬇  Kidnap & Trim  "
+TAB_BATCH   = "  ⎆  Batch Export  "
+TAB_HISTORY = "  ⌛  History  "
+TAB_DEBUG   = "  ⚙  Debug  "
 
 
 class App(ctk.CTk):
@@ -94,7 +94,7 @@ class App(ctk.CTk):
         self._build_tabs()
         self._build_statusbar()
 
-        for tab in (self.trim_tab, self.url_tab, self.batch_export_tab):
+        for tab in (self.trim_tab, self.batch_export_tab):
             if hasattr(tab, "set_toast"):
                 tab.set_toast(self.status_bar)
 
@@ -141,7 +141,7 @@ class App(ctk.CTk):
 
         subtitle = ctk.CTkLabel(
             inner,
-            text="Clip, trim, and export GIFs or MP4s — from any supported platform.",
+            text="Grab a video from the web, cut the part you want, caption it, export a GIF or MP4.",
             font=T.font(T.SIZE_MD),
             text_color=T.TEXT_MUTED,
         )
@@ -214,8 +214,7 @@ class App(ctk.CTk):
             font=T.font(T.SIZE_LG, "bold"), height=36,
         )
 
-        self.tabview.add(TAB_DOWNLOAD)   # first added = leftmost + default
-        self.tabview.add(TAB_TRIM)
+        self.tabview.add(TAB_STUDIO)   # first added = leftmost + default
         self.tabview.add(TAB_BATCH)
         self.tabview.add(TAB_HISTORY)
         self.tabview.add(TAB_DEBUG)
@@ -224,16 +223,12 @@ class App(ctk.CTk):
         from videokidnapper.ui.debug_tab import DebugTab
         from videokidnapper.ui.history_tab import HistoryTab
         from videokidnapper.ui.trim_tab import TrimTab
-        from videokidnapper.ui.url_tab import UrlTab
 
         self.debug_tab = DebugTab(self.tabview.tab(TAB_DEBUG), self)
         self.debug_tab.pack(fill="both", expand=True)
 
-        self.trim_tab = TrimTab(self.tabview.tab(TAB_TRIM), self)
+        self.trim_tab = TrimTab(self.tabview.tab(TAB_STUDIO), self)
         self.trim_tab.pack(fill="both", expand=True)
-
-        self.url_tab = UrlTab(self.tabview.tab(TAB_DOWNLOAD), self)
-        self.url_tab.pack(fill="both", expand=True)
 
         self.batch_export_tab = BatchExportTab(
             self.tabview.tab(TAB_BATCH), self,
@@ -263,8 +258,6 @@ class App(ctk.CTk):
         name = self.tabview.get()
         if "Trim" in name:
             return self.trim_tab
-        if "Downloader" in name:
-            return self.url_tab
         return None
 
     def _bind_keyboard_shortcuts(self):
@@ -333,8 +326,8 @@ class App(ctk.CTk):
         except Exception:
             data = ""
         if looks_like_media_url(data or ""):
-            self.tabview.set(TAB_DOWNLOAD)
-            self.url_tab.receive_url(data.strip())
+            self.tabview.set(TAB_STUDIO)
+            self.trim_tab.receive_url(data.strip())
             return
         self._shortcut(event, "keyboard_paste_url")
 
