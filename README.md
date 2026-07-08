@@ -7,7 +7,7 @@
   <p><strong><a href="https://videokidnapper.com">videokidnapper.com</a></strong> · <a href="https://github.com/AES256Afro/VideoKidnapper/releases/latest">Downloads</a> · <a href="https://videokidnapper.com/screenshots.html">Screenshots</a></p>
 </div>
 
-Grab a video from the web, cut the part you want, caption it, and export a clean GIF or MP4 — all on your PC. No watermark, no account, no upload.
+Grab a video from the web, cut the part you want, caption it, and export a clean GIF or MP4. Everything runs on your PC. No watermark, no account, no upload.
 
 ![Animated tour of the app](assets/screenshots/demo.gif)
 
@@ -15,15 +15,15 @@ Grab a video from the web, cut the part you want, caption it, and export a clean
 
 ## What it does
 
-- **Download from the web** — YouTube, Instagram, X, Reddit, Bluesky, Facebook, and 1,000+ other sites yt-dlp supports. Paste a link, `Ctrl+V` from anywhere, or queue a batch. Reads browser cookies for private/age-gated videos.
-- **Trim to the exact moment** — frame-accurate timeline with a waveform and thumbnail strip. Queue several cuts from one video; export them separately or stitched with transitions.
-- **Captions that look right** — text with outline, shadow, bold/italic, and multiple lines, and the preview matches the exported frame exactly. Auto-caption speech with Whisper, or import an `.srt`/`.vtt`.
-- **Overlays** — logos, watermarks, and sticker/GIF overlays dragged anywhere on the frame, with per-layer size, opacity, and timing. Paste an image straight from the clipboard.
-- **Export that fits the platform** — tune GIFs (dither, palette, loop) or export hardware-encoded MP4s. Reframe 16:9 → 9:16 for Shorts/Reels/TikTok with a blurred-background fill. Speed, rotate, mute, audio-only, and colour adjustment built in.
+- **Download from the web.** YouTube, Instagram, X, Reddit, Bluesky, Facebook, and 1,000+ other sites yt-dlp supports. Paste a link, press `Ctrl+V` from anywhere, or queue a batch. Reads browser cookies for private and age-gated videos.
+- **Trim to the exact moment.** Frame-accurate timeline with a waveform and thumbnail strip. Queue several cuts from one video, then export them separately or stitched with transitions.
+- **Captions that look right.** Text with outline, shadow, bold, italic, and multiple lines, and the preview matches the exported frame exactly. Auto-caption speech with Whisper, or import an `.srt` or `.vtt`.
+- **Overlays.** Logos, watermarks, and sticker or GIF overlays dragged anywhere on the frame, each with its own size, opacity, and timing. Paste an image straight from the clipboard.
+- **Export for the platform.** Tune GIFs (dither, palette, loop) or export hardware-encoded MP4s. Reframe 16:9 to 9:16 for Shorts, Reels, and TikTok with a blurred-background fill. Speed, rotate, mute, audio-only, and colour adjustment are built in.
 - **Record your screen** straight into the editor.
-- **Runs fully offline** — no upload, no account, no watermark. Open source, FFmpeg included.
+- **Runs fully offline.** No upload, no account, no watermark. Open source, FFmpeg included.
 
-One tab does it all: open a file, record the screen, or paste a link — then trim, caption, and export in the same place. Also has undo/redo, a Batch Export tab, an export History tab, keyboard shortcuts (`Space` play · `J/L` step · `I/O` in-out · `Ctrl+E` export), a CLI mode, and a [plugin API](docs/PLUGINS.md). See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's next.
+One tab does it all: open a file, record the screen, or paste a link, then trim, caption, and export in the same place. VideoKidnapper also has undo and redo, a Batch Export tab, an export History tab, keyboard shortcuts (`Space` play, `J`/`L` step, `I`/`O` in-out, `Ctrl+E` export), a CLI mode, and a [plugin API](docs/PLUGINS.md). See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what is next.
 
 ---
 
@@ -31,15 +31,15 @@ One tab does it all: open a file, record the screen, or paste a link — then tr
 
 ### Kidnap & Trim
 
-One tab for the whole job. Load a video three ways — **Open Video File**, **Record Screen**, or paste a link — then trim, caption, and export in the same place.
+One tab for the whole job. Load a video three ways (**Open Video File**, **Record Screen**, or paste a link), then trim, caption, and export in the same place.
 
 ![Kidnap & Trim with a video loaded, a caption, and a queued range](assets/screenshots/studio_loaded.png)
 
-With a video loaded: thumbnail strip, waveform, a dual-handle range slider, queued ranges (each exports as its own clip, or they concatenate with transitions when "Concat queued ranges" is on), and a caption showing per-layer controls — multiline text, bold/italic, and Outline/Shadow. The caption renders on the preview exactly as it will export. **Import SRT** and **🗣 Auto-captions** (Whisper) both feed the same text-layer panel.
+With a video loaded you get a thumbnail strip, a waveform, a dual-handle range slider, and queued ranges (each exports as its own clip, or they concatenate with transitions when "Concat queued ranges" is on). Captions expose per-layer controls: multiline text, bold, italic, outline, and shadow, and the caption renders on the preview exactly as it will export. **Import SRT** and **🗣 Auto-captions** (Whisper) both feed the same text-layer panel.
 
 ![The download bar and batch queue](assets/screenshots/studio_link.png)
 
-The **Kidnap from** bar detects the platform as you paste (or `Ctrl+V` a link from anywhere in the app). Supported with brand chips:
+The **Kidnap from** bar detects the platform as you paste (or press `Ctrl+V` to drop a link in from anywhere in the app). Supported with brand chips:
 
 | Platform | Host patterns |
 |---|---|
@@ -50,7 +50,7 @@ The **Kidnap from** bar detects the platform as you paste (or `Ctrl+V` a link fr
 | **Reddit** | `reddit.com`, `redd.it`, `v.redd.it` (gallery-wrapped + video+audio auto-merged) |
 | **Facebook** | `facebook.com`, `fb.watch`, `fb.com`, `m.facebook.com` |
 
-…plus the 1,000+ other sites yt-dlp supports. **Cookies from** reads login cookies from Chrome / Firefox / Edge / Brave / Opera, or a `cookies.txt` export, for private/age-gated videos. (Windows Chrome encrypts its cookie DB — close Chrome fully, use Firefox, or a cookies file; the in-app error explains it.) Downloads retry transient failures with resume, and **⟳ Update yt-dlp** keeps the extractor current. **Batch Download** takes a list of links, grabs them in order, and loads any finished one into the editor with **Use**.
+…plus the 1,000+ other sites yt-dlp supports. **Cookies from** reads login cookies from Chrome / Firefox / Edge / Brave / Opera, or a `cookies.txt` export, for private/age-gated videos. (Windows Chrome encrypts its cookie DB, so close Chrome fully, use Firefox, or a cookies file; the in-app error explains it.) Downloads retry transient failures with resume, and **⟳ Update yt-dlp** keeps the extractor current. **Batch Download** takes a list of links, grabs them in order, and loads any finished one into the editor with **Use**.
 
 ### History
 

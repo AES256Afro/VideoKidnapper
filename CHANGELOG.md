@@ -7,8 +7,9 @@ All notable changes to this project are documented here. The format is based on 
 ### Changed
 
 - **One tab does everything.** The separate "Trim Video" and downloader tabs are merged into a single **Kidnap & Trim** studio: load a file, record the screen, or paste a link — then trim, caption, and export in the same place. The two tabs had been carrying identical copies of the editor, which is exactly the duplication that made the app feel confusing. The download bar (link entry, platform chips, cookies, batch queue) is now a strip above the player; a finished download flows straight into the editor. `Ctrl+V` a link from anywhere still routes here.
-- **Plain-English description everywhere.** README, the Microsoft Store listing, and the in-app tagline are rewritten around what the app does — download, trim, caption, export — instead of "dark-themed." Canonical copy lives in `docs/STORE_LISTING.md`.
-- **Fresh screenshots** of the merged UI (README + website + Store).
+- **Plain-English description everywhere.** README, the website, the Microsoft Store listing, and the in-app tagline are rewritten around what the app does (download, trim, caption, export) instead of "dark-themed", with no em dashes. Canonical copy, including a ready-to-paste Store description body and one-per-line feature list, lives in `docs/STORE_LISTING.md`; `docs/STORE_UPDATE_GUIDE.md` walks through updating the listing.
+- **Fresh screenshots** of the merged UI for the README and website, plus a set of exact 1920×1080 Store screenshots in `assets/store/`.
+- **One logo, every size.** All square icons (app window, `.exe`/`.ico`, `.icns`, favicon, AppImage/deb, MSIX tiles) are regenerated from a single master matching the Microsoft Store artwork: the balaclava on the dark brand tile.
 
 ### Added
 
