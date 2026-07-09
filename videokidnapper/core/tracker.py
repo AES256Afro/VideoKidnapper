@@ -85,8 +85,10 @@ def track_region(video_path, bbox, start_t, end_t,
         small = shrink(frame)
         fh, fw = small.shape[:2]
         # Clamp the box inside the frame; a sliver of a box can't track.
-        x = max(0, min(x, fw - 4)); y = max(0, min(y, fh - 4))
-        w = max(8, min(w, fw - x)); h = max(8, min(h, fh - y))
+        x = max(0, min(x, fw - 4))
+        y = max(0, min(y, fh - 4))
+        w = max(8, min(w, fw - x))
+        h = max(8, min(h, fh - y))
 
         tracker = _make_tracker(cv2)
         tracker.init(small, (x, y, w, h))
