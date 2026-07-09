@@ -335,6 +335,31 @@ class TextLayerWidget(ctk.CTkFrame):
         )
         # packed on demand by _update_motion_hint
 
+        # Auto-track: drop the caption on the thing, click, and OpenCV
+        # follows it. Owned by the studio tab (needs the player + video);
+        # the panel forwards clicks via its autotrack handler.
+        self.autotrack_btn = ctk.CTkButton(
+            row6, text="⚡ Auto-track from here", width=150, height=20,
+            fg_color=T.BG_RAISED, hover_color=T.BG_HOVER,
+            text_color=T.TEXT, font=ctk.CTkFont(size=10),
+            command=lambda: self._request_autotrack(),
+        )
+        self.autotrack_btn.pack(side="right", padx=(0, 6))
+
+    def _request_autotrack(self):
+        cb = getattr(self, "_autotrack_cb", None)
+        if callable(cb):
+            cb(self.layer_index)
+
+    def set_keyframes(self, keyframes):
+        """Replace the whole motion path (auto-tracking result)."""
+        from videokidnapper.utils.keyframes import normalize_keyframes
+        self._keyframes = normalize_keyframes(keyframes)
+        if self._keyframes:
+            self.motion_var.set(True)
+        self._update_motion_hint()
+        self._fire_change()
+
         # Apply default style
         self._on_style_change("Subtitle")
         self._update_motion_hint()
@@ -742,6 +767,7 @@ class TextLayersPanel(ctk.CTkFrame):
         layer.time_slider.command = time_cb
         # Motion-path edits (arm/record/clear) refresh the preview too.
         layer._change_cb = self._notify_change
+        layer._autotrack_cb = getattr(self, "_autotrack_handler", None)
 
     def _remove_layer(self, layer_widget):
         if layer_widget in self.layers:
@@ -776,6 +802,18 @@ class TextLayersPanel(ctk.CTkFrame):
         """Drag callback entry point — forwarded from VideoPlayer."""
         if 0 <= index < len(self.layers):
             self.layers[index].set_custom_position(source_x, source_y)
+            self._notify_change()
+
+    def set_autotrack_handler(self, cb):
+        """The studio tab owns tracking (player + video + threads); it
+        registers here and every layer's ⚡ button forwards to it."""
+        self._autotrack_handler = cb
+        for layer in self.layers:
+            layer._autotrack_cb = cb
+
+    def set_layer_keyframes(self, index, keyframes):
+        if 0 <= index < len(self.layers):
+            self.layers[index].set_keyframes(keyframes)
             self._notify_change()
 
     def maybe_record_keyframe(self, index, t, source_x, source_y):
