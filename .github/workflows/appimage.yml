@@ -136,6 +136,15 @@ jobs:
             "${{ steps.version.outputs.version }}" \
             dist/VideoKidnapper \
             "videokidnapper_${{ steps.version.outputs.version }}_amd64.deb"
+          # The apt repo is git-backed Pages with a hard 100 MB per-file
+          # limit. Fail the build here (on PRs too) rather than at publish
+          # time on a tag, if the .deb ever creeps over ~95 MB.
+          sz=$(stat -c%s videokidnapper_*_amd64.deb)
+          echo ".deb size: $((sz/1024/1024)) MB"
+          if [ "$sz" -gt 99614720 ]; then
+            echo "::error::.deb exceeds 95 MB — would break the apt repo push (GitHub 100 MB git limit). Trim the bundle."
+            exit 1
+          fi
 
       - name: Smoke-test .deb — install + --help
         # Real dpkg install on the runner: catches broken symlinks,
@@ -143,7 +152,9 @@ jobs:
         run: |
           sudo apt-get install -y ./videokidnapper_*.deb
           videokidnapper --help
-          videokidnapper --selftest
+          # NB: no --selftest here — the .deb strips OpenCV to stay under
+          # the apt repo's 100 MB limit, so auto-track is intentionally
+          # absent (the AppImage smoke test above asserts it IS present).
           sudo apt-get remove -y videokidnapper
 
       - name: Upload artifact

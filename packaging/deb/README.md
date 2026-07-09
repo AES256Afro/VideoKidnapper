@@ -36,3 +36,5 @@ Debian/Ubuntu inclusion needs every Python dep packaged in the archive (`customt
 ## Key rotation / disaster recovery
 
 The private key backup lives on the maintainer machine at `~/.videokidnapper-secrets/`. If it's ever lost or compromised: generate a new key, replace `videokidnapper.asc` in the apt repo, update the `APT_GPG_PRIVATE_KEY` secret, and users must re-run the one-time key install line.
+
+> **Note on ⚡ auto-track / OpenCV.** The `.deb` deliberately does *not* bundle OpenCV: the full bundle (~116 MB) exceeds the apt repo's 100 MB git file limit. So auto-track is unavailable in the `.deb`; use the AppImage (OpenCV bundled) or `pipx install "videokidnapper[track]"`. The manual keyframe motion path works in the `.deb` regardless.
