@@ -190,13 +190,25 @@ def _build_drawtext_filter(layer, fade=0.0):
     ))
     fontsize = int(layer.get("fontsize", 24))
     fontcolor = layer.get("fontcolor", "white")
-    pos_expr = layer.get("position", "(w-tw)/2:h-th-20")
-    # A drawtext position is an "x:y" pair. A stale/hand-edited layer with
-    # no colon (e.g. "center") would make the unpack raise ValueError and
-    # abort the whole encode; fall back to bottom-center instead.
-    if ":" not in str(pos_expr):
-        pos_expr = "(w-tw)/2:h-th-20"
-    x_expr, y_expr = str(pos_expr).split(":", 1)
+    # A keyframed motion path (meme-style tracked caption) wins over any
+    # static position: compile the piecewise-linear path into
+    # time-dependent expressions. The preview resolves the same
+    # keyframes with utils.keyframes.position_at, so parity is
+    # structural, not coincidental.
+    keyframes = layer.get("keyframes") or []
+    if keyframes:
+        from videokidnapper.utils.keyframes import compile_axis_expr
+        x_expr = f"'{compile_axis_expr(keyframes, 'x')}'"
+        y_expr = f"'{compile_axis_expr(keyframes, 'y')}'"
+    else:
+        pos_expr = layer.get("position", "(w-tw)/2:h-th-20")
+        # A drawtext position is an "x:y" pair. A stale/hand-edited layer
+        # with no colon (e.g. "center") would make the unpack raise
+        # ValueError and abort the whole encode; fall back to
+        # bottom-center instead.
+        if ":" not in str(pos_expr):
+            pos_expr = "(w-tw)/2:h-th-20"
+        x_expr, y_expr = str(pos_expr).split(":", 1)
     start_t = float(layer.get("start", 0))
     end_t = float(layer.get("end", 999999))
     layer_fade = float(layer.get("fade", fade) or 0.0)

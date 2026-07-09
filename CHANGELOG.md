@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Motion-tracked captions (meme-style).** Text layers can now follow a motion path, like the classic "label follows the pointing hand" meme. Tick **🎯 Motion track** on a layer, scrub the timeline, and drag the caption where it should be at that moment; each drag records a keyframe and the text glides between them (linear interpolation, clamped before the first and after the last point). The path renders identically in the live preview and the export: both are driven by the same interpolation in `utils/keyframes.py`, which the export compiles into ffmpeg drawtext `x=`/`y=` time expressions — a parity test evaluates the compiled expression against the preview math so they cannot drift. Works for MP4 and GIF exports; paths survive undo/redo and layer duplication. Layers without a path produce byte-identical filter strings to before.
+
 ## [1.6.0] — 2026-07-09
 
 ### Changed
