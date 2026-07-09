@@ -117,6 +117,11 @@ composited at the layer alpha.
 
 ### 2.5 Text animation presets — P2 / L
 
+*Update (v1.6.x): keyframed motion paths shipped — text can follow drag-recorded
+keyframes compiled to time-dependent `x=`/`y=` expressions (`utils/keyframes.py`).
+The slide-in/typewriter presets below remain open, and can now build on the
+same expression plumbing.*
+
 Beyond fade: a small set of arrival/exit animations compiled to drawtext expressions.
 
 - **Slide in** (from left/right/bottom): time-dependent `x=` / `y=` expressions.

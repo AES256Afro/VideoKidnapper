@@ -148,9 +148,7 @@ class TrimTab(ctk.CTkScrollableFrame):
         self.player.set_image_layers_provider(self._current_image_layers)
         # Click-drag on the preview moves the active layer. The panel owns
         # the widget state, so we forward via its set_layer_position entry.
-        self.player.set_text_position_callback(
-            lambda i, x, y: self.text_layers.set_layer_position(i, x, y),
-        )
+        self.player.set_text_position_callback(self._on_text_dragged)
         # Image overlays get the same treatment so users can drag a
         # logo / sticker / GIF anywhere on the frame — same set-position
         # flow as text, same live preview.
@@ -418,6 +416,18 @@ class TrimTab(ctk.CTkScrollableFrame):
             self._notify(f"Unsupported file type: {ext}", "warn")
             return
         self._load_path(path)
+
+    def _on_text_dragged(self, index, source_x, source_y):
+        """Preview drag: motion-armed layers record a keyframe at the
+        playhead; everything else keeps the classic move-the-layer."""
+        t = self.player.current_time
+        if self.text_layers.maybe_record_keyframe(index, t, source_x, source_y):
+            self._notify(
+                f"Keyframe at {t:.2f}s — scrub and drag again to extend the path",
+                "success",
+            )
+        else:
+            self.text_layers.set_layer_position(index, source_x, source_y)
 
     def _on_downloaded_video(self, path, platform=None, title=None):
         """A DownloadBar download (single or batch) lands in the editor."""
