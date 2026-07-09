@@ -30,16 +30,23 @@ except Exception:
     # Optional dep — fine if it's not installed on the build host.
     dnd_datas, dnd_binaries, dnd_hiddenimports = [], [], []
 
+# OpenCV (cv2) for ⚡ auto-track — lazy import, so collect it explicitly.
+# Guarded: a build host without opencv still yields a working app.
+try:
+    cv2_datas, cv2_binaries, cv2_hiddenimports = collect_all("cv2")
+except Exception:
+    cv2_datas, cv2_binaries, cv2_hiddenimports = [], [], []
+
 pil_datas = collect_data_files("PIL")
 
-datas = ctk_datas + dnd_datas + pil_datas + [
+datas = ctk_datas + dnd_datas + cv2_datas + pil_datas + [
     # Window icon: dest mirrors the package layout so
     # Path(__file__).parent / "assets" resolves inside the bundle.
     ("../videokidnapper/assets/icon.png", "videokidnapper/assets"),
     ("../videokidnapper/assets/icon.ico", "videokidnapper/assets"),
 ]
-binaries = ctk_binaries + dnd_binaries
-hiddenimports = ctk_hiddenimports + dnd_hiddenimports + [
+binaries = ctk_binaries + dnd_binaries + cv2_binaries
+hiddenimports = ctk_hiddenimports + dnd_hiddenimports + cv2_hiddenimports + [
     "yt_dlp.extractor",
 ]
 

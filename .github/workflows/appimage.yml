@@ -64,6 +64,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # OpenCV (headless contrib: CSRT tracker, no GUI libs) for auto-track.
+          pip install "opencv-contrib-python-headless>=4.8"
           pip install "pyinstaller>=6.0"
           python -c "import tkinter; print('tkinter OK')"
 
@@ -111,6 +113,7 @@ jobs:
         run: |
           chmod +x VideoKidnapper-x86_64.AppImage
           ./VideoKidnapper-x86_64.AppImage --appimage-extract-and-run --help
+          ./VideoKidnapper-x86_64.AppImage --appimage-extract-and-run --selftest
 
       - name: Resolve deb version
         id: version
@@ -140,6 +143,7 @@ jobs:
         run: |
           sudo apt-get install -y ./videokidnapper_*.deb
           videokidnapper --help
+          videokidnapper --selftest
           sudo apt-get remove -y videokidnapper
 
       - name: Upload artifact
