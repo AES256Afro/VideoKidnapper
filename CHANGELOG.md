@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **⚡ Auto-track now works in the packaged apps.** OpenCV (the headless contrib build, which carries the CSRT tracker without the GUI libraries) is bundled into the Windows exe/installer, the Microsoft Store package, the Linux AppImage/deb, and the macOS app, so auto-track works out of the box with no extra install. Adds roughly 60 MB to each download. `pip install videokidnapper` stays lean — OpenCV remains the optional `[track]` extra there. A new `--selftest` flag reports bundled-capability status (ffmpeg, auto-track) and the release CI asserts a packaged build ships auto-track, so a future packaging regression can't silently ship it broken.
+
 ## [1.7.0] — 2026-07-09
 
 ### Added
