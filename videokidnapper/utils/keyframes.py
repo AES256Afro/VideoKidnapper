@@ -57,6 +57,45 @@ def position_at(keyframes, t):
     return (kfs[-1]["x"], kfs[-1]["y"])   # unreachable, defensive
 
 
+def simplify_keyframes(keyframes, tolerance_px=3.0):
+    """Drop keyframes that a straight line already explains.
+
+    Ramer-Douglas-Peucker over the (t → (x, y)) path: any keyframe whose
+    position is within ``tolerance_px`` of the line between its
+    neighbours is redundant, because playback interpolates linearly
+    anyway. Auto-tracking samples densely (several points per second);
+    this collapses straight runs so the compiled drawtext expression
+    stays short.
+    """
+    kfs = normalize_keyframes(keyframes)
+    if len(kfs) <= 2:
+        return kfs
+
+    def deviation(kf, a, b):
+        span = b["t"] - a["t"]
+        frac = 0.0 if span <= 0 else (kf["t"] - a["t"]) / span
+        lx = a["x"] + (b["x"] - a["x"]) * frac
+        ly = a["y"] + (b["y"] - a["y"]) * frac
+        return ((kf["x"] - lx) ** 2 + (kf["y"] - ly) ** 2) ** 0.5
+
+    def rdp(points):
+        if len(points) <= 2:
+            return points
+        a, b = points[0], points[-1]
+        worst_i, worst_d = 0, -1.0
+        for i in range(1, len(points) - 1):
+            d = deviation(points[i], a, b)
+            if d > worst_d:
+                worst_i, worst_d = i, d
+        if worst_d <= tolerance_px:
+            return [a, b]
+        left = rdp(points[: worst_i + 1])
+        right = rdp(points[worst_i:])
+        return left[:-1] + right
+
+    return rdp(kfs)
+
+
 def compile_axis_expr(keyframes, axis, escape_commas=True):
     """Compile one axis of the path into an ffmpeg drawtext expression.
 

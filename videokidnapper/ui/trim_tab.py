@@ -231,6 +231,8 @@ class TrimTab(ctk.CTkScrollableFrame):
         # Text layers
         self.text_layers = TextLayersPanel(self, on_change=self._on_text_layers_changed)
         self.text_layers.pack(fill="x", padx=12, pady=6)
+        # ⚡ Auto-track lives on each layer row but is driven from here.
+        self.text_layers.set_autotrack_handler(self._auto_track)
 
         # Image overlays — same collapsible card pattern as text layers.
         # Each row carries a PNG path + anchor + scale + opacity + timing.
@@ -416,6 +418,75 @@ class TrimTab(ctk.CTkScrollableFrame):
             self._notify(f"Unsupported file type: {ext}", "warn")
             return
         self._load_path(path)
+
+    def _auto_track(self, index):
+        """⚡ Auto-track: follow the video patch under the caption from the
+        playhead to the end of the trim range, then install the tracked
+        path as this layer's keyframes."""
+        from videokidnapper.core import tracker as trk
+
+        if not self.video_path:
+            self._notify("Load a video first", "warn")
+            return
+        ok, hint = trk.tracking_available()
+        if not ok:
+            self._notify(hint, "warn")
+            return
+        bbox = self.player.get_text_source_bbox(index)
+        if not bbox:
+            self._notify(
+                "Drag the caption onto the thing you want to track first",
+                "warn")
+            return
+        x1, y1, x2, y2 = bbox
+        region = (x1, y1, max(8, x2 - x1), max(8, y2 - y1))
+        start_t = self.player.current_time
+        _, end_t = self.range_slider.get_values()
+        if end_t - start_t < 0.2:
+            self._notify("Nothing after the playhead to track into", "warn")
+            return
+
+        self._notify("Tracking… the caption will follow when it's done", "info")
+        state = {"frac": 0.0, "done": False, "result": None, "error": None}
+
+        def worker():
+            try:
+                state["result"] = trk.track_region(
+                    self.video_path, region, start_t, end_t,
+                    progress_cb=lambda f: state.__setitem__("frac", f),
+                )
+            except Exception as e:      # noqa: BLE001 - surfaced to the user
+                state["error"] = str(e)
+            state["done"] = True
+
+        def poll():
+            if not self.winfo_exists():
+                return
+            if not state["done"]:
+                self._notify(f"Tracking… {int(state['frac']*100)}%", "info")
+                self.after(250, poll)
+                return
+            if state["error"]:
+                self._notify(f"Tracking failed: {state['error'][:120]}", "error")
+                return
+            kfs = state["result"] or []
+            if len(kfs) < 2:
+                self._notify(
+                    "Tracker lost the target immediately — try a more "
+                    "distinct spot", "warn")
+                return
+            # Region top-left → caption top-left offset (identity here,
+            # since the tracked region IS the caption's bbox).
+            self.text_layers.set_layer_keyframes(index, kfs)
+            self.player.refresh_overlay()
+            self._notify(
+                f"Tracked {kfs[-1]['t'] - kfs[0]['t']:.1f}s → "
+                f"{len(kfs)} keyframes. Scrub to check; drag to fix any spot.",
+                "success")
+
+        import threading
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(250, poll)
 
     def _on_text_dragged(self, index, source_x, source_y):
         """Preview drag: motion-armed layers record a keyframe at the

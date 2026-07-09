@@ -144,6 +144,15 @@ class VideoPlayer(ctk.CTkFrame):
         """
         self._image_layers_provider = provider
 
+    def get_text_source_bbox(self, index):
+        """Source-pixel ``(x1, y1, x2, y2)`` of a text layer as last
+        rendered, or None. Feeds auto-tracking: the tracked region is
+        the patch of video currently under the caption."""
+        for idx, x1, y1, x2, y2 in self._text_bboxes:
+            if idx == index:
+                return (x1, y1, x2, y2)
+        return None
+
     def refresh_overlay(self):
         """Re-render the current frame with latest text + image overlays."""
         if self.video_path:
