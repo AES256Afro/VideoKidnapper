@@ -304,8 +304,86 @@ class TextLayerWidget(ctk.CTkFrame):
         )
         self.time_label.pack(side="right")
 
+        # Motion path (meme-style tracked caption). While armed, dragging
+        # the text on the preview records a keyframe at the current
+        # playhead time instead of moving the whole layer; the caption
+        # then follows the interpolated path in preview AND export.
+        row6 = ctk.CTkFrame(self, fg_color="transparent")
+        row6.pack(fill="x", padx=10, pady=(0, 8))
+
+        self._keyframes = []
+        self.motion_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            row6, text="🎯 Motion track", variable=self.motion_var,
+            font=ctk.CTkFont(size=11),
+            fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
+            border_color=T.BORDER_STRONG, checkbox_width=18,
+            checkbox_height=18, command=self._on_motion_toggled,
+        ).pack(side="left")
+
+        self.motion_hint = ctk.CTkLabel(
+            row6, text="",
+            font=ctk.CTkFont(size=10), text_color="gray", anchor="w",
+        )
+        self.motion_hint.pack(side="left", padx=(8, 0))
+
+        self.motion_clear_btn = ctk.CTkButton(
+            row6, text="✕ clear path", width=80, height=20,
+            fg_color="transparent", hover_color=T.BG_HOVER,
+            text_color="gray", font=ctk.CTkFont(size=10),
+            command=self._clear_keyframes,
+        )
+        # packed on demand by _update_motion_hint
+
         # Apply default style
         self._on_style_change("Subtitle")
+        self._update_motion_hint()
+
+    # ------------------------------------------------------------------
+    # Motion path (keyframed position)
+    # ------------------------------------------------------------------
+    def _on_motion_toggled(self):
+        self._update_motion_hint()
+        self._fire_change()
+
+    def _clear_keyframes(self):
+        self._keyframes = []
+        self._update_motion_hint()
+        self._fire_change()
+
+    def add_keyframe(self, t, x, y):
+        """Record (or replace, if within 10 ms) a keyframe at time ``t``."""
+        from videokidnapper.utils.keyframes import normalize_keyframes
+        self._keyframes.append(
+            {"t": float(t), "x": float(x), "y": float(y)})
+        self._keyframes = normalize_keyframes(self._keyframes)
+        self._update_motion_hint()
+        self._fire_change()
+
+    def is_motion_armed(self):
+        return bool(self.motion_var.get())
+
+    def _update_motion_hint(self):
+        n = len(self._keyframes)
+        if self.motion_var.get():
+            hint = (f"{n} point{'s' if n != 1 else ''} — scrub, then drag "
+                    "the text to add the next one"
+                    if n else
+                    "scrub the timeline, drag the text where it should be")
+        else:
+            hint = f"path: {n} points" if n else ""
+        self.motion_hint.configure(text=hint)
+        if n:
+            self.motion_clear_btn.pack(side="right")
+        else:
+            self.motion_clear_btn.pack_forget()
+
+    def _fire_change(self):
+        # The panel wires _notify_change onto layers after construction;
+        # guard for the brief window before that happens.
+        cb = getattr(self, "_change_cb", None)
+        if callable(cb):
+            cb()
 
     def _get_fonts(self):
         if self._fonts is None:
@@ -446,6 +524,10 @@ class TextLayerWidget(ctk.CTkFrame):
             "shadowcolor": "black@0.7",
             "start": start,
             "end": end,
+            # Motion path: present only when the user recorded one, so
+            # untouched layers keep byte-identical filter strings.
+            **({"keyframes": [dict(kf) for kf in self._keyframes]}
+               if self._keyframes else {}),
         }
 
     def load_from_dict(self, data):
@@ -507,6 +589,10 @@ class TextLayerWidget(ctk.CTkFrame):
         start = float(data.get("start", 0))
         end = float(data.get("end", self.video_duration))
         self.time_slider.set_values(start, end)
+        # Motion path round-trips through undo snapshots / duplication.
+        from videokidnapper.utils.keyframes import normalize_keyframes
+        self._keyframes = normalize_keyframes(data.get("keyframes") or [])
+        self._update_motion_hint()
 
 
 class TextLayersPanel(ctk.CTkFrame):
@@ -654,6 +740,8 @@ class TextLayersPanel(ctk.CTkFrame):
             self._notify_change()
         layer._on_time_change = time_cb
         layer.time_slider.command = time_cb
+        # Motion-path edits (arm/record/clear) refresh the preview too.
+        layer._change_cb = self._notify_change
 
     def _remove_layer(self, layer_widget):
         if layer_widget in self.layers:
@@ -689,6 +777,15 @@ class TextLayersPanel(ctk.CTkFrame):
         if 0 <= index < len(self.layers):
             self.layers[index].set_custom_position(source_x, source_y)
             self._notify_change()
+
+    def maybe_record_keyframe(self, index, t, source_x, source_y):
+        """If the dragged layer is motion-armed, record a keyframe at
+        time ``t`` and return True; otherwise return False so the caller
+        falls back to a static position move."""
+        if 0 <= index < len(self.layers) and self.layers[index].is_motion_armed():
+            self.layers[index].add_keyframe(t, source_x, source_y)
+            return True
+        return False
 
     def clear_layers(self):
         for layer in self.layers:

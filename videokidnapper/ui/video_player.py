@@ -403,9 +403,17 @@ class VideoPlayer(ctk.CTkFrame):
             except AttributeError:
                 tw, th = measure.textsize(text, font=font)
 
-            x, y = _resolve_position(
-                layer.get("position", ""), w, h, tw, th, pad=20,
-            )
+            keyframes = layer.get("keyframes") or []
+            if keyframes:
+                # Motion path: the SAME interpolation the export compiles
+                # into drawtext expressions, evaluated at this frame time.
+                from videokidnapper.utils.keyframes import position_at
+                kx, ky = position_at(keyframes, timestamp)
+                x, y = int(round(kx)), int(round(ky))
+            else:
+                x, y = _resolve_position(
+                    layer.get("position", ""), w, h, tw, th, pad=20,
+                )
 
             # Each layer renders on its own transparent scratch image that
             # is alpha-composited onto the frame. Drawing translucent fills
