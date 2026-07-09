@@ -24,13 +24,21 @@ try:
 except Exception:
     dnd_datas, dnd_binaries, dnd_hiddenimports = [], [], []
 
+# OpenCV (cv2) for ⚡ auto-track — lazy import, collected explicitly.
+# Guarded so a build host without opencv still yields a working app.
+try:
+    cv2_datas, cv2_binaries, cv2_hiddenimports = collect_all("cv2")
+except Exception:
+    cv2_datas, cv2_binaries, cv2_hiddenimports = [], [], []
+
 pil_datas = collect_data_files("PIL")
 
-datas = ctk_datas + dnd_datas + pil_datas + [
+datas = ctk_datas + dnd_datas + cv2_datas + pil_datas + [
     ("../videokidnapper/assets/icon.png", "videokidnapper/assets"),
 ]
-binaries = ctk_binaries + dnd_binaries
-hiddenimports = ctk_hiddenimports + dnd_hiddenimports + ["yt_dlp.extractor"]
+binaries = ctk_binaries + dnd_binaries + cv2_binaries
+hiddenimports = (ctk_hiddenimports + dnd_hiddenimports + cv2_hiddenimports
+                 + ["yt_dlp.extractor"])
 
 a = Analysis(
     ["../main.py"],

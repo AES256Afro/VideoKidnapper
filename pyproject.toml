@@ -59,9 +59,9 @@ dnd = ["tkinterdnd2>=0.3.0"]
 # Auto-tracking for motion captions (⚡ Auto-track). Optional: the manual
 # keyframe path works without it, and the button explains how to install.
 # contrib build for the CSRT tracker.
-track = ["opencv-contrib-python>=4.8"]
+track = ["opencv-contrib-python-headless>=4.8"]
 # Aggregate: everything, for `pip install videokidnapper[all]`.
-all = ["tkinterdnd2>=0.3.0", "opencv-contrib-python>=4.8"]
+all = ["tkinterdnd2>=0.3.0", "opencv-contrib-python-headless>=4.8"]
 dev = [
     "pytest>=7.0",
     "ruff>=0.4",

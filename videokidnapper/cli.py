@@ -117,12 +117,39 @@ def _parse_args(argv):
                    help="Hardware encoder preference")
     p.add_argument("--version", action="version",
                    version=_version_string())
+    p.add_argument("--selftest", action="store_true",
+                   help="Report bundled-capability status (ffmpeg, "
+                        "auto-track) and exit; used by packaging CI.")
     return p.parse_args(argv)
 
 
 def _version_string():
     from videokidnapper import __version__
     return f"videokidnapper {__version__}"
+
+
+def _selftest():
+    """Print bundled-capability status; exit non-zero if a REQUIRED one is
+    missing. Auto-track is optional, so its absence is reported but does
+    not fail — except in a frozen build, where it SHOULD have been
+    bundled, so a frozen build without it is a packaging regression."""
+    frozen = getattr(sys, "frozen", False)
+
+    from videokidnapper.utils.ffmpeg_check import check_ffmpeg
+    ffmpeg_ok = bool(check_ffmpeg()[0])
+    print(f"ffmpeg: {'ok' if ffmpeg_ok else 'MISSING'}")
+
+    from videokidnapper.core.tracker import tracking_available
+    track_ok, hint = tracking_available()
+    print(f"auto-track: {'ok' if track_ok else 'unavailable'}"
+          + ("" if track_ok else f" ({hint})"))
+    print(f"frozen: {frozen}")
+
+    failed = False
+    if frozen and not track_ok:
+        print("FAIL: auto-track should be bundled in a packaged build")
+        failed = True
+    return 1 if failed else 0
 
 
 def main():
@@ -134,6 +161,8 @@ def main():
     argv = sys.argv[1:]
     if argv:
         args = _parse_args(argv)
+        if getattr(args, "selftest", False):
+            sys.exit(_selftest())
         sys.exit(_cli_main(args))
 
     from videokidnapper.app import App
