@@ -31,6 +31,16 @@ mkdir -p \
   "$ROOT/usr/share/doc/videokidnapper"
 
 cp -r "$BUNDLE"/. "$ROOT/opt/videokidnapper/"
+
+# Strip the bundled OpenCV from the .deb only. The apt repository is a
+# git-backed GitHub Pages site with a hard 100 MB per-file limit, and the
+# full bundle (with OpenCV for ⚡ auto-track) is ~116 MB — too big to
+# publish there. The .deb therefore ships WITHOUT auto-track; Linux users
+# who want it use the AppImage (same release, no size limit, OpenCV
+# bundled) or `pipx install "videokidnapper[track]"`. The app detects the
+# missing tracker and points .deb users at the AppImage.
+find "$ROOT/opt/videokidnapper" -maxdepth 3 -name 'cv2*' -exec rm -rf {} + 2>/dev/null || true
+
 ln -s /opt/videokidnapper/VideoKidnapper "$ROOT/usr/bin/videokidnapper"
 
 # Reuse the AppImage desktop entry; only the Exec target differs.
