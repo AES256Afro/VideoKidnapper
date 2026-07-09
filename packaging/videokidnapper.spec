@@ -34,17 +34,28 @@ except Exception:
     # Optional dep — fine if it's not installed on the build host.
     dnd_datas, dnd_binaries, dnd_hiddenimports = [], [], []
 
+# OpenCV (cv2) powers the ⚡ auto-track feature. It's a lazy import
+# (videokidnapper.core.tracker) so PyInstaller's static scan can miss
+# it — collect_all pulls the native libs + data explicitly. Guarded so
+# a build host WITHOUT opencv still produces a working app (auto-track
+# simply stays unavailable there). The release workflows install
+# opencv-contrib-python-headless before invoking PyInstaller.
+try:
+    cv2_datas, cv2_binaries, cv2_hiddenimports = collect_all("cv2")
+except Exception:
+    cv2_datas, cv2_binaries, cv2_hiddenimports = [], [], []
+
 # Pillow's ImageTk needs tk itself, which PyInstaller bundles automatically.
 pil_datas = collect_data_files("PIL")
 
-datas = ctk_datas + dnd_datas + pil_datas + [
+datas = ctk_datas + dnd_datas + cv2_datas + pil_datas + [
     # Window/taskbar icon: dest mirrors the package layout so
     # Path(__file__).parent / "assets" resolves inside the bundle.
     ("../videokidnapper/assets/icon.ico", "videokidnapper/assets"),
     ("../videokidnapper/assets/icon.png", "videokidnapper/assets"),
 ]
-binaries = ctk_binaries + dnd_binaries
-hiddenimports = ctk_hiddenimports + dnd_hiddenimports + [
+binaries = ctk_binaries + dnd_binaries + cv2_binaries
+hiddenimports = ctk_hiddenimports + dnd_hiddenimports + cv2_hiddenimports + [
     # yt_dlp subpackages occasionally slip past the auto-discovery;
     # hiddenimports makes sure its extractor registry is bundled.
     "yt_dlp.extractor",
