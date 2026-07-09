@@ -23,9 +23,17 @@ def tracking_available():
         _make_tracker(cv2)
         return True, ""
     except Exception:
+        import sys
+        if getattr(sys, "frozen", False):
+            # Packaged builds bundle OpenCV — except the Linux .deb, which
+            # strips it to stay under the apt repo's 100 MB file limit.
+            return False, (
+                "Auto-track isn't in the .deb build (kept small for apt). "
+                "Use the AppImage from the releases page, which includes it."
+            )
         return False, (
             "Auto-track needs OpenCV. Install with: "
-            "pip install opencv-contrib-python"
+            "pip install opencv-contrib-python-headless"
         )
 
 

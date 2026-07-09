@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The APT repository publish no longer breaks on the OpenCV-bundled build.** Bundling OpenCV pushed the `.deb` to ~116 MB, over GitHub's 100 MB per-file git limit, so the signed apt repo (a git-backed Pages site) couldn't accept it. The `.deb` now strips OpenCV to stay small, so `apt-get install videokidnapper` works again. Linux ⚡ auto-track is delivered by the AppImage instead (same release, no size limit, OpenCV bundled), and the app points `.deb` users there. A CI size check fails the build if the `.deb` ever creeps back over the limit.
+
 ## [1.7.1] — 2026-07-09
 
 ### Changed
