@@ -133,3 +133,62 @@ def test_drawtext_single_keyframe_static():
     out = _build_drawtext_filter(
         _base_layer(keyframes=[{"t": 1, "x": 120, "y": 80}]))
     assert "x='120'" in out and "y='80'" in out
+
+
+# ---------------------------------------------------------------------------
+# simplify (Ramer-Douglas-Peucker) — collapses dense auto-tracked paths
+# ---------------------------------------------------------------------------
+
+def test_simplify_drops_collinear_points():
+    from videokidnapper.utils.keyframes import simplify_keyframes
+    # A straight horizontal run sampled at 5 points → just the endpoints.
+    straight = [{"t": i, "x": i * 100, "y": 200} for i in range(5)]
+    out = simplify_keyframes(straight, tolerance_px=3.0)
+    assert len(out) == 2
+    assert out[0]["t"] == 0 and out[-1]["t"] == 4
+
+
+def test_simplify_keeps_a_real_corner():
+    from videokidnapper.utils.keyframes import simplify_keyframes
+    # Path that goes right then sharply down keeps the corner point.
+    path = [
+        {"t": 0, "x": 0, "y": 0}, {"t": 1, "x": 100, "y": 0},
+        {"t": 2, "x": 200, "y": 0},                    # corner
+        {"t": 3, "x": 200, "y": 100}, {"t": 4, "x": 200, "y": 200},
+    ]
+    out = simplify_keyframes(path, tolerance_px=3.0)
+    assert {"t": 2, "x": 200, "y": 0} in [
+        {"t": k["t"], "x": k["x"], "y": k["y"]} for k in out]
+    assert len(out) < len(path) + 1
+
+
+def test_simplify_preserves_position_within_tolerance():
+    from videokidnapper.utils.keyframes import simplify_keyframes, position_at
+    import random
+    rng = random.Random(7)
+    # A wandering path; simplified path must stay close everywhere.
+    path = [{"t": i * 0.2, "x": i * 20 + rng.uniform(-1, 1),
+             "y": 100 + rng.uniform(-1, 1)} for i in range(30)]
+    simplified = simplify_keyframes(path, tolerance_px=4.0)
+    for t in [x * 0.1 for x in range(0, 58)]:
+        ox, oy = position_at(path, t)
+        sx, sy = position_at(simplified, t)
+        assert ((ox - sx) ** 2 + (oy - sy) ** 2) ** 0.5 <= 5.0
+
+
+def test_simplify_short_paths_untouched():
+    from videokidnapper.utils.keyframes import simplify_keyframes
+    two = [{"t": 0, "x": 1, "y": 1}, {"t": 1, "x": 9, "y": 9}]
+    assert simplify_keyframes(two) == two
+
+
+# ---------------------------------------------------------------------------
+# tracker availability (no OpenCV required to import the module)
+# ---------------------------------------------------------------------------
+
+def test_tracker_module_imports_without_opencv():
+    from videokidnapper.core import tracker
+    ok, hint = tracker.tracking_available()
+    assert isinstance(ok, bool)
+    if not ok:
+        assert "opencv" in hint.lower()
