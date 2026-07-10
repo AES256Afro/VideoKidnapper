@@ -134,6 +134,79 @@ def test_continuedl_enabled_in_opts():
 
 
 # ---------------------------------------------------------------------------
+# Reddit image/GIF fallback (yt-dlp can't extract the /media redirect)
+# ---------------------------------------------------------------------------
+
+_REDDIT_MEDIA_ERR = (
+    "ERROR: Unsupported URL: https://www.reddit.com/media"
+    "?url=https%3A%2F%2Fi.redd.it%2Fq85z6hwpk3ch1.gif"
+)
+
+
+def test_reddit_media_url_decodes_the_embedded_target():
+    assert (downloader._reddit_media_url(_REDDIT_MEDIA_ERR)
+            == "https://i.redd.it/q85z6hwpk3ch1.gif")
+
+
+@pytest.mark.parametrize("msg", [
+    "This video is private",
+    "Unsupported URL: https://newplatform.example",
+    "",
+    None,
+])
+def test_reddit_media_url_none_for_other_errors(msg):
+    assert downloader._reddit_media_url(msg) is None
+
+
+def test_reddit_gif_fallback_downloads_without_retrying(fake_ytdlp, monkeypatch):
+    _FakeYDL.plan = [_REDDIT_MEDIA_ERR]  # a single yt-dlp failure, no "ok"
+
+    captured = {}
+
+    def fake_direct(media_url, progress_callback=None, cancel_event=None):
+        captured["url"] = media_url
+        return "/tmp/q85z6hwpk3ch1.gif"
+
+    monkeypatch.setattr(downloader, "_download_direct_media", fake_direct)
+    result = downloader.download_video(
+        "https://www.reddit.com/r/x/comments/1uraihz/foo/", max_attempts=3)
+
+    assert result["error"] is None
+    assert result["path"] == "/tmp/q85z6hwpk3ch1.gif"
+    assert result["title"] == "q85z6hwpk3ch1"
+    assert captured["url"] == "https://i.redd.it/q85z6hwpk3ch1.gif"
+    assert len(_FakeYDL.calls) == 1     # fell through to direct fetch, not retried
+
+
+def test_reddit_media_fallback_reports_still_image(fake_ytdlp, monkeypatch):
+    _FakeYDL.plan = [_REDDIT_MEDIA_ERR]
+
+    def fake_direct(media_url, progress_callback=None, cancel_event=None):
+        raise RuntimeError("this Reddit post is not a video or GIF (got image/jpeg)")
+
+    monkeypatch.setattr(downloader, "_download_direct_media", fake_direct)
+    result = downloader.download_video(
+        "https://www.reddit.com/r/x/comments/abc/foo/", max_attempts=3)
+
+    assert result["path"] is None
+    assert "not a video or GIF" in result["error"]
+    assert len(_FakeYDL.calls) == 1
+
+
+def test_reddit_media_fallback_honours_cancel(fake_ytdlp, monkeypatch):
+    _FakeYDL.plan = [_REDDIT_MEDIA_ERR]
+
+    def fake_direct(media_url, progress_callback=None, cancel_event=None):
+        raise Exception("Download cancelled")
+
+    monkeypatch.setattr(downloader, "_download_direct_media", fake_direct)
+    result = downloader.download_video(
+        "https://www.reddit.com/r/x/comments/abc/foo/", max_attempts=3)
+
+    assert result["error"] == "cancelled"
+
+
+# ---------------------------------------------------------------------------
 # ytdlp_update helpers
 # ---------------------------------------------------------------------------
 
