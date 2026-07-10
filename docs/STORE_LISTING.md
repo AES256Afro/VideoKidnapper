@@ -44,13 +44,15 @@ Record your screen straight into the editor. Free and open source. FFmpeg is inc
 ### What's new in this version (Store field: "What's new in this version")
 
 User-facing changes only, no repo/doc housekeeping. Update this each
-release. For the 1.7.2 update that follows the 1.5.0 currently on the Store:
+release. For the 1.7.4 update that follows the 1.5.0 currently on the Store:
 
 ```
 - Motion-tracked captions: pin a caption to a moving subject and it follows them across the frame, like the click for more memes. Drag to set the path, or click Auto-track to follow the subject automatically.
 - One place for everything: open a file, record your screen, or paste a link, then trim, caption, and export in the same tab. No more hopping between a download tab and a trim tab.
 - Paste a video or GIF link with Ctrl+V from anywhere in the app to start a download.
-- Smoother first run: if something it needs is missing, the app now installs it and opens on its own instead of stopping at a setup screen. The Relaunch button works reliably.
+- Downloading Reddit GIF posts works again.
+- Clearer offline behaviour: with no internet, downloading now shows a plain message right away instead of a long wait, and opening and editing local files keeps working.
+- Smoother first run: if something it needs is missing, the app now installs it and opens on its own instead of stopping at a setup screen.
 - Refreshed the app icon and look.
 ```
 
