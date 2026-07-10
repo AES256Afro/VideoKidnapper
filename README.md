@@ -18,6 +18,7 @@ Grab a video from the web, cut the part you want, caption it, and export a clean
 - **Download from the web.** YouTube, Instagram, X, Reddit, Bluesky, Facebook, and 1,000+ other sites yt-dlp supports. Paste a link, press `Ctrl+V` from anywhere, or queue a batch. Reads browser cookies for private and age-gated videos.
 - **Trim to the exact moment.** Frame-accurate timeline with a waveform and thumbnail strip. Queue several cuts from one video, then export them separately or stitched with transitions.
 - **Captions that look right.** Text with outline, shadow, bold, italic, and multiple lines, and the preview matches the exported frame exactly. Auto-caption speech with Whisper, or import an `.srt` or `.vtt`.
+- **Captions that follow the action.** Pin a caption to a moving subject and it tracks them across the frame, the way the "click for more" memes do. Drag to set the path by hand, or hit **⚡ Auto-track** and let it follow the subject for you. Preview and export stay in sync.
 - **Overlays.** Logos, watermarks, and sticker or GIF overlays dragged anywhere on the frame, each with its own size, opacity, and timing. Paste an image straight from the clipboard.
 - **Export for the platform.** Tune GIFs (dither, palette, loop) or export hardware-encoded MP4s. Reframe 16:9 to 9:16 for Shorts, Reels, and TikTok with a blurred-background fill. Speed, rotate, mute, audio-only, and colour adjustment are built in.
 - **Record your screen** straight into the editor.
@@ -36,6 +37,10 @@ One tab for the whole job. Load a video three ways (**Open Video File**, **Recor
 ![Kidnap & Trim with a video loaded, a caption, and a queued range](assets/screenshots/studio_loaded.png)
 
 With a video loaded you get a thumbnail strip, a waveform, a dual-handle range slider, and queued ranges (each exports as its own clip, or they concatenate with transitions when "Concat queued ranges" is on). Captions expose per-layer controls: multiline text, bold, italic, outline, and shadow, and the caption renders on the preview exactly as it will export. **Import SRT** and **🗣 Auto-captions** (Whisper) both feed the same text-layer panel.
+
+Turn on **🎯 Motion track** and a caption follows a moving subject across the frame, like the "click for more" memes. Drag the caption at a few points in the clip to set its path by hand, or drop the caption on your subject and hit **⚡ Auto-track** to have it follow them automatically (OpenCV object tracking, bundled in the Store, Windows, macOS, and Linux AppImage builds). The same interpolation drives the preview and the export, so what you see is what renders.
+
+![One caption tracked across three moments of a clip](assets/screenshots/motion_track.png)
 
 ![The download bar and batch queue](assets/screenshots/studio_link.png)
 
@@ -94,6 +99,7 @@ The editor exposes a collapsible **Text Layers** panel with per-layer controls:
 - **Outline** and **Shadow** toggles, compiled to drawtext `borderw` / `shadowx` and mirrored exactly in the preview
 - **Multiline captions:** the text box wraps, and embedded newlines export as real line breaks
 - Per-layer timing slider — exactly when each text appears and disappears
+- **🎯 Motion track** — keyframe a caption's position so it follows a moving subject; drag to set the path or **⚡ Auto-track** it with OpenCV, then compiled to a drawtext time expression that preview and export share
 - Background box toggle
 - ▲ / ▼ reorder, ⧉ duplicate, ✕ remove
 - **Text fade** (0.25s / 0.5s / 1s, set in Export Options) — symmetric fade-in/fade-out via a drawtext `alpha=` expression
