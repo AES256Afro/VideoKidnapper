@@ -90,6 +90,9 @@ def fake_ytdlp(monkeypatch):
     monkeypatch.setitem(sys.modules, "yt_dlp", module)
     # No real sleeping in the backoff.
     monkeypatch.setattr(downloader, "_retry_delay", lambda attempt: 0)
+    # Keep the network preflight out of the way (and off the wire) unless a
+    # test overrides it — these exercise the retry loop, not connectivity.
+    monkeypatch.setattr(downloader, "has_internet", lambda *a, **k: True)
     _FakeYDL.plan = []
     _FakeYDL.calls = []
     return module
@@ -131,6 +134,68 @@ def test_continuedl_enabled_in_opts():
     opts, _platform = downloader._build_ydl_opts(
         "https://youtu.be/x", None, lambda d: None)
     assert opts["continuedl"] is True
+
+
+# ---------------------------------------------------------------------------
+# Offline handling (Store policy 10.1.2.10: graceful when offline)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("msg", [
+    "ERROR: Unable to download webpage: <urlopen error [Errno 11001] getaddrinfo failed>",
+    "Failed to resolve 'www.youtube.com'",
+    "Temporary failure in name resolution",
+    "[Errno 101] Network is unreachable",
+])
+def test_offline_errors_detected(msg):
+    assert downloader._is_offline_error(msg)
+
+
+@pytest.mark.parametrize("msg", [
+    "This video is private",
+    "HTTP Error 403: Forbidden",
+    "",
+    None,
+])
+def test_non_offline_errors_not_matched(msg):
+    assert not downloader._is_offline_error(msg)
+
+
+def test_offline_dns_failure_fails_fast_with_clear_message(fake_ytdlp, monkeypatch):
+    # Fully offline: yt-dlp fails once with a DNS error, has_internet()
+    # confirms the connection is down — no retry storm, plain message.
+    monkeypatch.setattr(downloader, "has_internet", lambda *a, **k: False)
+    _FakeYDL.plan = ["<urlopen error [Errno 11001] getaddrinfo failed>", "ok"]
+
+    result = downloader.download_video("https://youtu.be/x", max_attempts=3)
+
+    assert result["error"] == downloader.OFFLINE_MESSAGE
+    assert "internet" in result["error"].lower()
+    assert len(_FakeYDL.calls) == 1          # did NOT retry the offline error
+
+
+def test_dns_failure_while_online_reports_bad_link_not_offline(fake_ytdlp, monkeypatch):
+    # Online, but this one host won't resolve (typo'd/dead domain): a
+    # different message, and still no retry.
+    monkeypatch.setattr(downloader, "has_internet", lambda *a, **k: True)
+    _FakeYDL.plan = ["Failed to resolve 'notarealsite.example'", "ok"]
+
+    result = downloader.download_video("https://notarealsite.example/x", max_attempts=3)
+
+    assert result["error"] != downloader.OFFLINE_MESSAGE
+    assert "reach that link" in result["error"].lower()
+    assert len(_FakeYDL.calls) == 1
+
+
+def test_online_download_still_succeeds(fake_ytdlp):
+    _FakeYDL.plan = ["ok"]
+    result = downloader.download_video("https://youtu.be/x", max_attempts=3)
+    assert result["error"] is None
+    assert result["path"] == "/tmp/clip.mp4"
+
+
+def test_probe_offline_error_maps_to_friendly_message():
+    assert (downloader._friendly_error("getaddrinfo failed", "Instagram")
+            == downloader.OFFLINE_MESSAGE)
 
 
 # ---------------------------------------------------------------------------

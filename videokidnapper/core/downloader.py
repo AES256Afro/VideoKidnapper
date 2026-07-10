@@ -13,6 +13,35 @@ _DEFAULT_UA = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
+# Shown when a download is attempted with no internet. Downloading is
+# inherently online, so we say so plainly and point at the offline-capable
+# half of the app instead of surfacing a cryptic DNS error. (Also satisfies
+# Microsoft Store policy 10.1.2.10: graceful behaviour when offline.)
+OFFLINE_MESSAGE = (
+    "No internet connection. Connect to the internet to download videos. "
+    "You can still open a local file to trim, caption, and export."
+)
+
+
+def has_internet(timeout=2.0):
+    """Best-effort connectivity probe used to tell "the whole connection is
+    down" (offline) apart from "this one link didn't resolve" after a
+    DNS-style download failure, so each gets the right message.
+
+    Opens a raw TCP socket to well-known public IPs (no DNS needed, so a
+    genuinely offline machine fails fast with 'network unreachable'). Tries
+    a couple of endpoints so one blocked port isn't a false negative. Only
+    called on the failure path, never on a successful download.
+    """
+    import socket
+    for host, port in (("1.1.1.1", 443), ("8.8.8.8", 53)):
+        try:
+            socket.create_connection((host, port), timeout=timeout).close()
+            return True
+        except OSError:
+            continue
+    return False
+
 
 def detect_platform(url):
     """Return the matching platform name from SUPPORTED_PLATFORMS, or None."""
@@ -111,6 +140,25 @@ def _is_transient_error(msg):
     """True when a download error is worth retrying."""
     low = str(msg or "").lower()
     return any(sign in low for sign in _TRANSIENT_ERROR_SIGNS)
+
+
+# Error fragments that mean the machine can't reach the network at all
+# (DNS can't resolve, no route) rather than a site-specific failure. These
+# get the plain-English offline message, not a raw yt-dlp error dump.
+_OFFLINE_ERROR_SIGNS = (
+    "getaddrinfo failed",
+    "failed to resolve",
+    "name or service not known",
+    "temporary failure in name resolution",
+    "nodename nor servname",
+    "network is unreachable",
+    "no address associated with hostname",
+)
+
+
+def _is_offline_error(msg):
+    low = str(msg or "").lower()
+    return any(sign in low for sign in _OFFLINE_ERROR_SIGNS)
 
 
 def _retry_delay(attempt):
@@ -267,6 +315,20 @@ def download_video(url, progress_callback=None, cancel_event=None, cookies=None,
                     result["error"] = _friendly_error(fe_msg, platform)
                     return result
 
+            # DNS/route failure: don't retry into a cryptic error. Confirm
+            # whether the whole connection is down (offline) or just this
+            # host, and say so plainly — downloading needs a connection, but
+            # opening/trimming/exporting a local file does not.
+            if _is_offline_error(err_msg):
+                if not has_internet():
+                    result["error"] = OFFLINE_MESSAGE
+                else:
+                    result["error"] = (
+                        "Couldn't reach that link. Check the URL and your "
+                        "connection (VPN or DNS), then try again."
+                    )
+                return result
+
             last_error = err_msg
             if attempt < max_attempts and _is_transient_error(err_msg):
                 if progress_callback:
@@ -323,6 +385,10 @@ def _is_cookie_error(msg):
 def _friendly_error(msg, platform):
     """Attach platform-specific hints to common yt-dlp failures."""
     low = msg.lower()
+    # Lost the connection mid-download (preflight passed, then DNS/route
+    # died): same plain-English message as the offline preflight.
+    if _is_offline_error(msg):
+        return OFFLINE_MESSAGE
     if _is_cookie_error(msg):
         # Front-loaded actions: the status bar truncates long errors, so
         # the fix has to fit in the first line.
@@ -408,7 +474,8 @@ def get_video_info_from_url(url, timeout=_PROBE_TIMEOUT_SECONDS):
         # stop waiting. The caller gets a clear timeout signal.
         return {"error": f"timed out after {timeout}s probing {url}"}
     if "error" in result_box:
-        return {"error": result_box["error"]}
+        err = result_box["error"]
+        return {"error": OFFLINE_MESSAGE if _is_offline_error(err) else err}
     return result_box.get("ok", {"error": "unknown probe failure"})
 
 
