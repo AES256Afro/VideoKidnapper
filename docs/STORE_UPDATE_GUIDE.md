@@ -28,13 +28,14 @@ These are already written feature-first with no em dashes. Copy verbatim.
 Still in **Store listings → English → Screenshots**.
 
 1. Remove the existing screenshots.
-2. Upload the five files from `assets/store/` (each is exactly 1920×1080, the size the Store requires):
+2. Upload the files from `assets/store/` (each is exactly 1920×1080, the size the Store requires):
    - `01-studio-1920x1080.png` — the editor with a clip, caption, and queued cut
    - `02-download-1920x1080.png` — the download bar + batch queue
    - `03-start-1920x1080.png` — the empty/start state
    - `04-history-1920x1080.png` — export history
    - `05-setup-1920x1080.png` — the setup screen
-3. Order them 01 → 05 (drag to reorder). The first is the hero shot.
+   - `06-motion-1920x1080.png` — motion-tracked caption following a subject across three frames
+3. Order them 01 → 06 (drag to reorder). The first is the hero shot.
 
 To regenerate these after a UI change: `python scripts/capture_screenshots.py` (writes `assets/screenshots/*.png`), then the store-resize step in that script's notes produces `assets/store/*`.
 
@@ -61,7 +62,33 @@ If only the listing text/screenshots changed and the app itself didn't, you can 
 
 ## 5. Submit
 
-Optionally fill **What's new in this version** (a line or two on the change), then click **Submit for certification**. Certification for updates is usually a few hours. It auto-publishes on pass; existing users update automatically.
+1. Fill **What's new in this version** from `docs/STORE_LISTING.md` → *"What's new in this version"*.
+2. Fill **Notes for certification** (the free-text box for the review team) with the block in *"Certification notes"* below. **Always include this** — it heads off the offline/functionality rejection described there.
+3. Click **Submit for certification**. Certification for updates is usually a few hours. It auto-publishes on pass; existing users update automatically.
+
+---
+
+## Certification notes
+
+Paste this into **Notes for certification** on every submission. It exists
+because a June 2026 submission was rejected under **Store policy 10.1.2.10
+(Functionality)** with *"Unusable Feature: Working offline"* — the tester
+disconnected the network, tried to download a video, and saw it fail.
+Downloading is inherently online, so the fix (shipped in 1.7.4) was to
+make the offline state clear and graceful rather than a cryptic error; the
+note tells the reviewer that up front so they don't file the same finding.
+
+```
+Testing notes:
+
+- VideoKidnapper's download feature fetches video from online services (YouTube, Reddit, Instagram, etc.), so it requires an active internet connection by design. This is the app's core purpose and is an inherently online operation.
+
+- When offline, the app does NOT present a broken feature. Attempting a download shows a clear, plain message ("No internet connection. Connect to the internet to download videos. You can still open a local file to trim, caption, and export.") and does not hang or show a cryptic error.
+
+- All editing works fully offline. Use Open Video File (or drag a file in, or Record Screen) to load a local video, then trim, add captions and overlays, and export a GIF or MP4 with no connection.
+
+To verify offline behavior: launch the app, open any local video file, trim it, add a caption, and export. All of this succeeds with the network disconnected. The only feature that needs a connection is downloading from a URL, which cannot work offline for any app.
+```
 
 ---
 
@@ -71,6 +98,8 @@ Optionally fill **What's new in this version** (a line or two on the change), th
 |---|---|
 | Description (body) | `docs/STORE_LISTING.md` → "Description (Store field)" |
 | Product features | `docs/STORE_LISTING.md` → "Product features" |
-| Screenshots | `assets/store/01…05-*.png` |
+| What's new | `docs/STORE_LISTING.md` → "What's new in this version" |
+| Screenshots | `assets/store/01…06-*.png` |
 | Box / poster art | `assets/branding/store-boxart-*`, `store-poster-*` |
 | Package | `VideoKidnapper.msix` from the MSIX CI run |
+| Notes for certification | "Certification notes" block above (always include) |
