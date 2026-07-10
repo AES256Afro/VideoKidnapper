@@ -118,6 +118,73 @@ def _retry_delay(attempt):
     return min(2 ** attempt, 8)
 
 
+# Reddit serves image and GIF posts through a `reddit.com/media?url=<enc>`
+# redirect that yt-dlp reports as an "Unsupported URL", but the true
+# i.redd.it media URL is right there in the query param. We decode it and
+# fetch it directly — Reddit GIF posts are exactly this app's use case.
+_REDDIT_MEDIA_RE = re.compile(
+    r"https?://(?:www\.)?reddit\.com/media\?url=([^\s'\"&]+)", re.IGNORECASE
+)
+
+
+def _reddit_media_url(err_msg):
+    """Decode the real media URL from a Reddit ``/media?url=`` error, or None."""
+    from urllib.parse import unquote
+    m = _REDDIT_MEDIA_RE.search(err_msg or "")
+    return unquote(m.group(1)) if m else None
+
+
+def _download_direct_media(media_url, progress_callback=None, cancel_event=None):
+    """Fetch a direct media file (a Reddit GIF/image redirect target) over
+    plain HTTP with a browser User-Agent and save it to ``TEMP_DIR``.
+
+    yt-dlp's default request gets bounced to the un-extractable /media
+    HTML page; a browser User-Agent gets the real file instead. Only
+    accepts GIF and video mime types — a static image post is reported
+    back as an error rather than loaded into the editor as a dead frame.
+    Returns the saved path; raises on a non-media response or read error.
+    """
+    import urllib.request
+    from urllib.parse import urlparse
+
+    _ensure_temp_dir()
+    req = urllib.request.Request(media_url, headers={"User-Agent": _DEFAULT_UA})
+    with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT_SECONDS) as resp:
+        ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype != "image/gif" and not ctype.startswith("video/"):
+            raise RuntimeError(
+                f"this Reddit post is not a video or GIF (got {ctype or 'unknown type'})"
+            )
+        subtype = ctype.split("/", 1)[1] or "mp4"
+        ext = ".gif" if ctype == "image/gif" else f".{subtype}"
+
+        name = os.path.basename(urlparse(media_url).path) or "reddit_media"
+        base, cur_ext = os.path.splitext(name)
+        if cur_ext.lower() != ext:
+            name = (base or "reddit_media") + ext
+        out_path = os.path.join(str(TEMP_DIR), name)
+
+        total = int(resp.headers.get("Content-Length") or 0)
+        got = 0
+        with open(out_path, "wb") as fh:
+            while True:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise Exception("Download cancelled")
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                fh.write(chunk)
+                got += len(chunk)
+                if progress_callback and total:
+                    progress_callback(
+                        got / total,
+                        f"Downloading... {got // (1024*1024)}MB / {total // (1024*1024)}MB",
+                    )
+    if progress_callback:
+        progress_callback(0.95, "Processing download...")
+    return out_path
+
+
 def download_video(url, progress_callback=None, cancel_event=None, cookies=None,
                    max_attempts=3):
     import yt_dlp
@@ -180,6 +247,26 @@ def download_video(url, progress_callback=None, cancel_event=None, cookies=None,
             if "cancelled" in err_msg.lower():
                 result["error"] = "cancelled"
                 return result
+
+            # Reddit image/GIF posts fail yt-dlp with a /media redirect that
+            # names the real i.redd.it URL; fetch it directly instead of
+            # retrying (retries can't help — yt-dlp has no extractor for it).
+            media_url = _reddit_media_url(err_msg)
+            if media_url:
+                try:
+                    path = _download_direct_media(
+                        media_url, progress_callback, cancel_event)
+                    result["path"] = path
+                    result["title"] = os.path.splitext(os.path.basename(path))[0]
+                    return result
+                except Exception as fe:
+                    fe_msg = str(fe)
+                    if "cancelled" in fe_msg.lower():
+                        result["error"] = "cancelled"
+                        return result
+                    result["error"] = _friendly_error(fe_msg, platform)
+                    return result
+
             last_error = err_msg
             if attempt < max_attempts and _is_transient_error(err_msg):
                 if progress_callback:

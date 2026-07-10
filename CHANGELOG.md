@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Reddit GIF posts download again.** Reddit serves image and GIF posts through a `reddit.com/media?url=…` redirect that yt-dlp can't extract, so pasting a link to a GIF post (the meme staple this app is built for) failed with "URL not recognized by yt-dlp" even though the Reddit chip lit up. The downloader now recognises that specific failure, decodes the real `i.redd.it` media URL embedded in the error, and fetches the GIF directly over HTTP with a browser User-Agent — then hands it straight to the editor to trim and caption. A Reddit post that turns out to be a still image reports a clear "not a video or GIF" message instead of the generic error.
+
 ## [1.7.2] — 2026-07-09
 
 ### Fixed
