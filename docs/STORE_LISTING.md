@@ -28,6 +28,9 @@ Work on a frame-accurate timeline with a waveform and a thumbnail strip. Queue s
 Add captions that look right
 Style text with an outline, a shadow, bold or italic, and multiple lines. The preview matches the exported frame exactly, so there is no guesswork. Auto-caption speech with Whisper, or import an .srt or .vtt file for time-synced captions.
 
+Make captions follow the action
+Pin a caption to a moving subject and it tracks them across the frame, the way the popular click for more memes do. Drag to set the path yourself, or click Auto-track and let VideoKidnapper follow the subject for you. The preview matches the export the whole way through.
+
 Add overlays
 Drop logos, watermarks, and sticker or GIF overlays anywhere on the frame, each with its own size, opacity, and timing. Paste an image straight from the clipboard.
 
@@ -41,13 +44,13 @@ Record your screen straight into the editor. Free and open source. FFmpeg is inc
 ### What's new in this version (Store field: "What's new in this version")
 
 User-facing changes only, no repo/doc housekeeping. Update this each
-release. For the update that follows the 1.5.0 currently on the Store:
+release. For the 1.7.2 update that follows the 1.5.0 currently on the Store:
 
 ```
+- Motion-tracked captions: pin a caption to a moving subject and it follows them across the frame, like the click for more memes. Drag to set the path, or click Auto-track to follow the subject automatically.
 - One place for everything: open a file, record your screen, or paste a link, then trim, caption, and export in the same tab. No more hopping between a download tab and a trim tab.
 - Paste a video or GIF link with Ctrl+V from anywhere in the app to start a download.
 - Smoother first run: if something it needs is missing, the app now installs it and opens on its own instead of stopping at a setup screen. The Relaunch button works reliably.
-- Clearer setup screen that shows exactly what it is installing while it happens.
 - Refreshed the app icon and look.
 ```
 
@@ -64,6 +67,8 @@ Frame-accurate trimming with a waveform and thumbnail strip
 Queue multiple cuts and export them separately or stitched together
 Captions with outline, shadow, bold, italic, and multiple lines
 Preview matches the exported frame exactly
+Motion-tracked captions that follow a moving subject across the frame
+One-click Auto-track, or set the caption's motion path by hand
 Whisper auto-captions and .srt / .vtt import
 Logo, watermark, and sticker or GIF overlays placed anywhere on the frame
 Paste an image from the clipboard as an overlay
@@ -90,6 +95,7 @@ Grab a video from the web, cut the part you want, caption it, and export a GIF o
 Download from YouTube, Instagram, X, Reddit, Bluesky, Facebook, and 1,000+ sites. Paste a link or Ctrl+V from anywhere.
 Frame-accurate trimming. Queue multiple cuts and export them separately or stitched.
 Captions with outline, shadow, bold, and multiple lines. The preview matches the export exactly.
+Motion-tracked captions that follow a moving subject. Drag the path or one-click Auto-track.
 Whisper auto-captions and .srt / .vtt import.
 Logo, watermark, and sticker or GIF overlays. Drag anywhere, or paste from the clipboard.
 GIF tuning (dither, palette, loop) and hardware-encoded MP4s.
