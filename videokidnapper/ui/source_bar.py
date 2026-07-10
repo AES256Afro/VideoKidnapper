@@ -16,7 +16,8 @@ import customtkinter as ctk
 
 from videokidnapper.config import SUPPORTED_PLATFORMS
 from videokidnapper.core.downloader import (
-    cleanup_temp, detect_platform, download_video, resolve_cookies,
+    OFFLINE_MESSAGE, cleanup_temp, detect_platform, download_video,
+    resolve_cookies,
 )
 from videokidnapper.ui import theme as T
 from videokidnapper.ui.batch_queue import BatchPanel
@@ -259,6 +260,12 @@ class DownloadBar(ctk.CTkFrame):
             if result["error"] == "cancelled":
                 self.status_label.configure(text="Download cancelled", text_color=T.TEXT_DIM)
                 self._notify("Download cancelled", "warn")
+            elif result["error"] == OFFLINE_MESSAGE:
+                # Being offline is an expected state, not a failure — present
+                # it calmly (no red "Error:" prefix) so the app reads as
+                # working-as-intended without a connection.
+                self.status_label.configure(text=OFFLINE_MESSAGE, text_color=T.WARN)
+                self._notify("You're offline — connect to download", "warn")
             else:
                 error_text = f"Error: {result['error'][:160]}"
                 from videokidnapper.utils import ytdlp_update

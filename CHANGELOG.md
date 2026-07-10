@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.4] — 2026-07-10
+
+### Fixed
+
+- **Clear message when you're offline.** Trying to download with no internet used to spin through a retry loop for ~15 seconds and then show a raw yt-dlp DNS error, which read as a broken feature (and was flagged in Microsoft Store certification under policy 10.1.2.10). The downloader now recognises a no-connection failure immediately and shows a plain, calm message — "No internet connection. Connect to the internet to download videos. You can still open a local file to trim, caption, and export." — with no retry delay and no scary red error. A DNS failure while you *are* online (a mistyped or dead link) is told apart from being offline and gets its own "check the URL and your connection" message. Opening, trimming, captioning, and exporting a local file already worked offline and still do.
+
 ## [1.7.3] — 2026-07-10
 
 ### Fixed
