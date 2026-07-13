@@ -119,7 +119,7 @@ jobs:
           path: |
             dist/VideoKidnapper.exe
             dist/VideoKidnapper-Setup-*.exe
-          retention-days: 30
+          retention-days: 7
 
   attach:
     name: Attach to GitHub Release
