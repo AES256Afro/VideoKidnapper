@@ -122,7 +122,7 @@ jobs:
         with:
           name: VideoKidnapper-macos-${{ matrix.arch }}
           path: ${{ env.dmg }}
-          retention-days: 30
+          retention-days: 7
 
   attach:
     name: Attach DMGs to Release

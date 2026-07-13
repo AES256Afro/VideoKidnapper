@@ -135,4 +135,4 @@ jobs:
         with:
           name: VideoKidnapper-msix-${{ steps.meta.outputs.suffix }}
           path: dist/VideoKidnapper.msix
-          retention-days: 60
+          retention-days: 7

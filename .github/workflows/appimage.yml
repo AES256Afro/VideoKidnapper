@@ -164,7 +164,7 @@ jobs:
           path: |
             VideoKidnapper-x86_64.AppImage
             videokidnapper_*_amd64.deb
-          retention-days: 30
+          retention-days: 7
 
   attach:
     name: Attach to GitHub Release
