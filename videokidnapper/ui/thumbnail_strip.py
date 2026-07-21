@@ -83,6 +83,7 @@ class ThumbnailStrip(ctk.CTkFrame):
         self._end = self._duration
         self._loading = True
         self._render()
+        state = {"done": False, "resized": []}
 
         def worker():
             try:
@@ -91,7 +92,7 @@ class ThumbnailStrip(ctk.CTkFrame):
                 )
             except Exception:
                 frames = []
-            if not self.winfo_exists() or gen != self._gen:
+            if gen != self._gen:
                 return
             # Downscale on the worker thread — PhotoImage construction
             # itself has to happen on the main thread.
@@ -108,18 +109,23 @@ class ThumbnailStrip(ctk.CTkFrame):
                 ts = (i + 0.5) * self._duration / total
                 resized.append((ts, thumb))
 
-            def finish():
-                if gen != self._gen or not self.winfo_exists():
-                    return
-                self._thumbs = [
-                    (ts, ImageTk.PhotoImage(img)) for ts, img in resized
-                ]
-                self._loading = False
-                self._render()
+            state["resized"] = resized
+            state["done"] = True
 
-            self.after(0, finish)
+        def poll():
+            if gen != self._gen or not self.winfo_exists():
+                return
+            if not state["done"]:
+                self.after(100, poll)
+                return
+            self._thumbs = [
+                (ts, ImageTk.PhotoImage(img)) for ts, img in state["resized"]
+            ]
+            self._loading = False
+            self._render()
 
         threading.Thread(target=worker, daemon=True).start()
+        self.after(100, poll)
 
     def set_range(self, start, end):
         """Update the selection overlay without rebuilding thumbs."""

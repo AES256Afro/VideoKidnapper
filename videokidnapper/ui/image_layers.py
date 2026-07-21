@@ -252,6 +252,23 @@ class ImageLayerWidget(ctk.CTkFrame):
             data["y"] = y
         return data
 
+    def load_from_dict(self, data):
+        """Restore a serialized overlay without depending on widget internals."""
+        self.path_var.set(str(data.get("path") or ""))
+        self.position_var.set(
+            _KEY_TO_DISPLAY.get(data.get("position"), "Top Right"),
+        )
+        self.scale_var.set(float(data.get("scale", 0.25)))
+        self.opacity_var.set(float(data.get("opacity", 1.0)))
+        self.scale_label.configure(text=f"{int(self.scale_var.get() * 100)}%")
+        self.opacity_label.configure(text=f"{int(self.opacity_var.get() * 100)}%")
+        self.x_var.set(int(data.get("x", -1)))
+        self.y_var.set(int(data.get("y", -1)))
+        start = float(data.get("start", 0.0))
+        end = float(data.get("end", self.video_duration))
+        self.time_slider.set_values(start, end)
+        self._on_time_change(start, end)
+
 
 class ImageLayersPanel(ctk.CTkFrame):
     """Collapsible panel mirroring :class:`TextLayersPanel` for images."""
@@ -339,7 +356,7 @@ class ImageLayersPanel(ctk.CTkFrame):
             self.content.pack_forget()
         self._update_header()
 
-    def _add_layer(self):
+    def _add_layer(self, preset_data=None):
         layer = ImageLayerWidget(
             self.layers_container,
             layer_index=len(self.layers),
@@ -349,6 +366,8 @@ class ImageLayersPanel(ctk.CTkFrame):
         layer.pack(fill="x", pady=(0, 5))
         self.layers.append(layer)
         self._wire_layer_change(layer)
+        if preset_data:
+            layer.load_from_dict(preset_data)
         self._update_header()
         self._notify_change()
 

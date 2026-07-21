@@ -510,6 +510,56 @@ class ExportOptionsPanel(ctk.CTkFrame):
                 ASPECT_FILL_LABEL_TO_KEY.get(self.aspect_fill_var.get(), "crop"),
         }
 
+    def apply_options(self, data):
+        """Restore project-specific export controls from serialized values."""
+        data = data or {}
+        if data.get("output_folder"):
+            self.output_folder_var.set(str(data["output_folder"]))
+
+        speed = float(data.get("speed", 1.0))
+        self.speed_var.set(min(
+            SPEED_CHOICES,
+            key=lambda label: abs(_speed_to_float(label) - speed),
+        ))
+        rotate = int(data.get("rotate", 0)) % 360
+        self.rotate_var.set(f"{rotate}°" if f"{rotate}°" in ROTATE_CHOICES else "0°")
+        self.mute_var.set(bool(data.get("mute", False)))
+        self.audio_only_var.set(bool(data.get("audio_only", False)))
+        aspect = str(data.get("aspect_preset", "Source"))
+        self.aspect_var.set(aspect if aspect in ASPECT_CHOICES else "Source")
+        self.concat_var.set(bool(data.get("concat", False)))
+        self.fade_var.set(_seconds_to_fade_label(float(data.get("text_fade", 0.0))))
+        self.hw_var.set(str(data.get("hw_encoder", "auto")))
+
+        for key, var, default in (
+            ("color_brightness", self.brightness_var, 0.0),
+            ("color_contrast", self.contrast_var, 1.0),
+            ("color_saturation", self.saturation_var, 1.0),
+            ("color_gamma", self.gamma_var, 1.0),
+        ):
+            var.set(float(data.get(key, default)))
+        for label, (value_label, var, default) in self._color_value_labels.items():
+            value_label.configure(text=self._fmt_slider_value(var.get(), default))
+
+        transition = str(data.get("concat_transition", "cut"))
+        self.transition_var.set(TRANSITION_KEY_TO_LABEL.get(transition, "Cut"))
+        duration = float(data.get("concat_transition_duration", 0.5))
+        self.transition_duration_var.set(duration)
+        self.transition_dur_menu.set(f"{duration:g}s")
+        self.gif_dither_var.set(GIF_DITHER_KEY_TO_LABEL.get(
+            data.get("gif_dither", "bayer"), GIF_DITHER_CHOICES[0][0],
+        ))
+        self.gif_stats_var.set(GIF_STATS_KEY_TO_LABEL.get(
+            data.get("gif_stats_mode", "full"), GIF_STATS_CHOICES[0][0],
+        ))
+        self.gif_loop_var.set(GIF_LOOP_KEY_TO_LABEL.get(
+            data.get("gif_loop", 0), GIF_LOOP_CHOICES[0][0],
+        ))
+        self.aspect_fill_var.set(ASPECT_FILL_KEY_TO_LABEL.get(
+            data.get("aspect_fill_mode", "crop"), ASPECT_FILL_CHOICES[0][0],
+        ))
+        self._save()
+
     def get_output_folder(self):
         return self.output_folder_var.get()
 

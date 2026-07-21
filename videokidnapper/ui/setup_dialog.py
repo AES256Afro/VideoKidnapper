@@ -362,6 +362,12 @@ class SetupDialog(ctk.CTkToplevel):
     def _sync_master_checkbox(self):
         """Reflect whether every enabled checkbox is currently checked."""
         self._update_plan()
+        chosen = any(
+            var.get() and not self._status.get(key, {}).get("installed")
+            for key, var in self._selected.items()
+        )
+        if not self._installing:
+            self.install_btn.configure(state="normal" if chosen else "disabled")
         togglable = [k for k, row in self._rows.items()
                      if str(row["checkbox"].cget("state")) == "normal"]
         if not togglable:
@@ -375,6 +381,7 @@ class SetupDialog(ctk.CTkToplevel):
         for key, var in self._selected.items():
             if str(self._rows[key]["checkbox"].cget("state")) == "normal":
                 var.set(target)
+        self._sync_master_checkbox()
 
     # ------------------------------------------------------------------
     def _install_selected(self):
