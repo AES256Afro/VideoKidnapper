@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 _SETTINGS_PATH = Path.home() / ".videokidnapper_settings.json"
-_CURRENT_SCHEMA = 6
+_CURRENT_SCHEMA = 7
 
 # In-process lock for the read-modify-write cycle. Two export threads
 # finishing at the same moment both did `data = _read(); data[k] = v;
@@ -33,6 +33,8 @@ _DEFAULTS = {
     "cookies_browser":  "",
     "cookies_file":     "",
     "auto_update_check": True,
+    "onboarding_complete": False,
+    "recent_projects": [],
     "mute_audio":       False,
     "audio_only":       False,
     "speed":            1.0,
@@ -122,6 +124,10 @@ def _migrate(data):
         # historical center-crop behavior.
         data.setdefault("aspect_fill_mode", "crop")
         version = 6
+    if version < 7:
+        data.setdefault("onboarding_complete", False)
+        data.setdefault("recent_projects", [])
+        version = 7
     data["_version"] = version
     return data
 
@@ -200,6 +206,33 @@ def all_settings():
     merged = dict(_DEFAULTS)
     merged.update(_read())
     return merged
+
+
+def is_first_run():
+    """True only when this user has never created a settings file."""
+    return not _SETTINGS_PATH.exists()
+
+
+def add_recent_project(path, limit=8):
+    """Put a project first, remove duplicates, and cap the recent list."""
+    normalized = str(Path(path).expanduser().resolve())
+    with _WRITE_LOCK:
+        data = _read()
+        recent = [
+            item for item in list(data.get("recent_projects") or [])
+            if str(item).lower() != normalized.lower()
+        ]
+        recent.insert(0, normalized)
+        data["recent_projects"] = recent[:limit]
+        data["_version"] = _CURRENT_SCHEMA
+        _write(data)
+
+
+def get_recent_projects(existing_only=True):
+    recent = [str(item) for item in list(get("recent_projects", []) or [])]
+    if existing_only:
+        recent = [item for item in recent if Path(item).is_file()]
+    return recent
 
 
 def reset():

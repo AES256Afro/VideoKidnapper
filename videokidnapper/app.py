@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import sys
 import traceback
-import webbrowser
 from pathlib import Path
 
 import customtkinter as ctk
@@ -10,7 +9,7 @@ import customtkinter as ctk
 from videokidnapper.config import APP_NAME, APP_VERSION, WINDOW_SIZE, MIN_WINDOW_SIZE
 from videokidnapper.ui import theme as T
 from videokidnapper.ui.widgets import Toast
-from videokidnapper.utils import settings
+from videokidnapper.utils import project_files, settings
 from videokidnapper.utils.dnd import enable_dnd_for
 from videokidnapper.utils.ffmpeg_check import check_ffmpeg
 from videokidnapper.utils.github_update import check_async
@@ -29,6 +28,7 @@ TAB_DEBUG   = "  ⚙  Debug  "
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
+        self._is_first_run = settings.is_first_run()
         T.configure_global()
 
         self.title(f"{APP_NAME} v{APP_VERSION}")
@@ -36,6 +36,7 @@ class App(ctk.CTk):
         self.minsize(*MIN_WINDOW_SIZE)
         self.configure(fg_color=T.BG_BASE)
         self._set_window_icon()
+        self.protocol("WM_DELETE_WINDOW", self._request_close)
 
         # Turn DnD on BEFORE any widget is created so their
         # drop_target_register() calls succeed during __init__.
@@ -60,6 +61,34 @@ class App(ctk.CTk):
         self._install_exception_handler()
         self._load_plugins()
         self._maybe_check_for_update()
+        if not self._maybe_offer_recovery():
+            self._maybe_show_onboarding()
+
+    def _maybe_offer_recovery(self):
+        recovery_file = project_files.autosave_path()
+        if not recovery_file.is_file():
+            return False
+
+        def show():
+            if not self.winfo_exists():
+                return
+            from videokidnapper.ui.project_dialog import RecoveryDialog
+            self._recovery_dialog = RecoveryDialog(self, self.trim_tab)
+
+        self.after(250, show)
+        return True
+
+    def _maybe_show_onboarding(self):
+        if not self._is_first_run or settings.get("onboarding_complete", False):
+            return
+
+        def show():
+            if not self.winfo_exists():
+                return
+            from videokidnapper.ui.onboarding_dialog import OnboardingDialog
+            self._onboarding_dialog = OnboardingDialog(self, self.trim_tab)
+
+        self.after(350, show)
 
     # ------------------------------------------------------------------
     def _set_window_icon(self):
@@ -101,7 +130,7 @@ class App(ctk.CTk):
     # ------------------------------------------------------------------
     def _build_header(self):
         header = ctk.CTkFrame(
-            self, height=72, corner_radius=0, fg_color=T.BG_SURFACE,
+            self, height=60, corner_radius=0, fg_color=T.BG_SURFACE,
         )
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
@@ -110,7 +139,7 @@ class App(ctk.CTk):
         accent.pack(side="left", fill="y")
 
         inner = ctk.CTkFrame(header, fg_color="transparent")
-        inner.pack(side="left", fill="both", expand=True, padx=18, pady=10)
+        inner.pack(side="left", fill="both", expand=True, padx=16, pady=6)
 
         title_row = ctk.CTkFrame(inner, fg_color="transparent")
         title_row.pack(anchor="w")
@@ -148,6 +177,15 @@ class App(ctk.CTk):
         subtitle.pack(anchor="w", pady=(2, 0))
 
         # Setup button — prereqs checklist
+        self.project_btn = ctk.CTkButton(
+            header, text="Project",
+            fg_color=T.BG_RAISED, hover_color=T.BG_HOVER,
+            text_color=T.TEXT, font=T.font(T.SIZE_SM, "bold"),
+            corner_radius=14, width=84, height=28,
+            command=lambda: self.trim_tab.open_project_hub(),
+        )
+        self.project_btn.place(relx=1.0, rely=0, anchor="ne", x=-244, y=16)
+
         self.setup_btn = ctk.CTkButton(
             header, text="⚙ Setup",
             fg_color=T.BG_RAISED, hover_color=T.BG_HOVER,
@@ -208,10 +246,10 @@ class App(ctk.CTk):
             segmented_button_unselected_hover_color=T.BG_HOVER,
             text_color=T.TEXT,
         )
-        self.tabview.pack(fill="both", expand=True, padx=18, pady=(14, 0))
+        self.tabview.pack(fill="both", expand=True, padx=12, pady=(8, 0))
 
         self.tabview._segmented_button.configure(
-            font=T.font(T.SIZE_LG, "bold"), height=36,
+            font=T.font(T.SIZE_MD, "bold"), height=32,
         )
 
         self.tabview.add(TAB_STUDIO)   # first added = leftmost + default
@@ -241,15 +279,25 @@ class App(ctk.CTk):
     # ------------------------------------------------------------------
     def _build_statusbar(self):
         divider = ctk.CTkFrame(self, height=1, fg_color=T.BORDER, corner_radius=0)
-        divider.pack(fill="x", side="bottom", pady=(10, 0))
+        divider.pack(fill="x", side="bottom", pady=(6, 0))
 
         self.status_bar = Toast(self)
         self.status_bar.pack(fill="x", side="bottom")
         self.status_bar.show(
             "Ready · Space play · J/L step · I/O set in-out · "
-            "Ctrl+Z/Y undo/redo · Ctrl+E export · ? shortcuts",
+            "Ctrl+S project · Ctrl+Z/Y undo/redo · Ctrl+E export · ? shortcuts",
             "success",
         )
+
+    def set_project_status(self, name, dirty):
+        if not hasattr(self, "project_btn"):
+            return
+        label = name if name and name != "Untitled" else "Project"
+        if len(label) > 14:
+            label = f"{label[:11]}..."
+        if dirty:
+            label = f"{label} *"
+        self.project_btn.configure(text=label)
 
     # ------------------------------------------------------------------
     # Keyboard shortcuts
@@ -278,6 +326,12 @@ class App(ctk.CTk):
         self.bind_all("<Control-E>", lambda e: self._shortcut(e, "keyboard_export"))
         self.bind_all("<Control-o>", lambda e: self._shortcut(e, "keyboard_open"))
         self.bind_all("<Control-O>", lambda e: self._shortcut(e, "keyboard_open"))
+        self.bind_all("<Control-s>", self._save_project_shortcut)
+        self.bind_all("<Control-S>", self._save_project_shortcut)
+        self.bind_all("<Control-Shift-s>", self._save_project_as_shortcut)
+        self.bind_all("<Control-Shift-S>", self._save_project_as_shortcut)
+        self.bind_all("<Control-Shift-o>", self._open_project_shortcut)
+        self.bind_all("<Control-Shift-O>", self._open_project_shortcut)
         # Ctrl+V routes by what's on the clipboard: a web link opens the
         # Kidnap downloader from ANY tab; anything else falls through to
         # the active tab's own paste (clipboard image → overlay on Trim).
@@ -337,6 +391,24 @@ class App(ctk.CTk):
             return
         self._open_shortcuts_dialog()
 
+    def _save_project_shortcut(self, _event):
+        self.trim_tab.save_project()
+        return "break"
+
+    def _save_project_as_shortcut(self, _event):
+        self.trim_tab.save_project(save_as=True)
+        return "break"
+
+    def _open_project_shortcut(self, _event):
+        self.trim_tab.choose_and_open_project()
+        return "break"
+
+    def _request_close(self):
+        editor = getattr(self, "trim_tab", None)
+        if editor is not None and not editor.request_close():
+            return
+        self.destroy()
+
     # ------------------------------------------------------------------
     # Update check
     # ------------------------------------------------------------------
@@ -351,16 +423,25 @@ class App(ctk.CTk):
         check_async(APP_VERSION, on_update)
 
     def _show_update_chip(self, tag, link):
+        self._update_tag = tag
         self._update_link = link
         self.update_chip.configure(text=f"  ↑ Update {tag}  ", width=140)
         self.update_chip.place(relx=1.0, rely=0, anchor="ne", x=-16, y=16)
+        # Make room for the update action instead of covering Setup.
+        self.setup_btn.place_configure(x=-292)
+        self.shortcuts_btn.place_configure(x=-246)
+        self.theme_btn.place_configure(x=-198)
+        self.project_btn.place_configure(x=-386)
         if self.status_bar:
             self.status_bar.show(f"Update available: {tag}", "success")
 
     def _open_update_link(self):
         link = getattr(self, "_update_link", None)
         if link:
-            webbrowser.open(link)
+            from videokidnapper.ui.update_dialog import UpdateDialog
+            self._update_dialog = UpdateDialog(
+                self, APP_VERSION, getattr(self, "_update_tag", "new"), link,
+            )
 
     # ------------------------------------------------------------------
     # Plugin API
@@ -629,13 +710,7 @@ class App(ctk.CTk):
 
     # ------------------------------------------------------------------
     def _show_setup_landing(self):
-        """Missing prereqs → auto-install what's needed, then continue.
-
-        No dead end: the install starts on its own, streams progress, and
-        drops the user straight into the app when it's done (FFmpeg needs
-        no restart). Only if the auto-install fails do the manual Setup /
-        Retry / Exit controls appear.
-        """
+        """Explain missing prerequisites and wait for install consent."""
         from videokidnapper.utils import prereq_check
         self._setup_frame = ctk.CTkFrame(self, fg_color="transparent")
         self._setup_frame.place(relx=0.5, rely=0.5, anchor="center")
@@ -656,7 +731,7 @@ class App(ctk.CTk):
         plan = prereq_check.describe_install_plan(missing)
         self._setup_msg = ctk.CTkLabel(
             self._setup_frame,
-            text=f"Installing: {plan}" if plan
+            text=f"Needed to continue: {plan}" if plan
                  else "Checking prerequisites…",
             font=T.font(T.SIZE_MD), text_color=T.TEXT_MUTED,
             justify="center", wraplength=460,
@@ -673,9 +748,42 @@ class App(ctk.CTk):
         self._setup_btnrow = ctk.CTkFrame(self._setup_frame, fg_color="transparent")
         self._setup_btnrow.pack()
 
-        # Kick off the install after the window has painted, so the user
-        # sees the progress UI rather than a frozen splash.
-        self.after(300, lambda: self._auto_install_prereqs(missing))
+        self._setup_detail = ctk.CTkLabel(
+            self._setup_frame,
+            text=(
+                "Nothing downloads until you approve. FFmpeg comes from "
+                f"{prereq_check.FFMPEG_DOWNLOAD_SOURCE}, is checked with the "
+                "publisher's SHA-256 digest, and installs without admin access."
+                if "ffmpeg" in missing else
+                "Nothing installs until you approve. Python packages use this "
+                "Python installation and do not require admin access."
+            ),
+            font=T.font(T.SIZE_SM), text_color=T.TEXT_DIM,
+            justify="center", wraplength=520,
+        )
+        self._setup_detail.pack(pady=(10, 0), before=self._setup_btnrow)
+
+        from videokidnapper.ui.theme import button
+        button(
+            self._setup_btnrow, "Install and continue", variant="primary",
+            width=180, command=lambda: self._confirm_setup_install(missing),
+        ).pack(side="left", padx=4)
+        button(
+            self._setup_btnrow, "Review details", variant="secondary",
+            width=140, command=self._open_setup_dialog,
+        ).pack(side="left", padx=4)
+        button(
+            self._setup_btnrow, "Exit", variant="ghost",
+            width=80, command=self.destroy,
+        ).pack(side="left", padx=4)
+
+    def _confirm_setup_install(self, missing):
+        for widget in self._setup_btnrow.winfo_children():
+            widget.destroy()
+        self._setup_detail.configure(
+            text="Downloading and verifying. You can close the app to cancel.",
+        )
+        self._auto_install_prereqs(missing)
 
     def _auto_install_prereqs(self, missing):
         from videokidnapper.utils import prereq_check
@@ -751,7 +859,23 @@ class App(ctk.CTk):
         self._setup_title.configure(text="Setting up VideoKidnapper")
         for w in self._setup_btnrow.winfo_children():
             w.destroy()
-        self._auto_install_prereqs(prereq_check.missing_required())
+        missing = prereq_check.missing_required()
+        self._setup_msg.configure(
+            text=f"Needed to continue: {prereq_check.describe_install_plan(missing)}",
+            text_color=T.TEXT_MUTED,
+        )
+        self._setup_detail.configure(
+            text="Ready to retry. Nothing downloads until you approve.",
+        )
+        from videokidnapper.ui.theme import button
+        button(
+            self._setup_btnrow, "Retry install", variant="primary",
+            width=150, command=lambda: self._confirm_setup_install(missing),
+        ).pack(side="left", padx=4)
+        button(
+            self._setup_btnrow, "Exit", variant="ghost",
+            width=80, command=self.destroy,
+        ).pack(side="left", padx=4)
 
     def _setup_install_failed(self, failures):
         from videokidnapper.ui.theme import button
