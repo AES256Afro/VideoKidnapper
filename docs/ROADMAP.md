@@ -1,7 +1,7 @@
 # Roadmap
 
 Planned fixes, changes, and feature work for VideoKidnapper, organized by theme and
-priority. Written against `main` at v1.2.0 (post PR #34). Companion to
+priority. Refreshed for v1.8.0. Companion to
 `docs/BLUEPRINT.md`, which describes what already exists; this file describes what
 should exist next.
 
@@ -267,12 +267,12 @@ regex in `config.py`, format-selector branch in `core/downloader.py`, chip color
 in `ui/theme.py`, share target where applicable, tests in `test_platform_detect.py`.
 The blueprint documents this exact recipe.
 
-### 4.5 Project save/load (.vidkid sessions) — P2 / M
+### 4.5 Project save/load (.vidkid sessions) (shipped in v1.8.0)
 
-The undo system already snapshots the full editor state (layers, crop, ranges, queue).
-Serialize that same snapshot to a JSON project file with Save / Open Project menu
-entries and most-recent-project reopening. Versioned schema from day one, same
-additive-migration discipline as settings.
+Versioned JSON project files now reuse the editor snapshot for trim state, queued
+ranges, crop, text, image overlays, and export choices. Save, Save As, Open, recent
+projects, portable relative media paths, atomic autosave, and interrupted-session
+recovery are included. Future work can add schema migrations when version 2 needs one.
 
 ### 4.6 Region and multi-monitor screen capture — P2 / M
 
@@ -355,7 +355,7 @@ text/GIF output stops looking dated.
 of these touch the same two files.
 
 **v1.5.0+**
-2.5 text animations, 3.7 transparency, 3.8 WebP/APNG, 4.5 projects, 4.6 region capture,
+2.5 text animations, 3.7 transparency, 3.8 WebP/APNG, 4.6 region capture,
 and the remaining P3s as interest dictates.
 
 ---

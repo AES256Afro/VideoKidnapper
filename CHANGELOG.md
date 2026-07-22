@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-07-21
+
+### Added
+
+- **Editable project files and recovery.** `.vidkid` files preserve the source reference, trim and queued ranges, crop, text and image overlays, and export choices. Recent projects, Save As, atomic autosave, interrupted-session recovery, and save-before-replace prompts complete the workflow.
+- **Install-aware app updates.** The update prompt detects Store, winget or Windows Setup, pip, APT, AppImage, macOS, portable, and source installs. Native package routes handle verified upgrades, while portable installs open the matching release package.
+- **First-run welcome.** New installs get a concise workflow introduction with direct actions for local media and web links.
+
+### Changed
+
+- **Denser editor layout.** A fixed tool dock jumps to Source, Preview, Timeline, Ranges, Text, Overlays, Options, or Export. Feature panels keep their own bounded space, so long caption projects no longer bury later controls.
+- **Clearer prerequisite setup.** FFmpeg installation explains its publisher source and destination, verifies the publisher-provided SHA-256 digest in staging, validates the binaries, and replaces the live files only after every check succeeds.
+
+### Fixed
+
+- **Thumbnail and waveform completion.** Background extraction results now return through main-thread polling, preventing stuck loading states and late callbacks after the window closes.
+- **Unsaved-work replacement.** Opening another video or project now offers to save current edits first, and cancelling app close leaves a current recovery file intact.
+
 ## [1.7.4] — 2026-07-10
 
 ### Fixed
@@ -298,6 +316,9 @@ First public release. The overhaul that turned the project from a YouTube-only G
 
 - 124 tests covering URL platform detection, share-intent URL construction, ffmpeg filter math (crop clamping, aspect-crop, fade-alpha expression, hardware encoder picking and probing), settings persistence + schema migration, SRT parser, size estimator, LRU cache, and the DnD payload parser.
 
+[1.8.0]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.8.0
+[1.7.4]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.7.4
+[1.7.3]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.7.3
 [1.7.2]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.7.2
 [1.7.1]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.7.1
 [1.7.0]: https://github.com/AES256Afro/VideoKidnapper/releases/tag/v1.7.0
