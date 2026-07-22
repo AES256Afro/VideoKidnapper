@@ -1,7 +1,7 @@
 # Roadmap
 
 Planned fixes, changes, and feature work for VideoKidnapper, organized by theme and
-priority. Refreshed against `main` at v1.7.4. Companion to
+priority. Refreshed for v1.8.0. Companion to
 `docs/BLUEPRINT.md`, which describes what already exists; this file describes what
 should exist next.
 
@@ -267,7 +267,7 @@ regex in `config.py`, format-selector branch in `core/downloader.py`, chip color
 in `ui/theme.py`, share target where applicable, tests in `test_platform_detect.py`.
 The blueprint documents this exact recipe.
 
-### 4.5 Project save/load (.vidkid sessions) (shipped after v1.7.4)
+### 4.5 Project save/load (.vidkid sessions) (shipped in v1.8.0)
 
 Versioned JSON project files now reuse the editor snapshot for trim state, queued
 ranges, crop, text, image overlays, and export choices. Save, Save As, Open, recent
