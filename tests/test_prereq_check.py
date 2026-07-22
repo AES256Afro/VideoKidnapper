@@ -1,7 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
 import sys
+from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from videokidnapper.utils import prereq_check
 
@@ -78,6 +81,38 @@ def test_install_ffmpeg_portable_non_windows_returns_guidance():
         assert ok is False
         # The message should point the user at the right package manager.
         assert "brew" in msg or "package manager" in msg
+
+
+def test_parse_sha256_accepts_publisher_format():
+    digest = "a" * 64
+    assert prereq_check._parse_sha256(f"{digest}  ffmpeg.zip\n") == digest
+
+
+def test_parse_sha256_rejects_missing_digest():
+    with pytest.raises(ValueError, match="SHA-256"):
+        prereq_check._parse_sha256("not a checksum")
+
+
+def test_extract_ffmpeg_binaries_rejects_incomplete_archive(tmp_path):
+    import zipfile
+    archive = tmp_path / "ffmpeg.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("build/bin/readme.txt", "no executables")
+    with pytest.raises(ValueError, match="missing"):
+        prereq_check._extract_ffmpeg_binaries(archive, tmp_path / "stage")
+
+
+def test_extract_ffmpeg_binaries_creates_staging_directory(tmp_path):
+    import zipfile
+    archive = tmp_path / "ffmpeg.zip"
+    executable = b"MZ" + (b"\0" * (1024 * 1024))
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("build/bin/ffmpeg.exe", executable)
+        zf.writestr("build/bin/ffprobe.exe", executable)
+    staging = tmp_path / "new" / "stage"
+    result = prereq_check._extract_ffmpeg_binaries(archive, staging)
+    assert set(result) == {"ffmpeg.exe", "ffprobe.exe"}
+    assert all(path.exists() for path in result.values())
 
 
 def test_default_ffmpeg_install_dir_is_project_relative():
@@ -242,3 +277,46 @@ def test_install_missing_collects_failures(monkeypatch):
     installed, failures = prereq_check.install_missing(["ffmpeg"])
     assert installed == []
     assert failures and failures[0][0] == "ffmpeg"
+
+
+def test_staged_binary_install_replaces_both(tmp_path):
+    from videokidnapper.utils import prereq_check
+    dest = tmp_path / "dest"
+    stage = tmp_path / "stage"
+    dest.mkdir()
+    stage.mkdir()
+    for name in ("ffmpeg.exe", "ffprobe.exe"):
+        (dest / name).write_bytes(b"old")
+        (stage / name).write_bytes(b"new")
+    prereq_check._install_staged_binaries(
+        {name: stage / name for name in ("ffmpeg.exe", "ffprobe.exe")}, dest,
+    )
+    assert (dest / "ffmpeg.exe").read_bytes() == b"new"
+    assert (dest / "ffprobe.exe").read_bytes() == b"new"
+    assert not list(dest.glob("*.previous"))
+
+
+def test_staged_binary_install_rolls_back_on_failure(tmp_path, monkeypatch):
+    from videokidnapper.utils import prereq_check
+    dest = tmp_path / "dest"
+    stage = tmp_path / "stage"
+    dest.mkdir()
+    stage.mkdir()
+    names = ("ffmpeg.exe", "ffprobe.exe")
+    for name in names:
+        (dest / name).write_bytes(f"old-{name}".encode())
+        (stage / name).write_bytes(f"new-{name}".encode())
+    real_replace = prereq_check.os.replace
+
+    def fail_second_new(source, target):
+        if Path(source) == stage / "ffprobe.exe":
+            raise OSError("simulated replacement failure")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(prereq_check.os, "replace", fail_second_new)
+    with pytest.raises(OSError, match="simulated"):
+        prereq_check._install_staged_binaries(
+            {name: stage / name for name in names}, dest,
+        )
+    assert (dest / "ffmpeg.exe").read_bytes() == b"old-ffmpeg.exe"
+    assert (dest / "ffprobe.exe").read_bytes() == b"old-ffprobe.exe"

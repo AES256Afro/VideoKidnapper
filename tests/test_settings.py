@@ -16,6 +16,12 @@ def test_defaults_returned_when_missing(fresh_settings):
     assert fresh_settings.get("format") == "GIF"
 
 
+def test_first_run_tracks_settings_file(fresh_settings):
+    assert fresh_settings.is_first_run() is True
+    fresh_settings.set("onboarding_complete", True)
+    assert fresh_settings.is_first_run() is False
+
+
 def test_set_and_get(fresh_settings):
     fresh_settings.set("quality", "High")
     assert fresh_settings.get("quality") == "High"
@@ -90,7 +96,7 @@ def test_schema_v4_upgrades_to_v5(fresh_settings):
     assert saved["gif_dither"] == "bayer"
 
 
-def test_schema_v5_upgrades_to_v6(fresh_settings):
+def test_schema_v5_upgrades_to_current(fresh_settings):
     # A v5 settings file (pre-aspect-fill-mode) must pick up the "crop"
     # default, which reproduces the historical center-crop behavior.
     import json
@@ -106,7 +112,7 @@ def test_schema_v5_upgrades_to_v6(fresh_settings):
     assert fresh_settings.get("gif_dither") == "none"
     fresh_settings.set("quality", "Ultra")
     saved = json.loads(fresh_settings._SETTINGS_PATH.read_text(encoding="utf-8"))
-    assert saved["_version"] == 6
+    assert saved["_version"] == fresh_settings._CURRENT_SCHEMA
     assert saved["aspect_fill_mode"] == "crop"
 
 
@@ -118,3 +124,17 @@ def test_batch_jobs_round_trip(fresh_settings):
     assert isinstance(restored, list)
     assert len(restored) == 1
     assert restored[0]["input_path"] == "/a.mp4"
+
+
+def test_recent_projects_are_deduplicated_and_capped(fresh_settings, tmp_path):
+    paths = []
+    for index in range(10):
+        path = tmp_path / f"{index}.vidkid"
+        path.write_text("{}", encoding="utf-8")
+        paths.append(path)
+        fresh_settings.add_recent_project(path)
+    fresh_settings.add_recent_project(paths[5])
+    recent = fresh_settings.get_recent_projects()
+    assert len(recent) == 8
+    assert recent[0] == str(paths[5].resolve())
+    assert len({item.lower() for item in recent}) == len(recent)

@@ -2,43 +2,32 @@
 
 **Audience:** someone (human or AI assistant) dropping into this repo cold and needing to get productive in one sitting. Read this first; it points at the other docs for anything deeper.
 
-Last updated: **2026-04-18** (v1.2.0 prep complete; tag not yet pushed).
+Last updated: **2026-07-21** (v1.8.0 release candidate).
 
 ---
 
 ## The 30-second elevator
 
-VideoKidnapper is a **dark-themed desktop video editor** for short clips — trim, caption, overlay, export as MP4 or GIF. Python + CustomTkinter + ffmpeg. Cross-platform (Windows / macOS / Linux). Single maintainer (`AES256Afro`), Apache-2.0 licensed.
+VideoKidnapper is a local desktop editor for short clips: download, trim, caption, overlay, and export as MP4 or GIF. It uses Python, CustomTkinter, and FFmpeg across Windows, macOS, and Linux. The project is maintained by `AES256Afro` under Apache-2.0.
 
 Core workflows:
 
-- **Trim Video** tab — load a local file, scrub via thumbnails + waveform, drag text layers + PNG overlays on the preview, queue multiple ranges for compilation, export with color grading / speed / aspect / transitions.
-- **URL Download** tab — paste a YouTube / Instagram / Bluesky / X / Reddit / Facebook link, batch-download, feed the result into the trim workflow.
+- **Kidnap & Trim** tab: load a local file, record the screen, or paste a web link into one editing workflow. A fixed tool dock reaches every section while text and image layers use bounded internal workspaces.
+- **Project files**: save complete `.vidkid` editing sessions, reopen recent work, and recover atomic autosaves after an interrupted session.
+- **Downloads**: paste YouTube, Instagram, Bluesky, X, Reddit, Facebook, or other yt-dlp links, batch-download them, and feed results into the editor.
 - **Auto-captions** via faster-whisper run the current trim range through Whisper → text layers.
 - **Screen recording** captures your monitor directly into the trim workflow.
 - **CLI mode** (`videokidnapper --url … --start 10 --end 25 --format GIF`) bypasses the GUI entirely.
 
-The app doesn't bundle ffmpeg (GPL redistribution reasons); the in-app **⚙ Setup** dialog pulls a portable build on first launch, or users install via winget/brew/apt.
+Packaged Store, AppImage, and macOS builds include FFmpeg. When a Windows portable or source install needs it, first-run setup explains the source and destination, checks the publisher digest, validates staged binaries, and asks before installation.
 
 ---
 
-## Current state as of 2026-04-18
+## Current state as of 2026-07-21
 
-**On `main`:** 11 feature / fix / refactor PRs merged in one session (see the 2026-04-18 section of `CHANGELOG.md`). Tests: **219 passed + 1 skipped** (integration, no local ffmpeg). Ruff + mypy (per the soft-start allowlist) both clean.
+The v1.8.0 release adds compact tool navigation, onboarding, project save and recovery, safer prerequisite installation, install-aware app updates, refreshed screenshots, and loading-race fixes. Local verification is **507 tests**, Ruff, mypy, FFmpeg, and auto-track, all clean.
 
-**Version bump:** `__version__` is still `1.1.0` on main. The 1.2.0 bump lives on the unmerged `chore/v1.2.0-release-prep` PR alongside Homebrew / winget templates and `docs/RELEASE.md`.
-
-**Ready to tag `v1.2.0` once:**
-
-1. `chore/v1.2.0-release-prep` merges (brings the version bump, PyPI packaging metadata, Homebrew template, winget manifests, release playbook).
-2. The maintainer configures PyPI Trusted Publishing (one-time; see `docs/RELEASE.md`).
-3. An empty `AES256Afro/homebrew-videokidnapper` tap repo is created.
-
-After those three, `git tag v1.2.0 && git push --tags` triggers:
-
-- `.github/workflows/release.yml` → builds sdist + wheel, publishes to PyPI, attaches to GitHub Release.
-- `.github/workflows/installer.yml` → builds `VideoKidnapper.exe` (portable) + `VideoKidnapper-Setup-1.2.0.exe` (Inno Setup wizard), attaches both to the GitHub Release.
-- Manual: fill SHA256s into Homebrew formula + winget manifests, publish both.
+Release automation covers PyPI, Windows portable and Setup builds, Microsoft Store MSIX, Linux AppImage and `.deb`, macOS `.dmg`, GitHub Pages, and the signed APT repository. See `docs/RELEASE.md` for the current release process.
 
 ---
 
@@ -70,7 +59,8 @@ videokidnapper/
 │   └── __init__.py
 ├── ui/
 │   ├── trim_tab.py          # ← the biggest tab; text/image layers, undo, transitions
-│   ├── url_tab.py           # URL download UI + batch panel
+│   ├── source_bar.py        # compact web-link download UI
+│   ├── batch_export_tab.py  # persisted multi-file export queue
 │   ├── history_tab.py       # recent-exports list
 │   ├── debug_tab.py         # stdout/stderr tail with level colors
 │   ├── video_player.py      # preview canvas; crop + text-drag + snap + A/V playback
@@ -82,6 +72,10 @@ videokidnapper/
 │   ├── export_options.py    # speed / rotate / aspect / color / transitions
 │   ├── export_dialog.py     # modal progress + share-to-platform panel
 │   ├── setup_dialog.py      # FFmpeg + pip-packages auto-installer
+│   ├── onboarding_dialog.py # first-run workflow introduction
+│   ├── project_dialog.py    # save/open/recent project hub + recovery
+│   ├── update_dialog.py     # install-aware app update action
+│   ├── shortcuts_dialog.py  # discoverable keyboard reference
 │   ├── batch_queue.py       # batch URL download panel
 │   ├── share_panel.py       # clipboard + platform-compose-page share
 │   ├── widgets.py           # RangeSlider, TimestampEntry, PlatformChip, Toast
@@ -89,11 +83,12 @@ videokidnapper/
 │   └── color_picker.py      # custom-color dialog
 └── utils/
     ├── settings.py          # JSON persistence with schema migration + write lock
+    ├── project_files.py     # versioned .vidkid JSON + atomic autosave
     ├── ffmpeg_check.py      # PATH + portable-install binary resolution
     ├── ffmpeg_escape.py     # lavfi escaping (drawtext values, paths)
     ├── file_naming.py       # timestamped export paths with collision handling
-    ├── github_update.py     # async update check on startup
-    ├── prereq_check.py      # Setup dialog's "what's missing" probe
+    ├── github_update.py     # update check + install-route detection
+    ├── prereq_check.py      # prerequisite probe + verified staged install
     ├── share.py             # platform share-URL builders + clipboard
     ├── size_estimator.py    # pre-export file-size estimates
     ├── srt_parser.py        # SRT → text-layer dicts
@@ -102,7 +97,7 @@ videokidnapper/
     ├── snap.py              # Figma-style snap math (pure, fully typed)
     └── undo.py              # bounded undo/redo stack (pure, fully typed)
 
-tests/           # 219 tests; mostly pure-function; one integration test
+tests/           # 507 tests, including FFmpeg integration where available
 packaging/
 ├── videokidnapper.spec          # PyInstaller
 ├── inno-setup/videokidnapper.iss # Windows installer wizard
@@ -120,7 +115,7 @@ examples/
 
 1. **Anything in `core/` does not import from `ui/`.** This is enforced by convention; tests run without Tk for most of the suite.
 2. **Filter-graph construction is pure.** `core/ffmpeg/filters.py` is a bunch of pure functions returning strings. Makes the test pyramid fat: filter math is covered by unit tests, encode wiring by one integration test that actually runs ffmpeg.
-3. **Settings live in `~/.videokidnapper_settings.json`.** Schema versioned (`_version` key), migrations in `utils/settings.py`. **Current schema: v3.** When adding settings, bump to v4 with an additive-only migration.
+3. **Settings live in `~/.videokidnapper_settings.json`.** Schema versioned (`_version` key), migrations in `utils/settings.py`. **Current schema: v7.** Keep migrations additive.
 4. **Optional deps degrade gracefully.** Every heavy dep (tkinterdnd2, imageio-ffmpeg, sounddevice, numpy, faster-whisper) is importable-checked at runtime. Missing → feature silently disables or shows an install hint. Core install stays minimal.
 5. **Backwards-compat facade.** `core/ffmpeg_backend.py` re-exports the entire split subpackage so external callers don't have to update imports. Future work can migrate call sites to the submodule paths, then shrink the facade.
 

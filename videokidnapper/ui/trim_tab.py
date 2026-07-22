@@ -6,7 +6,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 
@@ -29,7 +29,7 @@ from videokidnapper.ui.thumbnail_strip import ThumbnailStrip
 from videokidnapper.ui.video_player import VideoPlayer
 from videokidnapper.ui.waveform import WaveformStrip
 from videokidnapper.ui.widgets import RangeSlider, TimestampEntry
-from videokidnapper.utils import settings
+from videokidnapper.utils import project_files, settings
 from videokidnapper.utils.file_naming import generate_export_path
 from videokidnapper.utils.size_estimator import estimate_bytes, human_bytes
 from videokidnapper.utils.srt_parser import parse_srt_file, srt_to_text_layers
@@ -37,15 +37,13 @@ from videokidnapper.utils.time_format import seconds_to_hms, hms_to_seconds
 from videokidnapper.utils.undo import UndoStack
 
 
-class TrimTab(ctk.CTkScrollableFrame):
-    """Scrollable tab body — prevents the Export row from clipping at small heights."""
+class TrimTab(ctk.CTkFrame):
+    """Editor with a fixed tool dock and a scrollable workspace."""
 
     def __init__(self, master, app, **kwargs):
         super().__init__(
             master,
             fg_color="transparent",
-            scrollbar_button_color=T.BG_HOVER,
-            scrollbar_button_hover_color=T.BG_ACTIVE,
             **kwargs,
         )
         self.app = app
@@ -61,6 +59,10 @@ class TrimTab(ctk.CTkScrollableFrame):
         self._restoring = False
         self._snapshot_after_id = None
         self._snapshot_debounce_ms = 350
+        self._autosave_after_id = None
+        self._autosave_debounce_ms = 1500
+        self.current_project_path = None
+        self._project_dirty = False
 
         self._build_ui()
 
@@ -73,8 +75,18 @@ class TrimTab(ctk.CTkScrollableFrame):
 
     # ------------------------------------------------------------------
     def _build_ui(self):
+        self._build_feature_dock()
+        self.body = ctk.CTkScrollableFrame(
+            self,
+            fg_color="transparent",
+            scrollbar_button_color=T.BG_HOVER,
+            scrollbar_button_hover_color=T.BG_ACTIVE,
+        )
+        self.body.pack(fill="both", expand=True)
+        body = self.body
+
         source_card = ctk.CTkFrame(
-            self, fg_color=T.BG_SURFACE,
+            body, fg_color=T.BG_SURFACE,
             border_width=1, border_color=T.BORDER,
             corner_radius=T.RADIUS_LG,
         )
@@ -85,18 +97,18 @@ class TrimTab(ctk.CTkScrollableFrame):
 
         self.open_btn = button(
             src_inner, "  ⇪  Open Video File", variant="primary",
-            width=170, command=self._open_file,
+            width=145, command=self._open_file,
         )
         self.open_btn.pack(side="left")
 
         button(
             src_inner, "  ⊞  Record Screen", variant="secondary",
-            width=160, height=36, command=self._record_screen,
+            width=135, height=34, command=self._record_screen,
         ).pack(side="left", padx=(8, 0))
 
         button(
             src_inner, "  ⇪  Import SRT", variant="ghost",
-            width=130, height=36, command=self._import_srt,
+            width=110, height=34, command=self._import_srt,
         ).pack(side="left", padx=(4, 0))
 
         # Whisper auto-captions — only enabled once a video is loaded.
@@ -104,20 +116,31 @@ class TrimTab(ctk.CTkScrollableFrame):
         # into the same text-layers panel the SRT importer targets.
         self.captions_btn = button(
             src_inner, "  🗣  Auto-captions", variant="ghost",
-            width=150, height=36, command=self._auto_caption,
+            width=130, height=34, command=self._auto_caption,
         )
         self.captions_btn.pack(side="left", padx=(4, 0))
 
-        self.file_label = ctk.CTkLabel(
-            src_inner, text="No file loaded   ·   Ctrl+O, drag a file, or click the preview",
-            font=T.font(T.SIZE_MD),
-            text_color=T.TEXT_DIM,
+        self._download_expanded = False
+        self.web_btn = button(
+            src_inner, "Web link", variant="secondary",
+            width=95, height=34, command=self._toggle_download_bar,
         )
-        self.file_label.pack(side="left", padx=15)
+        self.web_btn.pack(side="left", padx=(4, 0))
 
-        # Divider between "local file" sources and "from a link".
+        self.file_label = ctk.CTkLabel(
+            source_card, text="No file loaded  ·  Ctrl+O or drop a file",
+            font=T.font(T.SIZE_SM),
+            text_color=T.TEXT_DIM, anchor="w",
+        )
+        self.file_label.pack(fill="x", padx=14, pady=(0, 8))
+
+        self.download_container = ctk.CTkFrame(
+            source_card, fg_color="transparent",
+        )
+
         ctk.CTkFrame(
-            source_card, height=1, fg_color=T.BORDER, corner_radius=0,
+            self.download_container, height=1,
+            fg_color=T.BORDER, corner_radius=0,
         ).pack(fill="x", padx=14)
 
         # Download-from-link strip: the whole old URL tab boiled down to
@@ -125,7 +148,7 @@ class TrimTab(ctk.CTkScrollableFrame):
         # a local file uses, so there is exactly one editor.
         from videokidnapper.ui.source_bar import DownloadBar
         self.download_bar = DownloadBar(
-            source_card,
+            self.download_container,
             on_video_ready=self._on_downloaded_video,
             notify=self._notify,
         )
@@ -134,10 +157,10 @@ class TrimTab(ctk.CTkScrollableFrame):
         # Preview (clickable + DnD-aware). Fixed height inside a scrollable
         # tab — the player letterboxes to preserve aspect ratio.
         self.player = VideoPlayer(
-            self,
+            body,
             on_empty_click=self._open_file,
             on_file_dropped=self._on_file_dropped,
-            height=380,
+            height=320,
         )
         self.player.pack(fill="x", padx=12, pady=6)
         self.player.pack_propagate(False)
@@ -158,7 +181,7 @@ class TrimTab(ctk.CTkScrollableFrame):
 
         # Waveform + timeline card
         timeline_card = ctk.CTkFrame(
-            self, fg_color=T.BG_SURFACE,
+            body, fg_color=T.BG_SURFACE,
             border_width=1, border_color=T.BORDER,
             corner_radius=T.RADIUS_LG,
         )
@@ -225,11 +248,11 @@ class TrimTab(ctk.CTkScrollableFrame):
         ).pack(side="right", padx=(4, 0))
 
         # Multi-range queue
-        self.range_queue = RangeQueue(self, on_remove=self._on_range_removed)
+        self.range_queue = RangeQueue(body, on_remove=self._on_range_removed)
         self.range_queue.pack(fill="x", padx=12, pady=6)
 
         # Text layers
-        self.text_layers = TextLayersPanel(self, on_change=self._on_text_layers_changed)
+        self.text_layers = TextLayersPanel(body, on_change=self._on_text_layers_changed)
         self.text_layers.pack(fill="x", padx=12, pady=6)
         # ⚡ Auto-track lives on each layer row but is driven from here.
         self.text_layers.set_autotrack_handler(self._auto_track)
@@ -240,19 +263,21 @@ class TrimTab(ctk.CTkScrollableFrame):
         # switches to -filter_complex when any are present. The on_change
         # callback triggers a preview refresh so slider drags show live.
         self.image_layers = ImageLayersPanel(
-            self,
+            body,
             on_change=self._on_image_layers_changed,
             on_notify=self._notify,
         )
         self.image_layers.pack(fill="x", padx=12, pady=6)
 
         # Export options (size estimate updates when options change)
-        self.export_options = ExportOptionsPanel(self, on_change=self._update_size_estimate)
+        self.export_options = ExportOptionsPanel(
+            body, on_change=self._on_export_options_changed,
+        )
         self.export_options.pack(fill="x", padx=12, pady=6)
 
         # Export card
         export_card = ctk.CTkFrame(
-            self, fg_color=T.BG_SURFACE,
+            body, fg_color=T.BG_SURFACE,
             border_width=1, border_color=T.BORDER,
             corner_radius=T.RADIUS_LG,
         )
@@ -328,6 +353,78 @@ class TrimTab(ctk.CTkScrollableFrame):
         )
         self.size_label.pack(side="right", padx=(0, 12))
 
+        self._feature_targets = {
+            "Source": source_card,
+            "Preview": self.player,
+            "Timeline": timeline_card,
+            "Ranges": self.range_queue,
+            "Text": self.text_layers,
+            "Overlays": self.image_layers,
+            "Options": self.export_options,
+            "Export": export_card,
+        }
+        self._update_project_status()
+
+    def _build_feature_dock(self):
+        dock = ctk.CTkFrame(
+            self, fg_color=T.BG_RAISED, corner_radius=T.RADIUS_MD,
+            border_width=1, border_color=T.BORDER,
+        )
+        dock.pack(fill="x", padx=12, pady=(6, 2))
+        ctk.CTkLabel(
+            dock, text="TOOLS", font=T.font(T.SIZE_XS, "bold"),
+            text_color=T.TEXT_DIM,
+        ).pack(side="left", padx=(10, 4))
+        self._feature_buttons = {}
+        for name in (
+            "Source", "Preview", "Timeline", "Ranges",
+            "Text", "Overlays", "Options", "Export",
+        ):
+            feature_button = button(
+                dock, name, variant="ghost", width=70, height=28,
+                font=T.font(T.SIZE_SM, "bold"),
+                command=lambda selected=name: self._jump_to_feature(selected),
+            )
+            feature_button.pack(side="left", padx=1, pady=4)
+            self._feature_buttons[name] = feature_button
+
+    def _jump_to_feature(self, name):
+        target = getattr(self, "_feature_targets", {}).get(name)
+        if target is None:
+            return
+        if name in ("Ranges", "Text", "Overlays", "Options"):
+            if not getattr(target, "_expanded", False):
+                target._toggle()
+        for label, feature_button in self._feature_buttons.items():
+            feature_button.configure(
+                fg_color=T.ACCENT if label == name else "transparent",
+                text_color=T.TEXT_ON_ACCENT if label == name else T.TEXT_MUTED,
+            )
+        self.update_idletasks()
+        canvas = getattr(self.body, "_parent_canvas", None)
+        if canvas is None:
+            return
+        bounds = canvas.bbox("all")
+        if not bounds:
+            return
+        content_height = max(1, bounds[3] - bounds[1])
+        viewport_height = max(1, canvas.winfo_height())
+        max_offset = max(1, content_height - viewport_height)
+        fraction = target.winfo_y() / max_offset
+        canvas.yview_moveto(max(0.0, min(1.0, fraction)))
+
+    def _toggle_download_bar(self):
+        self._set_download_bar_expanded(not self._download_expanded)
+
+    def _set_download_bar_expanded(self, expanded):
+        self._download_expanded = bool(expanded)
+        if self._download_expanded:
+            self.download_container.pack(fill="x")
+            self.web_btn.configure(text="Hide web")
+        else:
+            self.download_container.pack_forget()
+            self.web_btn.configure(text="Web link")
+
     # ------------------------------------------------------------------
     def _current_image_layers(self):
         # Only layers whose path is a real file — the ffmpeg export path
@@ -343,6 +440,7 @@ class TrimTab(ctk.CTkScrollableFrame):
 
     def _on_text_layers_changed(self):
         self.player.refresh_overlay()
+        self._request_snapshot(immediate=False)
 
     def _on_image_layers_changed(self):
         # Drop the image cache so newly-picked files aren't shadowed by a
@@ -352,6 +450,10 @@ class TrimTab(ctk.CTkScrollableFrame):
         # Debounce: typing into a text entry fires on every keystroke —
         # we only want one undo entry per "pause".
         self._request_snapshot(immediate=False)
+
+    def _on_export_options_changed(self):
+        self._update_size_estimate()
+        self._mark_project_dirty()
 
     def _on_range_removed(self):
         self._update_export_enabled()
@@ -373,18 +475,21 @@ class TrimTab(ctk.CTkScrollableFrame):
         self.export_options.set_aspect(preset["aspect"])
         self._update_export_enabled()
         self._update_size_estimate()
+        self._mark_project_dirty()
         self._notify(f"Applied preset: {name}", "info")
 
     def _on_quality_change(self, value):
         settings.set("quality", value)
         self._mark_platform_custom()
         self._update_size_estimate()
+        self._mark_project_dirty()
 
     def _on_format_change(self, value):
         settings.set("format", value)
         self._mark_platform_custom()
         self._update_export_enabled()
         self._update_size_estimate()
+        self._mark_project_dirty()
 
     def _mark_platform_custom(self):
         if self.platform_var.get() != "Custom":
@@ -508,15 +613,26 @@ class TrimTab(ctk.CTkScrollableFrame):
 
     def receive_url(self, url):
         """App-level Ctrl+V router hands pasted links to the download bar."""
+        self._set_download_bar_expanded(True)
+        self._jump_to_feature("Source")
         self.download_bar.receive_url(url)
 
-    def _load_path(self, path):
+    def _load_path(self, path, preserve_project=False):
+        if not preserve_project and not self._prepare_to_replace_project():
+            return False
+        try:
+            new_video_info = get_video_info(path)
+        except Exception as e:
+            self.file_label.configure(text=f"Error: {e}", text_color=T.DANGER)
+            self._notify(f"Could not read video: {e}", "error")
+            return False
         # _restoring suppresses undo/redo recording during the flurry of
         # callbacks that fires as we reset every widget below. The stack
         # is re-baselined at the end.
         self._restoring = True
         try:
             self.video_path = path
+            self.video_info = new_video_info
             # A crop rectangle from a previous video's source pixels doesn't
             # transfer — clear it so the export doesn't choke on out-of-bounds
             # coordinates.
@@ -527,13 +643,6 @@ class TrimTab(ctk.CTkScrollableFrame):
                 self.crop_btn.configure(
                     text="⬚  Crop", fg_color=T.BG_RAISED, text_color=T.TEXT,
                 )
-            try:
-                self.video_info = get_video_info(path)
-            except Exception as e:
-                self.file_label.configure(text=f"Error: {e}", text_color=T.DANGER)
-                self._notify(f"Could not read video: {e}", "error")
-                return
-
             name = os.path.basename(path)
             dur = self.video_info["duration"]
             res = f"{self.video_info['width']}x{self.video_info['height']}"
@@ -549,6 +658,7 @@ class TrimTab(ctk.CTkScrollableFrame):
             self._update_duration_label(0, dur)
             self.text_layers.clear_layers()
             self.text_layers.set_duration(dur)
+            self.image_layers.clear_layers()
             self.image_layers.set_duration(dur)
             self.range_queue.clear()
 
@@ -556,11 +666,17 @@ class TrimTab(ctk.CTkScrollableFrame):
             self.waveform.load(path, dur)
             self.thumbnail_strip.load(path, dur)
             self._update_export_enabled()
+            if not preserve_project:
+                self.current_project_path = None
+                self._project_dirty = False
+                project_files.delete_autosave()
+                self._update_project_status()
             self._notify(f"Loaded {name}", "success")
         finally:
             self._restoring = False
         # Baseline undo history against the freshly-loaded state.
         self._undo_stack.reset(self._snapshot())
+        return True
 
     def _on_slider_change(self, start_val, end_val):
         self.start_entry.set_value(seconds_to_hms(start_val))
@@ -933,6 +1049,15 @@ class TrimTab(ctk.CTkScrollableFrame):
     def keyboard_open(self):
         self._open_file()
 
+    def keyboard_save_project(self):
+        self.save_project()
+
+    def keyboard_save_project_as(self):
+        self.save_project(save_as=True)
+
+    def keyboard_open_project(self):
+        self.choose_and_open_project()
+
     def keyboard_paste_url(self):
         """Ctrl+V on the Trim tab: paste an image from the clipboard as
         a new image overlay. The URL tab binds the same method name to
@@ -981,6 +1106,10 @@ class TrimTab(ctk.CTkScrollableFrame):
                 dict(layer)
                 for layer in self.text_layers.get_all_layers(include_empty=True)
             ],
+            "images": [
+                dict(layer)
+                for layer in self.image_layers.get_all_layers(include_empty=True)
+            ],
         }
 
     def _request_snapshot(self, immediate=False):
@@ -1005,6 +1134,7 @@ class TrimTab(ctk.CTkScrollableFrame):
         if self._restoring or not self.video_path:
             return
         self._undo_stack.record(self._snapshot())
+        self._mark_project_dirty()
 
     def _flush_pending_snapshot(self):
         if self._snapshot_after_id is None:
@@ -1023,7 +1153,9 @@ class TrimTab(ctk.CTkScrollableFrame):
         self._restoring = True
         try:
             # Trim range — update slider, both entries, waveform, thumbnails.
-            start, end = snap["range"]
+            start, end = snap.get(
+                "range", (0.0, float((self.video_info or {}).get("duration", 0.0))),
+            )
             self.range_slider.set_values(start, end)
             self.start_entry.set_value(seconds_to_hms(start))
             self.end_entry.set_value(seconds_to_hms(end))
@@ -1048,11 +1180,213 @@ class TrimTab(ctk.CTkScrollableFrame):
             for data in snap.get("layers", []):
                 self.text_layers._add_layer(preset_data=data)
 
+            self.image_layers.clear_layers()
+            for data in snap.get("images", []):
+                self.image_layers._add_layer(preset_data=data)
+
             # Show the frame at the new start and refresh the overlay.
             self.player.show_frame(start)
             self._update_export_enabled()
         finally:
             self._restoring = False
+
+    # ------------------------------------------------------------------
+    # Project files, autosave, and recovery
+    # ------------------------------------------------------------------
+    def _project_export_state(self):
+        options = dict(self.export_options.get_options())
+        options["output_folder"] = self.export_options.get_output_folder()
+        return {
+            "platform": self.platform_var.get(),
+            "quality": self.quality_var.get(),
+            "format": self.format_var.get(),
+            "options": options,
+        }
+
+    def _project_document(self, project_path=None):
+        return project_files.build_document(
+            self.video_path,
+            self._snapshot(),
+            self._project_export_state(),
+            project_path=project_path,
+        )
+
+    def _mark_project_dirty(self):
+        if self._restoring or not self.video_path:
+            return
+        self._project_dirty = True
+        self._update_project_status()
+        if self._autosave_after_id is not None:
+            try:
+                self.after_cancel(self._autosave_after_id)
+            except Exception:
+                pass
+        self._autosave_after_id = self.after(
+            self._autosave_debounce_ms, self._write_autosave,
+        )
+
+    def _write_autosave(self):
+        self._autosave_after_id = None
+        if not self.video_path or not self._project_dirty:
+            return
+        try:
+            document = self._project_document(self.current_project_path)
+            project_files.save_document(project_files.autosave_path(), document)
+        except Exception as exc:
+            self._notify(f"Autosave failed: {exc}", "warn")
+
+    def _update_project_status(self):
+        setter = getattr(self.app, "set_project_status", None)
+        if not callable(setter):
+            return
+        name = (
+            Path(self.current_project_path).stem
+            if self.current_project_path else "Untitled"
+        )
+        setter(name, self._project_dirty)
+
+    def open_project_hub(self):
+        from videokidnapper.ui.project_dialog import ProjectDialog
+        ProjectDialog(self.app, self)
+
+    def save_project(self, save_as=False, target=None):
+        if not self.video_path:
+            self._notify("Load a video before saving a project", "warn")
+            return False
+        path = target or (None if save_as else self.current_project_path)
+        if not path:
+            path = filedialog.asksaveasfilename(
+                title="Save VideoKidnapper Project",
+                defaultextension=project_files.PROJECT_EXTENSION,
+                filetypes=[
+                    ("VideoKidnapper projects", "*.vidkid"),
+                    ("All files", "*.*"),
+                ],
+            )
+        if not path:
+            return False
+        try:
+            document = self._project_document(path)
+            saved = project_files.save_document(path, document)
+        except Exception as exc:
+            self._notify(f"Could not save project: {exc}", "error")
+            return False
+        self.current_project_path = str(saved)
+        self._project_dirty = False
+        settings.add_recent_project(saved)
+        project_files.delete_autosave()
+        self._update_project_status()
+        self._notify(f"Saved project: {saved.name}", "success")
+        return True
+
+    def choose_and_open_project(self):
+        path = filedialog.askopenfilename(
+            title="Open VideoKidnapper Project",
+            filetypes=[
+                ("VideoKidnapper projects", "*.vidkid"),
+                ("All files", "*.*"),
+            ],
+        )
+        return self.open_project(path) if path else False
+
+    def open_project(self, path, recovery=False):
+        try:
+            document = project_files.load_document(path)
+        except project_files.ProjectFileError as exc:
+            self._notify(str(exc), "error")
+            return False
+
+        source = Path(document["resolved_source"])
+        if not source.is_file():
+            replacement = filedialog.askopenfilename(
+                title="Locate the project's source video",
+                filetypes=[("Video files", "*.*")],
+            )
+            if not replacement:
+                self._notify("Project source video was not found", "warn")
+                return False
+            source = Path(replacement)
+
+        if not recovery and not self._prepare_to_replace_project():
+            return False
+        if not self._load_path(str(source), preserve_project=True):
+            return False
+        self._apply_snapshot(document.get("editor") or {})
+        self._restoring = True
+        try:
+            export = document.get("export") or {}
+            platform = str(export.get("platform", "Custom"))
+            self.platform_var.set(
+                platform if platform in PLATFORM_CHOICES else "Custom",
+            )
+            quality = str(export.get("quality", "Medium"))
+            self.quality_var.set(quality if quality in PRESETS else "Medium")
+            fmt = str(export.get("format", "GIF"))
+            self.format_var.set(fmt if fmt in EXPORT_FORMATS else "GIF")
+            self.export_options.apply_options(export.get("options") or {})
+        finally:
+            self._restoring = False
+
+        linked = document.get("linked_project_path") or ""
+        self.current_project_path = (
+            str(Path(linked).expanduser().resolve())
+            if recovery and linked else str(Path(path).expanduser().resolve())
+        )
+        self._project_dirty = bool(recovery)
+        if not recovery:
+            settings.add_recent_project(self.current_project_path)
+            project_files.delete_autosave()
+        self._undo_stack.reset(self._snapshot())
+        self._update_project_status()
+        self.player.refresh_overlay()
+        self._notify(
+            "Recovered autosaved project" if recovery else
+            f"Opened project: {Path(path).name}",
+            "success",
+        )
+        return True
+
+    def discard_recovery(self):
+        project_files.delete_autosave()
+
+    def _prepare_to_replace_project(self):
+        if not self._project_dirty:
+            return True
+        choice = messagebox.askyesnocancel(
+            "Save current project?",
+            "Save the current project before opening something else?",
+            parent=self.app,
+        )
+        if choice is None:
+            return False
+        if choice and not self.save_project():
+            return False
+        return True
+
+    def request_close(self):
+        self._flush_pending_snapshot()
+        if self._autosave_after_id is not None:
+            try:
+                self.after_cancel(self._autosave_after_id)
+            except Exception:
+                pass
+            self._autosave_after_id = None
+        if self._project_dirty:
+            self._write_autosave()
+        if not self._project_dirty:
+            project_files.delete_autosave()
+            return True
+        choice = messagebox.askyesnocancel(
+            "Save project?",
+            "Save your VideoKidnapper project before closing?",
+            parent=self.app,
+        )
+        if choice is None:
+            return False
+        if choice and not self.save_project():
+            return False
+        project_files.delete_autosave()
+        return True
 
     # ------------------------------------------------------------------
     def _gather_ranges(self):

@@ -8,7 +8,10 @@ UI can display them next to the relevant row.
 """
 
 import importlib
+import hashlib
+import hmac
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,11 +21,12 @@ import zipfile
 from pathlib import Path
 
 
-# Windows 7.1 essentials build — same one we used to bootstrap ffmpeg earlier.
+# Current Windows essentials build and its publisher-provided digest.
 _FFMPEG_WIN_URL = (
-    "https://github.com/GyanD/codexffmpeg/releases/download/7.1/"
-    "ffmpeg-7.1-essentials_build.zip"
+    "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 )
+_FFMPEG_WIN_SHA256_URL = _FFMPEG_WIN_URL + ".sha256"
+FFMPEG_DOWNLOAD_SOURCE = "gyan.dev (official Windows FFmpeg builds)"
 
 
 # ---------------------------------------------------------------------------
@@ -88,10 +92,7 @@ def has_any_missing(required_only=True):
 # ---------------------------------------------------------------------------
 
 def install_ffmpeg_portable(dest_dir, progress_cb=None):
-    """Download the gyan.dev essentials zip and extract ffmpeg.exe/ffprobe.exe.
-
-    Returns ``(ok, message)``.
-    """
+    """Download and verify the gyan.dev FFmpeg essentials archive."""
     if sys.platform != "win32":
         return False, (
             "Automatic install is Windows-only. On macOS run "
@@ -99,37 +100,141 @@ def install_ffmpeg_portable(dest_dir, progress_cb=None):
         )
 
     dest_dir = Path(dest_dir)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = Path(tempfile.mktemp(suffix="-ffmpeg.zip"))
-
+    zip_path = None
     try:
-        def hook(block, block_size, total):
-            if progress_cb and total > 0:
-                frac = min(1.0, (block * block_size) / total)
-                # Leave room for the extraction step at the end.
-                progress_cb(frac * 0.9, f"Downloading FFmpeg... {int(frac*100)}%")
+        if progress_cb:
+            progress_cb(0.01, "Fetching the publisher checksum...")
+        expected = _fetch_expected_sha256(_FFMPEG_WIN_SHA256_URL)
 
-        urllib.request.urlretrieve(_FFMPEG_WIN_URL, zip_path, reporthook=hook)
+        fd, temp_name = tempfile.mkstemp(suffix="-ffmpeg.zip")
+        os.close(fd)
+        zip_path = Path(temp_name)
+        actual = _download_with_sha256(_FFMPEG_WIN_URL, zip_path, progress_cb)
+        if not hmac.compare_digest(actual, expected):
+            return False, (
+                "FFmpeg download failed its SHA-256 integrity check. "
+                "Nothing was installed. Please retry."
+            )
 
         if progress_cb:
-            progress_cb(0.92, "Extracting ffmpeg.exe / ffprobe.exe...")
+            progress_cb(0.92, "Verified. Preparing ffmpeg.exe and ffprobe.exe...")
 
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            for name in zf.namelist():
-                fname = os.path.basename(name)
-                if fname in ("ffmpeg.exe", "ffprobe.exe"):
-                    with zf.open(name) as src:
-                        target = dest_dir / fname
-                        with open(target, "wb") as dst:
-                            shutil.copyfileobj(src, dst)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix=".videokidnapper-ffmpeg-", dir=dest_dir,
+        ) as staging:
+            staged = _extract_ffmpeg_binaries(zip_path, Path(staging))
+            _install_staged_binaries(staged, dest_dir)
 
         if progress_cb:
-            progress_cb(1.0, "FFmpeg installed")
-        return True, str(dest_dir)
+            progress_cb(1.0, "FFmpeg verified and installed")
+        return True, f"Verified SHA-256 and installed to {dest_dir}"
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
     finally:
-        zip_path.unlink(missing_ok=True)
+        if zip_path is not None:
+            zip_path.unlink(missing_ok=True)
+
+
+def _parse_sha256(text):
+    """Return the first SHA-256 digest in publisher checksum text."""
+    match = re.search(r"(?i)(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])", text or "")
+    if not match:
+        raise ValueError("Publisher checksum response did not contain SHA-256")
+    return match.group(0).lower()
+
+
+def _fetch_expected_sha256(url):
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "VideoKidnapper prerequisite installer"},
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:
+        return _parse_sha256(response.read(4096).decode("ascii", errors="replace"))
+
+
+def _download_with_sha256(url, target, progress_cb=None):
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "VideoKidnapper prerequisite installer"},
+    )
+    digest = hashlib.sha256()
+    with urllib.request.urlopen(request, timeout=30) as response, open(target, "wb") as out:
+        total = int(response.headers.get("Content-Length") or 0)
+        downloaded = 0
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            out.write(chunk)
+            digest.update(chunk)
+            downloaded += len(chunk)
+            if progress_cb and total > 0:
+                frac = min(1.0, downloaded / total)
+                progress_cb(
+                    0.05 + frac * 0.84,
+                    f"Downloading FFmpeg... {int(frac * 100)}%",
+                )
+    return digest.hexdigest()
+
+
+def _extract_ffmpeg_binaries(archive, staging_dir):
+    """Extract only the two required PE files into a private directory."""
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    wanted = {"ffmpeg.exe", "ffprobe.exe"}
+    found = {}
+    with zipfile.ZipFile(archive, "r") as zf:
+        for member in zf.infolist():
+            name = os.path.basename(member.filename).lower()
+            if name not in wanted or name in found:
+                continue
+            target = staging_dir / name
+            with zf.open(member) as src, open(target, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            if target.stat().st_size < 1024 * 1024:
+                raise ValueError(f"Archive contained an invalid {name}")
+            with open(target, "rb") as executable:
+                if executable.read(2) != b"MZ":
+                    raise ValueError(f"Archive contained an invalid {name}")
+            found[name] = target
+    missing = wanted.difference(found)
+    if missing:
+        raise ValueError("Archive was missing: " + ", ".join(sorted(missing)))
+    return found
+
+
+def _install_staged_binaries(staged, dest_dir):
+    """Replace the required binaries as one recoverable transaction."""
+    dest_dir = Path(dest_dir)
+    backups = {}
+    installed = []
+    try:
+        for name in sorted(staged):
+            target = dest_dir / name
+            if not target.exists():
+                continue
+            fd, backup_name = tempfile.mkstemp(
+                prefix=f".{name}.", suffix=".previous", dir=dest_dir,
+            )
+            os.close(fd)
+            Path(backup_name).unlink()
+            backup = Path(backup_name)
+            os.replace(target, backup)
+            backups[name] = backup
+        for name in sorted(staged):
+            os.replace(staged[name], dest_dir / name)
+            installed.append(name)
+    except Exception:
+        for name in installed:
+            try:
+                (dest_dir / name).unlink(missing_ok=True)
+            except OSError:
+                pass
+        for name, backup in backups.items():
+            if backup.exists():
+                os.replace(backup, dest_dir / name)
+        raise
+    else:
+        for backup in backups.values():
+            backup.unlink(missing_ok=True)
 
 
 def default_ffmpeg_install_dir():
