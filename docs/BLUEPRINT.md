@@ -2,7 +2,7 @@
 
 **Audience:** someone (human or AI assistant) dropping into this repo cold and needing to get productive in one sitting. Read this first; it points at the other docs for anything deeper.
 
-Last updated: **2026-07-21** (v1.7.4 plus the current quality pass).
+Last updated: **2026-07-21** (v1.8.0 release candidate).
 
 ---
 
@@ -25,7 +25,7 @@ Packaged Store, AppImage, and macOS builds include FFmpeg. When a Windows portab
 
 ## Current state as of 2026-07-21
 
-The published baseline is v1.7.4. The current quality pass adds compact tool navigation, onboarding, project save and recovery, safer prerequisite installation, install-aware app updates, refreshed screenshots, and loading-race fixes. Local verification is **507 tests**, Ruff, mypy, FFmpeg, and auto-track, all clean.
+The v1.8.0 release adds compact tool navigation, onboarding, project save and recovery, safer prerequisite installation, install-aware app updates, refreshed screenshots, and loading-race fixes. Local verification is **507 tests**, Ruff, mypy, FFmpeg, and auto-track, all clean.
 
 Release automation covers PyPI, Windows portable and Setup builds, Microsoft Store MSIX, Linux AppImage and `.deb`, macOS `.dmg`, GitHub Pages, and the signed APT repository. See `docs/RELEASE.md` for the current release process.
 
