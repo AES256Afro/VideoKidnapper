@@ -29,6 +29,7 @@ class WaveformStrip(ctk.CTkFrame):
         self._start = 0.0
         self._end = 0.0
         self._loading = False
+        self._gen = 0
 
         self.canvas = tk.Canvas(
             self, height=self._HEIGHT, bg=T.BG_SURFACE, highlightthickness=0,
@@ -44,6 +45,8 @@ class WaveformStrip(ctk.CTkFrame):
     # ------------------------------------------------------------------
     def load(self, video_path, duration):
         """Kick off ffmpeg extraction in the background."""
+        self._gen += 1
+        gen = self._gen
         self._video_path = video_path
         self._duration = duration
         self._peaks = []
@@ -51,15 +54,30 @@ class WaveformStrip(ctk.CTkFrame):
         self._end = duration
         self._loading = True
         self._update_hint("Loading waveform...")
+        state = {"done": False, "peaks": []}
 
         def worker():
-            peaks = extract_waveform(video_path, buckets=self._BUCKETS, duration=duration)
-            self._peaks = peaks
+            try:
+                peaks = extract_waveform(
+                    video_path, buckets=self._BUCKETS, duration=duration,
+                )
+            except Exception:
+                peaks = []
+            state["peaks"] = peaks
+            state["done"] = True
+
+        def poll():
+            if gen != self._gen or not self.winfo_exists():
+                return
+            if not state["done"]:
+                self.after(100, poll)
+                return
+            self._peaks = state["peaks"]
             self._loading = False
-            if self.winfo_exists():
-                self.after(0, self._render)
+            self._render()
 
         threading.Thread(target=worker, daemon=True).start()
+        self.after(100, poll)
 
     def set_range(self, start, end):
         self._start = start
@@ -67,6 +85,7 @@ class WaveformStrip(ctk.CTkFrame):
         self._render()
 
     def clear(self):
+        self._gen += 1
         self._video_path = None
         self._peaks = []
         self._start = 0

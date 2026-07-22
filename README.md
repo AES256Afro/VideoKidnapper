@@ -22,9 +22,11 @@ Grab a video from the web, cut the part you want, caption it, and export a clean
 - **Overlays.** Logos, watermarks, and sticker or GIF overlays dragged anywhere on the frame, each with its own size, opacity, and timing. Paste an image straight from the clipboard.
 - **Export for the platform.** Tune GIFs (dither, palette, loop) or export hardware-encoded MP4s. Reframe 16:9 to 9:16 for Shorts, Reels, and TikTok with a blurred-background fill. Speed, rotate, mute, audio-only, and colour adjustment are built in.
 - **Record your screen** straight into the editor.
+- **Save real projects.** `.vidkid` project files preserve the source link, trim ranges, crop, captions, overlays, and export choices. Autosave recovery protects work after an interrupted session, and recent projects stay one click away.
+- **Update through the right channel.** The app detects Store, winget, pip, APT, AppImage, macOS, portable, and source installs, then offers the safest update route for that install.
 - **Runs fully offline.** No upload, no account, no watermark. Open source, FFmpeg included.
 
-One tab does it all: open a file, record the screen, or paste a link, then trim, caption, and export in the same place. VideoKidnapper also has undo and redo, a Batch Export tab, an export History tab, keyboard shortcuts (`Space` play, `J`/`L` step, `I`/`O` in-out, `Ctrl+E` export), a CLI mode, and a [plugin API](docs/PLUGINS.md). See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what is next.
+One tab does it all: open a file, record the screen, or paste a link, then trim, caption, and export in the same place. A fixed tool dock keeps every section one click away, even when a project has many caption lines. VideoKidnapper also has undo and redo, project save and recovery, a Batch Export tab, an export History tab, keyboard shortcuts (`Ctrl+S` project, `Space` play, `J`/`L` step, `I`/`O` in-out, `Ctrl+E` export), a CLI mode, and a [plugin API](docs/PLUGINS.md). See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what is next.
 
 ---
 
@@ -63,6 +65,18 @@ The **Kidnap from** bar detects the platform as you paste (or press `Ctrl+V` to 
 
 Every successful export is persisted to `~/.videokidnapper_settings.json` — the 25 most recent show here with format, quality preset, timestamp, and file size. **Open** launches the file in the default system player; **Reveal** opens its folder in Explorer / Finder. Missing files (moved or deleted) are dimmed and their buttons disabled.
 
+### Projects and recovery
+
+![Project save and recent-file hub](assets/screenshots/projects.png)
+
+Press `Ctrl+S` to save a `.vidkid` project, `Ctrl+Shift+S` to save a copy, or `Ctrl+Shift+O` to open one. Project files keep the source video reference, trim and queued ranges, crop, text and image layers, plus export choices. Relative media paths travel with a project folder when possible. Unsaved edits are written atomically to a recovery file, and the next launch offers to recover it after an interrupted session.
+
+### App updates
+
+![Install-aware update prompt](assets/screenshots/updates.png)
+
+When a release is available, the header opens an update prompt tailored to the current install. Store and native package-manager installs use their signed or verified update route. Portable, AppImage, macOS, and source installs open the matching verified release instead of replacing a running executable in place.
+
 ### Debug
 
 ![Debug tab with color-coded levels](assets/screenshots/debug.png)
@@ -71,11 +85,15 @@ Captures `stdout` + `stderr` with level-colored tags: `INFO` accent-blue, `WARN`
 
 ### Setup
 
+![First-run welcome](assets/screenshots/onboarding.png)
+
+New installs start with a short three-step welcome and direct actions for opening a local video or using a web link. Editing stays on the computer, with no account or upload required.
+
 ![Setup dialog](assets/screenshots/setup.png)
 
-Opened from the **⚙ Setup** button in the header, or automatically when FFmpeg isn't detected on first run. Each row describes a prerequisite and the feature it unlocks; required items are pre-checked, optional ones wait for opt-in. **Select all missing** toggles every installable row.
+Opened from the **⚙ Setup** button in the header. When FFmpeg is missing on first run, a setup screen explains the source, destination, and integrity check before asking permission to install. Each row describes a prerequisite and the feature it unlocks; required items are pre-checked, optional ones wait for opt-in. **Select all missing** toggles every installable row.
 
-- **Install Selected** runs in a background thread: FFmpeg is pulled as a portable Windows build from gyan.dev and extracted into `assets/ffmpeg/bin/` (the app's fallback lookup path). Python packages use `python -m pip install --user` — no admin needed.
+- **Install Selected** runs in a background thread: FFmpeg is pulled as a portable Windows build from gyan.dev, checked against the publisher's SHA-256 digest, staged, and then placed in `assets/ffmpeg/bin/` (the app's fallback lookup path). Python packages use `python -m pip install --user`; no admin access is needed.
 - **Open Admin Terminal** launches an elevated shell pre-populated with the right commands for your OS: `winget install Gyan.FFmpeg` on Windows (via PowerShell `Start-Process -Verb RunAs`), `brew install ffmpeg` on macOS (via Terminal + `osascript`), `sudo apt-get install ffmpeg` on Linux. If no terminal is available, commands are copied to the clipboard as a fallback.
 - **Relaunch** restarts the current process so newly-installed prerequisites are picked up.
 
@@ -90,6 +108,8 @@ After a successful export, the Export dialog reveals a share panel with a captio
 ---
 
 ## Text layers
+
+![Multiline text tools with the persistent feature dock](assets/screenshots/studio_text.png)
 
 The editor exposes a collapsible **Text Layers** panel with per-layer controls:
 
@@ -143,7 +163,7 @@ Entry fields swallow shortcuts so typing into them doesn't scrub the video.
 
 ### Option A — Windows (no Python required)
 
-Get it from the **[Microsoft Store](https://apps.microsoft.com/detail/9N4BMTK8Q7KG)** (signed, auto-updates, no security warning), or download **`VideoKidnapper.exe`** / the Setup installer from the [latest release](https://github.com/AES256Afro/VideoKidnapper/releases/latest). Missing prerequisites auto-install on first launch.
+Get it from the **[Microsoft Store](https://apps.microsoft.com/detail/9N4BMTK8Q7KG)** (signed, auto-updates, no security warning), or download **`VideoKidnapper.exe`** / the Setup installer from the [latest release](https://github.com/AES256Afro/VideoKidnapper/releases/latest). If a prerequisite is missing, first-run setup explains the verified download and asks before installing it.
 
 ### Option B — macOS (no Python required)
 
@@ -190,7 +210,7 @@ videokidnapper                        # launches the GUI
 videokidnapper --help                 # CLI mode
 ```
 
-You still need FFmpeg on `PATH` (or use the in-app **⚙ Setup** dialog after first launch to auto-install a portable copy on Windows).
+You still need FFmpeg on `PATH` (or use the in-app **⚙ Setup** dialog to install a verified portable copy on Windows).
 
 ### Option E — Clone and install (contributors / latest `main`)
 
@@ -267,7 +287,7 @@ pip install pytest
 python -m pytest tests/ -v
 ```
 
-410+ tests covering URL detection, platform share intents, ffmpeg filter construction (crop clamping, aspect-crop and blur-fill math, fade expressions, GIF palette builders, hardware encoder picking / probing), text styling (outline / shadow / font-variant resolution / multiline), download retry classification and cookie resolution, settings persistence + schema migration, SRT parser, size estimator, LRU cache behavior, and the DnD payload parser.
+500+ tests covering URL detection, project files and recovery paths, install-aware updates, verified prerequisite staging, platform share intents, ffmpeg filter construction, text styling, download retry classification and cookie resolution, settings migration, SRT parsing, size estimation, cache behavior, and drag-and-drop payload parsing.
 
 ---
 
