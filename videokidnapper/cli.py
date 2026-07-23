@@ -145,9 +145,29 @@ def _selftest():
           + ("" if track_ok else f" ({hint})"))
     print(f"frozen: {frozen}")
 
+    from videokidnapper.core.downloader import NativeDirectProvider
+    native_ok = NativeDirectProvider().can_handle("https://example.com/clip.mp4")
+    print(f"native-download: {'ok' if native_ok else 'MISSING'}")
+
+    try:
+        import yt_dlp  # noqa: F401
+        compatibility_ok = True
+    except ImportError:
+        compatibility_ok = False
+    print(
+        "web-compatibility: "
+        + ("ok" if compatibility_ok else "unavailable")
+    )
+
     failed = False
     if frozen and not track_ok:
         print("FAIL: auto-track should be bundled in a packaged build")
+        failed = True
+    if not native_ok:
+        print("FAIL: native direct download provider is unavailable")
+        failed = True
+    if frozen and not compatibility_ok:
+        print("FAIL: web compatibility should be bundled in a packaged build")
         failed = True
     return 1 if failed else 0
 

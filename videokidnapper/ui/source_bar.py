@@ -8,6 +8,7 @@ download flows into the same trim/caption/export pipeline a local file
 uses. Contains the URL entry + platform detection, cookies selection,
 yt-dlp self-update, download progress, and the batch queue.
 """
+import sys
 import threading
 from pathlib import Path
 from tkinter import filedialog
@@ -66,7 +67,7 @@ class DownloadBar(ctk.CTkFrame):
             chip.pack(side="left", padx=3)
             self._platform_chips[platform] = chip
         ctk.CTkLabel(
-            chip_row, text="…and most sites yt-dlp knows",
+            chip_row, text="…plus direct media and compatible sites",
             font=T.font(T.SIZE_XS), text_color=T.TEXT_DIM,
         ).pack(side="left", padx=(8, 0))
 
@@ -120,9 +121,14 @@ class DownloadBar(ctk.CTkFrame):
         ).pack(side="left")
 
         self.update_ytdlp_btn = button(
-            cookie_row, "⟳ Update yt-dlp", variant="ghost",
+            cookie_row,
+            "Managed by app" if getattr(sys, "frozen", False)
+            else "⟳ Update compatibility",
+            variant="ghost",
             width=120, height=26, command=self._update_ytdlp,
         )
+        if getattr(sys, "frozen", False):
+            self.update_ytdlp_btn.configure(state="disabled")
         self.update_ytdlp_btn.pack(side="right")
 
         self.status_label = ctk.CTkLabel(
@@ -205,7 +211,7 @@ class DownloadBar(ctk.CTkFrame):
             chip.set_active(name == platform)
         if url and not platform:
             self.status_label.configure(
-                text="Unrecognized site — yt-dlp will still try",
+                text="Unrecognized site. The compatibility engine will still try.",
                 text_color=T.TEXT_DIM)
         else:
             self.status_label.configure(text="")
@@ -270,7 +276,10 @@ class DownloadBar(ctk.CTkFrame):
                 error_text = f"Error: {result['error'][:160]}"
                 from videokidnapper.utils import ytdlp_update
                 if ytdlp_update.looks_like_extractor_failure(result["error"]):
-                    error_text += "  — yt-dlp may be outdated; try ⟳ Update yt-dlp"
+                    if getattr(sys, "frozen", False):
+                        error_text += "  Check for a VideoKidnapper app update."
+                    else:
+                        error_text += "  Try Update compatibility."
                 self.status_label.configure(text=error_text, text_color=T.DANGER)
                 self._notify(f"Download failed: {result['error'][:60]}", "error")
             self.download_progress.set(0)
@@ -291,7 +300,9 @@ class DownloadBar(ctk.CTkFrame):
         from videokidnapper.utils import ytdlp_update
 
         self.update_ytdlp_btn.configure(state="disabled", text="Updating...")
-        self.status_label.configure(text="Updating yt-dlp...", text_color=T.TEXT_MUTED)
+        self.status_label.configure(
+            text="Updating compatibility engine...", text_color=T.TEXT_MUTED,
+        )
 
         def worker():
             ok, msg = ytdlp_update.update_via_pip()
@@ -301,7 +312,9 @@ class DownloadBar(ctk.CTkFrame):
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_ytdlp_updated(self, ok, msg):
-        self.update_ytdlp_btn.configure(state="normal", text="⟳ Update yt-dlp")
+        self.update_ytdlp_btn.configure(
+            state="normal", text="⟳ Update compatibility",
+        )
         self.status_label.configure(
             text=msg[:100], text_color=T.TEXT_MUTED if ok else T.DANGER)
         self._notify(msg[:100], "info" if ok else "error")
