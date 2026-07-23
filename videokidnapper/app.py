@@ -710,7 +710,7 @@ class App(ctk.CTk):
 
     # ------------------------------------------------------------------
     def _show_setup_landing(self):
-        """Explain missing prerequisites and wait for install consent."""
+        """Explain components needing attention and wait for install consent."""
         from videokidnapper.utils import prereq_check
         self._setup_frame = ctk.CTkFrame(self, fg_color="transparent")
         self._setup_frame.place(relx=0.5, rely=0.5, anchor="center")
@@ -732,7 +732,7 @@ class App(ctk.CTk):
         self._setup_msg = ctk.CTkLabel(
             self._setup_frame,
             text=f"Needed to continue: {plan}" if plan
-                 else "Checking prerequisites…",
+                 else "Checking components…",
             font=T.font(T.SIZE_MD), text_color=T.TEXT_MUTED,
             justify="center", wraplength=460,
         )

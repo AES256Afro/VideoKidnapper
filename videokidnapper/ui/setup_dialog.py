@@ -13,6 +13,7 @@ route survives as an explicit "Advanced" fallback for users who prefer
 their package manager (winget/brew/apt).
 """
 
+import sys
 import threading
 
 import customtkinter as ctk
@@ -31,22 +32,22 @@ from videokidnapper.utils import prereq_check
 FEATURES = [
     {
         "key": "ffmpeg", "label": "FFmpeg",
-        "feature": "Video trimming, GIF export, MP4 export, screen recording",
+        "feature": "Trim, record, and export GIF or MP4",
         "optional": False, "required": True,
     },
     {
-        "key": "yt_dlp", "label": "yt-dlp",
-        "feature": "Downloads from YouTube, Instagram, Bluesky, X, Reddit, Facebook",
+        "key": "yt_dlp", "label": "Web compatibility engine",
+        "feature": "Fallback for supported web pages",
         "optional": False, "required": True,
     },
     {
         "key": "customtkinter", "label": "customtkinter",
-        "feature": "Dark-themed UI widgets (the app itself)",
+        "feature": "Application interface",
         "optional": False, "required": True,
     },
     {
         "key": "PIL", "label": "Pillow",
-        "feature": "Frame preview + live text-layer overlay",
+        "feature": "Frame preview and overlays",
         "optional": False, "required": True,
     },
     {
@@ -56,7 +57,7 @@ FEATURES = [
     },
     {
         "key": "tkinterdnd2", "label": "tkinterdnd2",
-        "feature": "Drag-and-drop video files onto the preview",
+        "feature": "Drag and drop video files",
         "optional": True, "required": False,
     },
 ]
@@ -65,7 +66,7 @@ FEATURES = [
 class SetupDialog(ctk.CTkToplevel):
     def __init__(self, master, on_relaunch=None, **kwargs):
         super().__init__(master, **kwargs)
-        self.title("VideoKidnapper — Setup")
+        self.title("VideoKidnapper - Components & Setup")
         self.geometry("700x680")
         self.configure(fg_color=T.BG_BASE)
         self.transient(master.winfo_toplevel() if master else None)
@@ -94,14 +95,19 @@ class SetupDialog(ctk.CTkToplevel):
         header.pack(fill="x", padx=16, pady=(14, 4))
 
         ctk.CTkLabel(
-            header, text="Prerequisites",
+            header, text="Components & Setup",
             font=T.font(T.SIZE_XL, "bold"), text_color=T.TEXT,
         ).pack(anchor="w")
 
         ctk.CTkLabel(
             header,
-            text="Everything missing is already selected — click Install and "
-                 "watch it happen in the console below.",
+            text=(
+                "Components included with this app update together. "
+                "Anything needing attention appears below."
+                if getattr(sys, "frozen", False) else
+                "Missing source-install components are selected. Review the plan "
+                "and watch installation progress below."
+            ),
             font=T.font(T.SIZE_SM), text_color=T.TEXT_DIM,
         ).pack(anchor="w")
 
@@ -150,7 +156,7 @@ class SetupDialog(ctk.CTkToplevel):
         # happens invisibly — pip lines and the FFmpeg download progress
         # land here as they happen.
         self.console = ctk.CTkTextbox(
-            card, height=150,
+            card, height=92,
             font=T.font(T.SIZE_XS, mono=True),
             fg_color="#0A0D12", text_color=T.TEXT_MUTED,
             border_width=1, border_color=T.BORDER,
@@ -179,7 +185,7 @@ class SetupDialog(ctk.CTkToplevel):
         actions.pack(fill="x", padx=16, pady=(4, 14))
 
         self.install_btn = button(
-            actions, "  ⬇  Install missing now", variant="primary",
+            actions, "  ⬇  Install selected", variant="primary",
             width=190, command=self._install_selected,
         )
         self.install_btn.pack(side="left")
@@ -240,59 +246,17 @@ class SetupDialog(ctk.CTkToplevel):
             corner_radius=T.RADIUS_MD,
             border_width=1, border_color=T.BORDER,
         )
-        frame.pack(fill="x", pady=4, padx=2)
+        frame.pack(fill="x", pady=3, padx=2)
 
         inner = ctk.CTkFrame(frame, fg_color="transparent")
-        inner.pack(fill="x", padx=12, pady=10)
+        inner.pack(fill="x", padx=10, pady=6)
 
         icon = ctk.CTkLabel(
             inner, text="…", width=24,
             font=T.font(T.SIZE_LG, "bold"),
             text_color=T.TEXT_DIM,
         )
-        icon.pack(side="left", padx=(0, 8))
-
-        text_col = ctk.CTkFrame(inner, fg_color="transparent")
-        text_col.pack(side="left", fill="x", expand=True)
-
-        title_row = ctk.CTkFrame(text_col, fg_color="transparent")
-        title_row.pack(fill="x")
-
-        label = ctk.CTkLabel(
-            title_row, text=feat["label"],
-            font=T.font(T.SIZE_MD, "bold"),
-            text_color=T.TEXT, anchor="w",
-        )
-        label.pack(side="left")
-
-        if feat["required"]:
-            ctk.CTkLabel(
-                title_row, text=" REQUIRED ",
-                font=T.font(T.SIZE_XS, "bold"),
-                text_color=T.TEXT_ON_ACCENT,
-                fg_color=T.ACCENT, corner_radius=8, padx=6,
-            ).pack(side="left", padx=(6, 0))
-        else:
-            ctk.CTkLabel(
-                title_row, text=" OPTIONAL ",
-                font=T.font(T.SIZE_XS, "bold"),
-                text_color=T.TEXT_MUTED,
-                fg_color=T.BG_HOVER, corner_radius=8, padx=6,
-            ).pack(side="left", padx=(6, 0))
-
-        version_label = ctk.CTkLabel(
-            title_row, text="",
-            font=T.font(T.SIZE_XS, mono=True),
-            text_color=T.TEXT_DIM,
-        )
-        version_label.pack(side="right")
-
-        ctk.CTkLabel(
-            text_col, text=feat["feature"],
-            font=T.font(T.SIZE_SM),
-            text_color=T.TEXT_MUTED, anchor="w", justify="left",
-            wraplength=440,
-        ).pack(fill="x", pady=(2, 0))
+        icon.pack(side="left", padx=(0, 6))
 
         var = ctk.BooleanVar(value=False)
         checkbox = ctk.CTkCheckBox(
@@ -302,6 +266,41 @@ class SetupDialog(ctk.CTkToplevel):
             command=self._sync_master_checkbox,
         )
         checkbox.pack(side="right")
+
+        version_label = ctk.CTkLabel(
+            inner, text="", width=76,
+            font=T.font(T.SIZE_XS, mono=True),
+            text_color=T.TEXT_DIM,
+        )
+        version_label.pack(side="right", padx=(4, 6))
+
+        label = ctk.CTkLabel(
+            inner, text=feat["label"], width=160,
+            font=T.font(T.SIZE_MD, "bold"),
+            text_color=T.TEXT, anchor="w",
+        )
+        label.pack(side="left")
+
+        if feat["required"]:
+            ctk.CTkLabel(
+                inner, text=" REQUIRED ",
+                font=T.font(T.SIZE_XS, "bold"),
+                text_color=T.TEXT_ON_ACCENT,
+                fg_color=T.ACCENT, corner_radius=8, padx=6,
+            ).pack(side="left", padx=(4, 8))
+        else:
+            ctk.CTkLabel(
+                inner, text=" OPTIONAL ",
+                font=T.font(T.SIZE_XS, "bold"),
+                text_color=T.TEXT_MUTED,
+                fg_color=T.BG_HOVER, corner_radius=8, padx=6,
+            ).pack(side="left", padx=(4, 8))
+
+        ctk.CTkLabel(
+            inner, text=feat["feature"],
+            font=T.font(T.SIZE_XS),
+            text_color=T.TEXT_MUTED, anchor="w", justify="left",
+        ).pack(side="left", fill="x", expand=True)
 
         self._rows[feat["key"]] = {
             "frame": frame, "icon": icon, "label": label,
@@ -333,9 +332,13 @@ class SetupDialog(ctk.CTkToplevel):
                 self._selected[feat["key"]].set(False)
                 ver = info.get("version") or ""
                 if ver and ver[0].isdigit():
-                    row["version"].configure(text=f"v{ver}")
+                    prefix = "bundled " if getattr(sys, "frozen", False) else ""
+                    row["version"].configure(text=f"{prefix}v{ver}")
                 elif ver or info.get("path"):
-                    row["version"].configure(text="detected")
+                    row["version"].configure(
+                        text="bundled" if getattr(sys, "frozen", False)
+                        else "detected"
+                    )
             else:
                 icon_color = T.DANGER if feat["required"] else T.WARN
                 row["icon"].configure(text="✗" if feat["required"] else "○",
@@ -350,12 +353,12 @@ class SetupDialog(ctk.CTkToplevel):
         missing = sum(1 for info in self._status.values() if not info.get("installed"))
         if missing:
             self.status_label.configure(
-                text=f"{missing} prerequisite(s) missing",
+                text=f"{missing} component(s) need attention",
                 text_color=T.WARN,
             )
         else:
             self.status_label.configure(
-                text="All prerequisites installed",
+                text="All components ready",
                 text_color=T.SUCCESS,
             )
 
@@ -457,7 +460,7 @@ class SetupDialog(ctk.CTkToplevel):
 
     def _install_finished(self, failures, installed):
         self._installing = False
-        self.install_btn.configure(state="normal", text="  ⬇  Install missing now")
+        self.install_btn.configure(state="normal", text="  ⬇  Install selected")
         self._reload_status()
 
         # Console summary: exactly what changed.

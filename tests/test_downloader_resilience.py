@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for download retry/resume and the yt-dlp self-update helpers."""
 
+import io
 import sys
 import threading
 import types
@@ -269,6 +270,133 @@ def test_reddit_media_fallback_honours_cancel(fake_ytdlp, monkeypatch):
         "https://www.reddit.com/r/x/comments/abc/foo/", max_attempts=3)
 
     assert result["error"] == "cancelled"
+
+
+# ---------------------------------------------------------------------------
+# Native direct-media provider
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("url", [
+    "https://cdn.example/clip.mp4",
+    "https://cdn.example/CLIP.WEBM?token=abc",
+    "https://cdn.example/animation.gif#preview",
+])
+def test_native_provider_accepts_supported_direct_media(url):
+    assert downloader.NativeDirectProvider().can_handle(url)
+
+
+@pytest.mark.parametrize("url", [
+    "https://example.com/watch/123",
+    "https://example.com/master.m3u8",
+    "file:///tmp/clip.mp4",
+    "",
+])
+def test_native_provider_leaves_pages_and_manifests_to_compatibility(url):
+    assert not downloader.NativeDirectProvider().can_handle(url)
+
+
+def test_direct_url_uses_native_provider_before_ytdlp(fake_ytdlp, monkeypatch):
+    monkeypatch.setattr(
+        downloader, "_download_direct_media",
+        lambda *args, **kwargs: "/tmp/native_clip.mp4",
+    )
+
+    result = downloader.download_video("https://cdn.example/native_clip.mp4")
+
+    assert result["error"] is None
+    assert result["path"] == "/tmp/native_clip.mp4"
+    assert result["provider"] == "VideoKidnapper native"
+    assert _FakeYDL.calls == []
+
+
+def test_native_failure_falls_back_to_ytdlp(fake_ytdlp, monkeypatch):
+    def fail_native(*args, **kwargs):
+        raise RuntimeError("server rejected direct request")
+
+    monkeypatch.setattr(downloader, "_download_direct_media", fail_native)
+    _FakeYDL.plan = ["ok"]
+
+    result = downloader.download_video("https://cdn.example/clip.mp4")
+
+    assert result["error"] is None
+    assert result["path"] == "/tmp/clip.mp4"
+    assert result["provider"] == "yt-dlp compatibility"
+    assert len(_FakeYDL.calls) == 1
+
+
+class _DirectResponse:
+    def __init__(self, body, content_type="video/mp4", url="https://cdn/x.mp4"):
+        self._body = io.BytesIO(body)
+        self.headers = {
+            "Content-Type": content_type,
+            "Content-Length": str(len(body)),
+        }
+        self._url = url
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self, size=-1):
+        return self._body.read(size)
+
+    def geturl(self):
+        return self._url
+
+
+def test_direct_download_writes_complete_file_atomically(tmp_path, monkeypatch):
+    import urllib.request
+
+    payload = b"not-real-video-but-nonempty"
+    monkeypatch.setattr(downloader, "TEMP_DIR", tmp_path)
+    monkeypatch.setattr(
+        urllib.request, "urlopen",
+        lambda *args, **kwargs: _DirectResponse(payload),
+    )
+
+    path = downloader._download_direct_media("https://cdn.example/x.mp4")
+
+    assert path == str(tmp_path / "x.mp4")
+    assert (tmp_path / "x.mp4").read_bytes() == payload
+    assert list(tmp_path.glob("*.part")) == []
+
+
+def test_direct_download_cancel_removes_partial_file(tmp_path, monkeypatch):
+    import urllib.request
+
+    cancel = threading.Event()
+    cancel.set()
+    monkeypatch.setattr(downloader, "TEMP_DIR", tmp_path)
+    monkeypatch.setattr(
+        urllib.request, "urlopen",
+        lambda *args, **kwargs: _DirectResponse(b"partial-video"),
+    )
+
+    with pytest.raises(Exception, match="cancelled"):
+        downloader._download_direct_media(
+            "https://cdn.example/x.mp4", cancel_event=cancel,
+        )
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_direct_download_rejects_html(tmp_path, monkeypatch):
+    import urllib.request
+
+    monkeypatch.setattr(downloader, "TEMP_DIR", tmp_path)
+    monkeypatch.setattr(
+        urllib.request, "urlopen",
+        lambda *args, **kwargs: _DirectResponse(
+            b"<html>not media</html>", content_type="text/html",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="video or GIF"):
+        downloader._download_direct_media("https://cdn.example/fake.mp4")
+
+    assert list(tmp_path.iterdir()) == []
 
 
 # ---------------------------------------------------------------------------

@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Native direct downloads.** Direct MP4, WebM, GIF, and other supported media links download through VideoKidnapper itself. Site pages automatically use the bundled compatibility engine when extraction is needed.
+
+### Changed
+
+- **Managed component presentation.** Packaged builds now show their download engine as app-managed and direct users to app updates instead of offering an in-place Python package update that cannot work inside a frozen build.
+
 ## [1.8.0] - 2026-07-21
 
 ### Added

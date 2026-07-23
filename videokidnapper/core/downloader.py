@@ -3,8 +3,14 @@
 import os
 import re
 import threading
+from pathlib import Path
+from urllib.parse import unquote, urlparse
 
-from videokidnapper.config import SUPPORTED_PLATFORMS, TEMP_DIR
+from videokidnapper.config import (
+    SUPPORTED_PLATFORMS,
+    SUPPORTED_VIDEO_EXTENSIONS,
+    TEMP_DIR,
+)
 from videokidnapper.utils.ffmpeg_check import find_ffmpeg
 
 
@@ -21,6 +27,70 @@ OFFLINE_MESSAGE = (
     "No internet connection. Connect to the internet to download videos. "
     "You can still open a local file to trim, caption, and export."
 )
+
+
+class DownloadProvider:
+    """Small interface shared by native and compatibility download engines."""
+
+    name = "provider"
+
+    def can_handle(self, url):
+        raise NotImplementedError
+
+    def download(self, url, progress_callback, cancel_event, cookies, max_attempts):
+        raise NotImplementedError
+
+
+class NativeDirectProvider(DownloadProvider):
+    """Download direct video and GIF URLs without a site extractor."""
+
+    name = "VideoKidnapper native"
+
+    def can_handle(self, url):
+        try:
+            parsed = urlparse(url or "")
+        except (TypeError, ValueError):
+            return False
+        return (
+            parsed.scheme.lower() in ("http", "https")
+            and Path(unquote(parsed.path)).suffix.lower()
+            in SUPPORTED_VIDEO_EXTENSIONS
+        )
+
+    def download(self, url, progress_callback, cancel_event, cookies, max_attempts):
+        path = _download_direct_media(url, progress_callback, cancel_event)
+        return {
+            "path": path,
+            "title": Path(path).stem,
+            "platform": detect_platform(url),
+            "error": None,
+            "provider": self.name,
+        }
+
+
+class YtDlpProvider(DownloadProvider):
+    """Compatibility engine for web pages that require site extraction."""
+
+    name = "yt-dlp compatibility"
+
+    def can_handle(self, url):
+        return bool(url)
+
+    def download(self, url, progress_callback, cancel_event, cookies, max_attempts):
+        result = _download_with_ytdlp(
+            url,
+            progress_callback=progress_callback,
+            cancel_event=cancel_event,
+            cookies=cookies,
+            max_attempts=max_attempts,
+        )
+        result["provider"] = self.name
+        return result
+
+
+def get_download_providers():
+    """Return providers in routing order, native first and compatibility last."""
+    return (NativeDirectProvider(), YtDlpProvider())
 
 
 def has_internet(timeout=2.0):
@@ -183,58 +253,156 @@ def _reddit_media_url(err_msg):
 
 
 def _download_direct_media(media_url, progress_callback=None, cancel_event=None):
-    """Fetch a direct media file (a Reddit GIF/image redirect target) over
-    plain HTTP with a browser User-Agent and save it to ``TEMP_DIR``.
+    """Fetch a direct video or GIF into ``TEMP_DIR`` atomically.
 
-    yt-dlp's default request gets bounced to the un-extractable /media
-    HTML page; a browser User-Agent gets the real file instead. Only
-    accepts GIF and video mime types — a static image post is reported
-    back as an error rather than loaded into the editor as a dead frame.
-    Returns the saved path; raises on a non-media response or read error.
+    The response must identify itself as video, GIF, or generic binary data
+    whose URL has a supported video extension. A temporary partial file is
+    removed on cancellation or failure, so interrupted downloads never look
+    like valid editor inputs.
     """
     import urllib.request
-    from urllib.parse import urlparse
 
     _ensure_temp_dir()
     req = urllib.request.Request(media_url, headers={"User-Agent": _DEFAULT_UA})
-    with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT_SECONDS) as resp:
-        ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-        if ctype != "image/gif" and not ctype.startswith("video/"):
-            raise RuntimeError(
-                f"this Reddit post is not a video or GIF (got {ctype or 'unknown type'})"
+    partial_path = None
+    try:
+        with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT_SECONDS) as resp:
+            ctype = (resp.headers.get("Content-Type") or "").split(";", 1)[0]
+            ctype = ctype.strip().lower()
+            response_url = resp.geturl() if hasattr(resp, "geturl") else media_url
+            url_ext = Path(unquote(urlparse(response_url).path)).suffix.lower()
+            generic_binary = ctype in (
+                "application/octet-stream", "binary/octet-stream", "",
             )
-        subtype = ctype.split("/", 1)[1] or "mp4"
-        ext = ".gif" if ctype == "image/gif" else f".{subtype}"
+            if (
+                ctype != "image/gif"
+                and not ctype.startswith("video/")
+                and not (generic_binary and url_ext in SUPPORTED_VIDEO_EXTENSIONS)
+            ):
+                raise RuntimeError(
+                    "the link did not return a video or GIF "
+                    f"(got {ctype or 'unknown type'})"
+                )
 
-        name = os.path.basename(urlparse(media_url).path) or "reddit_media"
-        base, cur_ext = os.path.splitext(name)
-        if cur_ext.lower() != ext:
-            name = (base or "reddit_media") + ext
-        out_path = os.path.join(str(TEMP_DIR), name)
+            ext = _direct_media_extension(ctype, url_ext)
+            raw_name = os.path.basename(unquote(urlparse(response_url).path))
+            name = _safe_download_name(raw_name, ext)
+            out_path = _available_download_path(TEMP_DIR / name)
+            partial_path = out_path.with_name(out_path.name + ".part")
 
-        total = int(resp.headers.get("Content-Length") or 0)
-        got = 0
-        with open(out_path, "wb") as fh:
-            while True:
-                if cancel_event is not None and cancel_event.is_set():
-                    raise Exception("Download cancelled")
-                chunk = resp.read(65536)
-                if not chunk:
-                    break
-                fh.write(chunk)
-                got += len(chunk)
-                if progress_callback and total:
-                    progress_callback(
-                        got / total,
-                        f"Downloading... {got // (1024*1024)}MB / {total // (1024*1024)}MB",
-                    )
+            total = int(resp.headers.get("Content-Length") or 0)
+            got = 0
+            with open(partial_path, "wb") as fh:
+                while True:
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise Exception("Download cancelled")
+                    chunk = resp.read(65536)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+                    got += len(chunk)
+                    if progress_callback:
+                        fraction = got / total if total else 0.5
+                        detail = f"Downloading... {got // (1024 * 1024)}MB"
+                        if total:
+                            detail += f" / {total // (1024 * 1024)}MB"
+                        progress_callback(min(fraction, 0.94), detail)
+            if got == 0:
+                raise RuntimeError("the media response was empty")
+            os.replace(partial_path, out_path)
+            partial_path = None
+    finally:
+        if partial_path is not None:
+            partial_path.unlink(missing_ok=True)
     if progress_callback:
-        progress_callback(0.95, "Processing download...")
-    return out_path
+        progress_callback(0.95, "Opening native download...")
+    return str(out_path)
+
+
+_CONTENT_TYPE_EXTENSIONS = {
+    "image/gif": ".gif",
+    "video/mp4": ".mp4",
+    "video/webm": ".webm",
+    "video/quicktime": ".mov",
+    "video/x-matroska": ".mkv",
+    "video/x-msvideo": ".avi",
+    "video/mpeg": ".mpeg",
+    "video/mp2t": ".ts",
+    "video/3gpp": ".3gp",
+}
+
+
+def _direct_media_extension(content_type, url_extension):
+    """Choose a supported filename extension without trusting MIME blindly."""
+    if url_extension in SUPPORTED_VIDEO_EXTENSIONS:
+        return url_extension
+    return _CONTENT_TYPE_EXTENSIONS.get(content_type, ".mp4")
+
+
+def _safe_download_name(raw_name, extension):
+    """Return a cross-platform filename limited to a readable length."""
+    base = Path(raw_name or "native_download").stem
+    base = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", base).strip(" .")
+    base = base[:80] or "native_download"
+    return base + extension
+
+
+def _available_download_path(preferred):
+    """Avoid overwriting an earlier download with the same remote filename."""
+    preferred = Path(preferred)
+    partial = preferred.with_name(preferred.name + ".part")
+    if not preferred.exists() and not partial.exists():
+        return preferred
+    for index in range(1, 10000):
+        candidate = preferred.with_name(
+            f"{preferred.stem}_{index}{preferred.suffix}"
+        )
+        partial = candidate.with_name(candidate.name + ".part")
+        if not candidate.exists() and not partial.exists():
+            return candidate
+    raise RuntimeError("could not allocate a unique download filename")
 
 
 def download_video(url, progress_callback=None, cancel_event=None, cookies=None,
                    max_attempts=3):
+    """Route a URL through native providers, then the compatibility engine."""
+    cancel_event = cancel_event or threading.Event()
+    last_error = None
+    for provider in get_download_providers():
+        if not provider.can_handle(url):
+            continue
+        try:
+            result = provider.download(
+                url, progress_callback, cancel_event, cookies, max_attempts,
+            )
+        except Exception as exc:
+            message = str(exc)
+            if "cancelled" in message.lower() or cancel_event.is_set():
+                return {
+                    "path": None, "title": None,
+                    "platform": detect_platform(url), "error": "cancelled",
+                    "provider": provider.name,
+                }
+            last_error = message
+            if progress_callback:
+                progress_callback(
+                    0.0, "Native download unavailable. Trying compatibility engine...",
+                )
+            continue
+        if result.get("error") is None or result.get("error") == "cancelled":
+            return result
+        last_error = result.get("error")
+
+    return {
+        "path": None, "title": None, "platform": detect_platform(url),
+        "error": last_error or "No download provider accepted this URL.",
+        "provider": None,
+    }
+
+
+def _download_with_ytdlp(url, progress_callback=None, cancel_event=None, cookies=None,
+                         max_attempts=3):
+    """Download through yt-dlp for broad site compatibility."""
     import yt_dlp
 
     _ensure_temp_dir()
