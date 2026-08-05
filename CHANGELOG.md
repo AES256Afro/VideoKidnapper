@@ -2,7 +2,9 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.8.1] — 2026-08-05
+
+> **If you are on 1.8.0, upgrade.** That release had no working macOS install path: the `.dmg` refused to launch, and `pip install videokidnapper` produced a broken environment. Both are fixed here.
 
 ### Fixed
 
