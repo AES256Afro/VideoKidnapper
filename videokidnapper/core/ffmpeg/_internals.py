@@ -17,6 +17,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 from collections import deque
 
 from videokidnapper.utils.ffmpeg_check import find_ffmpeg, find_ffprobe
@@ -146,6 +147,41 @@ def _encoder_quality_args(encoder, crf):
 _PROGRESS_RE = re.compile(r"time=(\d+):(\d+):(\d+)\.(\d+)")
 
 
+def was_cancelled(cancel_event):
+    """True when the caller asked to stop — used to suppress error logging.
+
+    A cancelled encode exits non-zero (SIGKILL → rc -9), which is
+    indistinguishable from a real failure at the return-code level.
+    Without this check every user-initiated Stop dumped a full ffmpeg
+    failure report into the Debug tab.
+    """
+    return bool(cancel_event is not None and cancel_event.is_set())
+
+
+def _kill_on_cancel(process, cancel_event, done, poll_s=0.1):
+    """Watchdog: kill ``process`` as soon as ``cancel_event`` is set.
+
+    The stderr reader below blocks in ``readline()``, so it can only
+    notice a cancel when ffmpeg happens to emit another line. ffmpeg
+    that has stalled — a network source that stopped responding, a
+    filter chain grinding on a single frame — emits nothing, and Stop
+    then hung until the process moved on by itself. Polling from a
+    separate thread makes cancellation independent of ffmpeg's output.
+
+    ``done`` is set by the reader when stderr closes, so a normal encode
+    doesn't pay the poll interval on the way out.
+    """
+    while not done.is_set():
+        if cancel_event.wait(poll_s):
+            try:
+                process.kill()
+            except OSError:
+                pass  # already gone
+            return
+        if process.poll() is not None:
+            return
+
+
 def _parse_progress(process, duration, callback, cancel_event):
     """Stream ffmpeg's stderr, tracking progress and buffering diagnostic lines.
 
@@ -153,19 +189,36 @@ def _parse_progress(process, duration, callback, cancel_event):
     the actual error message when the process exits non-zero.
     """
     tail = deque(maxlen=40)
-    for line in iter(process.stderr.readline, ""):
-        stripped = line.rstrip()
-        if cancel_event and cancel_event.is_set():
-            process.kill()
-            return "\n".join(tail)
-        match = _PROGRESS_RE.search(stripped)
-        if match and callback and duration > 0:
-            h, m, s, cs = (int(match.group(i)) for i in (1, 2, 3, 4))
-            current = h * 3600 + m * 60 + s + cs / 100
-            callback(min(current / duration, 1.0))
-        elif stripped:
-            tail.append(stripped)
-    return "\n".join(tail)
+    watchdog = None
+    done = threading.Event()
+    if cancel_event is not None:
+        watchdog = threading.Thread(
+            target=_kill_on_cancel,
+            args=(process, cancel_event, done),
+            daemon=True,
+        )
+        watchdog.start()
+
+    try:
+        for line in iter(process.stderr.readline, ""):
+            stripped = line.rstrip()
+            # Fast path: react immediately when a line does arrive,
+            # rather than waiting for the watchdog's next poll.
+            if cancel_event is not None and cancel_event.is_set():
+                process.kill()
+                return "\n".join(tail)
+            match = _PROGRESS_RE.search(stripped)
+            if match and callback and duration > 0:
+                h, m, s, cs = (int(match.group(i)) for i in (1, 2, 3, 4))
+                current = h * 3600 + m * 60 + s + cs / 100
+                callback(min(current / duration, 1.0))
+            elif stripped:
+                tail.append(stripped)
+        return "\n".join(tail)
+    finally:
+        done.set()
+        if watchdog is not None:
+            watchdog.join(timeout=1.0)
 
 
 def _log_ffmpeg_failure(cmd, returncode, stderr_tail):
