@@ -169,7 +169,17 @@ Get it from the **[Microsoft Store](https://apps.microsoft.com/detail/9N4BMTK8Q7
 
 Download the `.dmg` for your Mac from the [latest release](https://github.com/AES256Afro/VideoKidnapper/releases/latest) — `…-macos-arm64.dmg` (Apple Silicon) or `…-macos-x86_64.dmg` (Intel) — and drag the app to Applications. FFmpeg is bundled.
 
-> The app isn't code-signed yet, so on first launch **right-click it → Open** (a plain double-click is blocked by Gatekeeper for unsigned apps). After that it opens normally.
+> **First launch takes an extra step.** The app isn't notarized yet (that needs a paid Apple Developer account — see [DISTRIBUTION-PLAN.md](docs/DISTRIBUTION-PLAN.md)), so macOS blocks it once with *"Apple could not verify VideoKidnapper is free of malware."*
+>
+> 1. Double-click the app and press **Done** on the warning.
+> 2. Open **System Settings → Privacy & Security**, scroll to **Security**.
+> 3. Next to *"VideoKidnapper was blocked…"* click **Open Anyway**, then confirm.
+>
+> After that it launches normally. On macOS 15 (Sequoia) and later this is the *only* route — Apple removed the old right-click → Open bypass, so any guide still recommending it is out of date.
+>
+> Prefer the terminal? `xattr -dr com.apple.quarantine /Applications/VideoKidnapper.app` clears the flag in one step.
+>
+> If you instead see *"VideoKidnapper is damaged and can't be opened"*, you have **v1.8.0**, whose DMGs shipped with a broken code signature that no workaround can clear. Upgrade to v1.8.1 or later.
 
 ### Option C — Linux AppImage (no Python required)
 

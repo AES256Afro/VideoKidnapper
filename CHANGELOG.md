@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **macOS app would not launch at all (1.8.0).** Both DMGs failed with *"VideoKidnapper is damaged and can't be opened. You should move it to the Trash."* The build copied FFmpeg into the `.app` *after* PyInstaller had signed it, which invalidated the bundle's sealed-resource manifest; macOS then refused to run it, and the documented right-click → Open workaround could not clear it (that gesture only bypasses the unidentified-developer prompt, and Apple removed it in macOS 15 anyway). The bundle is now re-signed after FFmpeg lands, and a `codesign --verify` gate fails the release build if an unsealed resource ever slips in again. First launch still needs one trip through **System Settings → Privacy & Security → Open Anyway**, because the app is not notarized.
+- **`pip install videokidnapper` produced a broken install (1.8.0).** `pyproject.toml` carried a hand-maintained package list that was never updated when `core.ffmpeg` and `plugins` were split into subpackages, so the wheel shipped without them and anything touching the FFmpeg backend raised `ModuleNotFoundError`. Packaging now uses automatic discovery, with a test that fails if any package on disk would not be shipped.
+- **Apple Silicon DMG shipped an Intel FFmpeg.** The bundled `ffmpeg`/`ffprobe` were x86_64 in the arm64 build (the upstream source is Intel-only despite its "macOS" label), so exports needed Rosetta and failed outright without it. Each architecture now takes a matching build, and the workflow verifies the binary's architecture before packaging.
+- **Cancelling an export could hang.** The encoder only checked the cancel flag when FFmpeg happened to write another progress line, so a stalled encode — an unresponsive network source, a filter chain grinding on one frame — ignored Stop until FFmpeg moved on by itself. A watchdog now terminates the process as soon as cancel is requested, matching the behaviour the concat path already had.
+- **Cancelling an export logged a false error.** A user-initiated Stop kills FFmpeg with a non-zero exit code, which was reported in the Debug tab as a full encode failure. Cancellation is now told apart from a real failure.
+
+### Security
+
+- **Filter injection via project files.** The `fontcolor`, `bordercolor`, `shadowcolor`, and `boxcolor` fields were interpolated unquoted into the FFmpeg filter graph and never validated, while `.vidkid` project files are loaded without inspecting layer contents. A crafted or shared project could therefore terminate the colour option and append arbitrary filters — including `movie=`, an FFmpeg source filter that reads local files, turning it into file disclosure. Colour values are now validated against an allowlist and fall back to their default, so a malformed project still opens.
+
 ## [1.8.0] - 2026-07-21
 
 ### Added
