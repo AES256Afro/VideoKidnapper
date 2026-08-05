@@ -15,6 +15,7 @@ explicit list — they compare what setuptools would ship against what
 actually exists on disk, and assert every package is importable.
 """
 
+import fnmatch
 import importlib
 import pathlib
 import sys
@@ -53,12 +54,17 @@ def _packages_setuptools_would_ship():
     Deliberately reads the config rather than assuming auto-discovery —
     otherwise a revert to a hand-maintained ``packages = [...]`` list
     would sail past this test, which is the exact failure being guarded.
-    """
-    from setuptools import find_packages
 
+    ``find_packages`` is reimplemented here rather than imported:
+    setuptools is no longer present in a fresh Python 3.12 environment,
+    and CI installs only ``requirements.txt`` plus pytest. The matching
+    rules (fnmatch against the dotted name, exclude beating include) are
+    setuptools' own.
+    """
     cfg = _load_pyproject()
-    if cfg is None:  # no TOML parser available; fall back to discovery
-        return set(find_packages(where=str(ROOT), include=["videokidnapper*"]))
+    if cfg is None:  # no TOML parser available (3.9/3.10 without tomli)
+        return {p for p in _packages_on_disk()
+                if fnmatch.fnmatch(p, "videokidnapper*")}
 
     setuptools_cfg = cfg.get("tool", {}).get("setuptools", {})
     explicit = setuptools_cfg.get("packages")
@@ -66,17 +72,16 @@ def _packages_setuptools_would_ship():
         # Hand-maintained list — ship exactly what it names.
         return set(explicit)
 
-    find_cfg = {}
-    if isinstance(explicit, dict):
-        find_cfg = explicit.get("find", {})
-    find_cfg = find_cfg or setuptools_cfg.get("packages", {}).get("find", {})
-    return set(
-        find_packages(
-            where=str(ROOT / find_cfg.get("where", ".")),
-            include=find_cfg.get("include", ["*"]),
-            exclude=find_cfg.get("exclude", []),
-        )
-    )
+    find_cfg = explicit.get("find", {}) if isinstance(explicit, dict) else {}
+    include = find_cfg.get("include") or ["*"]
+    exclude = find_cfg.get("exclude") or []
+
+    return {
+        pkg
+        for pkg in _packages_on_disk()
+        if any(fnmatch.fnmatch(pkg, pat) for pat in include)
+        and not any(fnmatch.fnmatch(pkg, pat) for pat in exclude)
+    }
 
 
 def test_every_subpackage_is_shipped():
