@@ -13,8 +13,14 @@ which has four layers of escaping:
 Without careful escaping, a user typing `a:b;c[d]` in a text layer can break
 the filter graph or — worse — smuggle extra options like `textfile=…`.
 Every value that ends up inside a filter spec should flow through
-`escape_drawtext_value()` or `escape_path()`.
+`escape_drawtext_value()`, `escape_path()`, or `sanitize_color()`.
+
+Colours are a separate case: they are *not* quoted in the filter spec
+(`fontcolor=white`), so escaping is the wrong tool — the value has to be
+rejected outright if it is not a colour. See `sanitize_color()`.
 """
+
+import re
 
 
 _DRAWTEXT_ESCAPES = {
@@ -63,3 +69,42 @@ def escape_path(path: "str | None") -> str:
 def quote_filter_value(escaped: str) -> str:
     """Wrap an already-escaped string in single quotes for lavfi."""
     return f"'{escaped}'"
+
+
+# ffmpeg accepts a named colour ("white", "Crimson", "random"), an
+# `#RRGGBB[AA]` / `0xRRGGBB[AA]` literal, and an optional `@alpha`
+# suffix. Anything else is not a colour.
+_COLOR_RE = re.compile(
+    r"""^(?:
+        \#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?     # #RRGGBB / #RRGGBBAA
+      | 0x[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?     # 0xRRGGBB / 0xRRGGBBAA
+      | [A-Za-z][A-Za-z0-9]{0,31}               # named colour, incl. "random"
+    )
+    (?:@(?:0|1|0?\.[0-9]{1,6}|1\.0+))?$         # optional @alpha
+    """,
+    re.VERBOSE,
+)
+
+
+def sanitize_color(value: "str | None", default: str = "white") -> str:
+    """Return ``value`` if it is a valid ffmpeg colour, else ``default``.
+
+    Colour options are interpolated bare into the filter spec
+    (``fontcolor=white``), with no surrounding quotes to contain them.
+    A value carrying ``,`` or ``:`` therefore terminates the option and
+    the rest is parsed as *more filter graph* — so a hand-edited or
+    downloaded ``.vidkid`` project could smuggle in extra filters. The
+    ``movie=`` source filter reads arbitrary local files, which turns
+    this into file disclosure rather than a cosmetic glitch.
+
+    Escaping is not the fix here: an escaped colour is not a valid
+    colour, so ffmpeg would fail the encode. Invalid input falls back to
+    the default instead, which keeps a corrupt project openable.
+
+    ``default`` is trusted (it comes from our own config), so it is
+    returned as-is without re-validation.
+    """
+    if value is None:
+        return default
+    text = str(value).strip()
+    return text if _COLOR_RE.match(text) else default

@@ -54,6 +54,103 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/ -q
 
+  wheel:
+    name: Wheel installs and imports
+    runs-on: ubuntu-latest
+    # The `test` job runs pytest against the *source tree*, where every
+    # subpackage is importable whether or not it is packaged. That is how
+    # 1.8.0 shipped a wheel missing `core.ffmpeg` and `plugins`: the suite
+    # was green while `pip install videokidnapper` raised
+    # ModuleNotFoundError on first use. This job is the only check that
+    # exercises what users actually receive — build it, install it into a
+    # clean environment, and import it.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Tk (import of the ui tree needs it)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk
+
+      - name: Build sdist + wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Install the wheel into a clean venv
+        run: |
+          python -m venv /tmp/wheelenv
+          # No --editable, no repo on sys.path: install exactly what a
+          # user gets from PyPI.
+          /tmp/wheelenv/bin/pip install --upgrade pip
+          /tmp/wheelenv/bin/pip install dist/*.whl
+
+      - name: List the packages that SHOULD ship (from the checkout)
+        # Derived from the source tree, not from the wheel. Walking the
+        # installed package would only enumerate what did ship, which is
+        # exactly blind to the failure being guarded — a dropped
+        # subpackage is invisible to `pkgutil.walk_packages`.
+        run: |
+          python - <<'PY' > /tmp/expected-packages.txt
+          import pathlib
+          for init in sorted(pathlib.Path("videokidnapper").rglob("__init__.py")):
+              parts = init.parent.parts
+              if "__pycache__" in parts:
+                  continue
+              print(".".join(parts))
+          PY
+          cat /tmp/expected-packages.txt
+
+      - name: Every expected package must import from the wheel
+        # cd / so a stray import can't be satisfied by the source tree.
+        run: |
+          cd /
+          /tmp/wheelenv/bin/python - /tmp/expected-packages.txt <<'PY'
+          import importlib, sys
+
+          expected = [
+              line.strip()
+              for line in open(sys.argv[1])
+              if line.strip()
+          ]
+
+          import videokidnapper
+          root = str(videokidnapper.__path__[0])
+          # Prove we are testing the installed wheel, not the checkout.
+          assert "site-packages" in root, f"imported the source tree: {root}"
+
+          failures = []
+          for name in expected:
+              try:
+                  importlib.import_module(name)
+              except Exception as exc:
+                  failures.append(f"{name}: {type(exc).__name__}: {exc}")
+
+          # The back-compat facade re-exports from core.ffmpeg and is what
+          # most callers actually touch — the precise import that blew up
+          # on the 1.8.0 wheel.
+          try:
+              importlib.import_module("videokidnapper.core.ffmpeg_backend")
+          except Exception as exc:
+              failures.append(f"core.ffmpeg_backend: {type(exc).__name__}: {exc}")
+
+          print(f"checked {len(expected)} packages against {root}")
+          if failures:
+              print("\nPackages missing from the wheel or failing to import:",
+                    file=sys.stderr)
+              for line in failures:
+                  print("  " + line, file=sys.stderr)
+              sys.exit(1)
+          print("all expected packages import cleanly")
+          PY
+
+      - name: The console script must run
+        run: /tmp/wheelenv/bin/videokidnapper --version
+
   lint:
     name: Ruff
     runs-on: ubuntu-latest
@@ -63,7 +160,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install ruff
+      # Pinned deliberately, and the rule set is fixed in pyproject.toml
+      # ([tool.ruff.lint] select). A bare `pip install ruff` broke this
+      # job on 2026-08-01 when 0.16.1 widened the default rules — 300+
+      # findings, no code change. Bump this in its own PR.
+      - run: pip install "ruff==0.16.1"
       - run: ruff check videokidnapper/ main.py scripts/ tests/
 
   typecheck:

@@ -81,15 +81,17 @@ Changelog = "https://github.com/AES256Afro/VideoKidnapper/blob/main/CHANGELOG.md
 # Setuptools specifics
 # ---------------------------------------------------------------------------
 
-[tool.setuptools]
-# Explicit list keeps the sdist lean: we don't want tests/, scripts/, or
-# the assets/ screenshots blob shipped inside the wheel.
-packages = [
-    "videokidnapper",
-    "videokidnapper.core",
-    "videokidnapper.ui",
-    "videokidnapper.utils",
-]
+# Auto-discovery, scoped to the package tree. An explicit list was used
+# here until 1.8.1, but it silently dropped every subpackage added after
+# it was written — `core.ffmpeg` and `plugins` were missing from the
+# 1.8.0 wheel, so `import videokidnapper.core.ffmpeg_backend` raised
+# ModuleNotFoundError on a clean `pip install`. The glob keeps the sdist
+# equally lean (tests/, scripts/, and the assets/ screenshot blob all sit
+# outside `videokidnapper/`) without needing maintenance.
+#
+# tests/test_packaging.py asserts discovery stays in sync with the tree.
+[tool.setuptools.packages.find]
+include = ["videokidnapper*"]
 
 [tool.setuptools.package-data]
 # The window/taskbar icon ships inside the package so pip installs and
@@ -98,3 +100,23 @@ videokidnapper = ["assets/*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "videokidnapper.__version__" }
+
+# ---------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------
+#
+# The rule set is pinned explicitly rather than inherited from ruff's
+# defaults. Those defaults are not a stable contract: ruff 0.16.1 widened
+# them, and because ci.yml did a bare `pip install ruff`, the Ruff job
+# started failing on 2026-08-01 with 300+ findings and no code change
+# behind it. The values below are ruff's historical defaults, which the
+# tree is clean against.
+#
+# Adopting more rules (BLE001, I001 and S110 are the big ones, ~215
+# findings between them) is worth doing — but as its own PR, with the
+# code changes alongside, not as a silent build break.
+[tool.ruff]
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

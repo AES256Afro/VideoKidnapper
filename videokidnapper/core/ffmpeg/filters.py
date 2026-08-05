@@ -17,7 +17,11 @@ export alignment pixel-exact).
 """
 
 from videokidnapper.config import PRESETS
-from videokidnapper.utils.ffmpeg_escape import escape_drawtext_value, escape_path
+from videokidnapper.utils.ffmpeg_escape import (
+    escape_drawtext_value,
+    escape_path,
+    sanitize_color,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +193,10 @@ def _build_drawtext_filter(layer, fade=0.0):
         italic=bool(layer.get("italic")),
     ))
     fontsize = int(layer.get("fontsize", 24))
-    fontcolor = layer.get("fontcolor", "white")
+    # Colour options are unquoted in the filter spec, so an unvalidated
+    # value escapes the option and injects filter graph — see
+    # sanitize_color's docstring.
+    fontcolor = sanitize_color(layer.get("fontcolor"), "white")
     # A keyframed motion path (meme-style tracked caption) wins over any
     # static position: compile the piecewise-linear path into
     # time-dependent expressions. The preview resolves the same
@@ -232,7 +239,9 @@ def _build_drawtext_filter(layer, fade=0.0):
     borderw = max(0, _coerce_int(layer.get("borderw", 0)))
     if borderw:
         parts.append(f"borderw={borderw}")
-        parts.append(f"bordercolor={layer.get('bordercolor') or 'black'}")
+        parts.append(
+            f"bordercolor={sanitize_color(layer.get('bordercolor'), 'black')}",
+        )
 
     # Drop shadow — off unless either offset is non-zero.
     shadowx = _coerce_int(layer.get("shadowx", 0))
@@ -240,10 +249,12 @@ def _build_drawtext_filter(layer, fade=0.0):
     if shadowx or shadowy:
         parts.append(f"shadowx={shadowx}")
         parts.append(f"shadowy={shadowy}")
-        parts.append(f"shadowcolor={layer.get('shadowcolor') or 'black@0.7'}")
+        parts.append(
+            f"shadowcolor={sanitize_color(layer.get('shadowcolor'), 'black@0.7')}",
+        )
 
     if layer.get("box"):
-        boxcolor = layer.get("boxcolor", "black@0.6")
+        boxcolor = sanitize_color(layer.get("boxcolor"), "black@0.6")
         boxborderw = int(layer.get("boxborderw", 8))
         parts.append("box=1")
         parts.append(f"boxcolor={boxcolor}")
