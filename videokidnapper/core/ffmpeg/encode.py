@@ -25,7 +25,7 @@ from pathlib import Path
 from videokidnapper.config import PRESETS
 from videokidnapper.core.ffmpeg._internals import (
     _encoder_quality_args, _get_ffmpeg, _log_ffmpeg_failure,
-    _parse_progress, _run_kwargs, pick_video_encoder,
+    _parse_progress, _run_kwargs, pick_video_encoder, was_cancelled,
 )
 from videokidnapper.core.ffmpeg.filters import (
     _assemble_video_filters, _build_audio_speed,
@@ -86,7 +86,10 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
         tail = _parse_progress(process, duration, progress_callback, cancel_event)
         process.wait()
         if process.returncode != 0:
-            _log_ffmpeg_failure(cmd, process.returncode, tail)
+            # A user Stop kills ffmpeg (rc -9); that is not a failure
+            # worth dumping a full error report for.
+            if not was_cancelled(cancel_event):
+                _log_ffmpeg_failure(cmd, process.returncode, tail)
             return None
         return output_path
 
@@ -156,7 +159,10 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
     tail = _parse_progress(process, duration, progress_callback, cancel_event)
     process.wait()
     if process.returncode != 0:
-        _log_ffmpeg_failure(cmd, process.returncode, tail)
+        # A user Stop kills ffmpeg (rc -9); that is not a failure
+        # worth dumping a full error report for.
+        if not was_cancelled(cancel_event):
+            _log_ffmpeg_failure(cmd, process.returncode, tail)
         return None
     return output_path
 
@@ -283,7 +289,10 @@ def trim_to_gif(input_path, start, end, preset_name, output_path,
         tail = _parse_progress(process, duration, gif_progress, cancel_event)
         process.wait()
         if process.returncode != 0:
-            _log_ffmpeg_failure(cmd2, process.returncode, tail)
+            # A user Stop kills ffmpeg (rc -9); that is not a failure
+            # worth dumping a full error report for.
+            if not was_cancelled(cancel_event):
+                _log_ffmpeg_failure(cmd2, process.returncode, tail)
             return None
         return output_path
     finally:
@@ -330,7 +339,10 @@ def frames_to_video(frame_dir, fps, preset_name, output_path,
     tail = _parse_progress(process, duration, progress_callback, cancel_event)
     process.wait()
     if process.returncode != 0:
-        _log_ffmpeg_failure(cmd, process.returncode, tail)
+        # A user Stop kills ffmpeg (rc -9); that is not a failure
+        # worth dumping a full error report for.
+        if not was_cancelled(cancel_event):
+            _log_ffmpeg_failure(cmd, process.returncode, tail)
         return None
     return output_path
 
@@ -395,7 +407,10 @@ def frames_to_gif(frame_dir, fps, preset_name, output_path,
         tail = _parse_progress(process, duration, gif_progress, cancel_event)
         process.wait()
         if process.returncode != 0:
-            _log_ffmpeg_failure(cmd2, process.returncode, tail)
+            # A user Stop kills ffmpeg (rc -9); that is not a failure
+            # worth dumping a full error report for.
+            if not was_cancelled(cancel_event):
+                _log_ffmpeg_failure(cmd2, process.returncode, tail)
             return None
         return output_path
     finally:
