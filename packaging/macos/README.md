@@ -57,20 +57,121 @@ the **certificate** → *Export*. Choose *Personal Information Exchange
 → *App-Specific Passwords*. Your normal Apple ID password will not work
 with `notarytool`.
 
-**4. Add the repository secrets.** Run these yourself — never paste
-secret values into a chat or a commit:
+**4. Check the export before uploading it.**
 
 ```bash
-base64 -i DeveloperID.p12 | gh secret set MACOS_CERT_P12_BASE64
+./scripts/check-macos-signing.sh ~/Desktop/DeveloperID.p12
+```
+
+Everything runs locally; nothing is uploaded and the password is read
+with a hidden prompt. A good export looks like this:
+
+```
+Checking DeveloperID.p12
+
+  .p12 export password:
+
+  ✓ opened the .p12 (password correct)
+  ✓ contains a private key
+  ✓ certificate type: Developer ID Application
+  ✓ valid until Feb  1 12:00:00 2027 GMT
+  ✓ Team ID: U7X9DNSQ7Z
+      use this for the MACOS_NOTARY_TEAM_ID secret
+
+  Signing identity the build will resolve:
+    Developer ID Application: Christopher Courtney (U7X9DNSQ7Z)
+
+  Ready to upload.
+```
+
+The failure you are most likely to hit — exporting from the wrong
+Keychain Access view:
+
+```
+  ✓ opened the .p12 (password correct)
+  ✗ NO PRIVATE KEY — this file cannot sign anything
+      In Keychain Access choose the 'My Certificates' category, not
+      'Certificates'. Expand the triangle next to the certificate; if
+      no key is nested under it, the key is missing from this Mac and
+      you must reissue the certificate.
+```
+
+Such a file imports into CI without error and then fails much later
+with a confusing `codesign` message, which is why it is worth catching
+here. The script exits non-zero on any hard failure.
+
+**5. Add the repository secrets.** Run these yourself — never paste
+secret values into a chat, an issue, or a commit:
+
+```bash
+base64 -i ~/Desktop/DeveloperID.p12 | gh secret set MACOS_CERT_P12_BASE64
 gh secret set MACOS_CERT_PASSWORD       # the .p12 export password
 gh secret set MACOS_NOTARY_APPLE_ID     # your Apple ID email
-gh secret set MACOS_NOTARY_TEAM_ID      # 10-char Team ID
+gh secret set MACOS_NOTARY_TEAM_ID      # 10-char Team ID, e.g. U7X9DNSQ7Z
 gh secret set MACOS_NOTARY_PASSWORD     # the app-specific password
 ```
 
-Then delete the local `.p12` and keep a backup somewhere secure — the
-certificate cannot be re-downloaded with its key, only revoked and
-reissued.
+Each `gh secret set` without a value prompts on stdin, so the secret
+never lands in your shell history. Confirm they registered — this
+prints names and timestamps only, never values:
+
+```bash
+gh secret list
+```
+
+```
+MACOS_CERT_P12_BASE64    Updated 2026-08-06
+MACOS_CERT_PASSWORD      Updated 2026-08-06
+MACOS_NOTARY_APPLE_ID    Updated 2026-08-06
+MACOS_NOTARY_PASSWORD    Updated 2026-08-06
+MACOS_NOTARY_TEAM_ID     Updated 2026-08-06
+```
+
+**6. Verify the credentials work** before relying on a release build.
+This authenticates against Apple without submitting anything:
+
+```bash
+xcrun notarytool history \
+  --apple-id "you@example.com" \
+  --team-id "U7X9DNSQ7Z" \
+  --password "your-app-specific-password"
+```
+
+Success prints a (possibly empty) submission history. `HTTP status code:
+401` means the app-specific password or Team ID is wrong — fix that now
+rather than discovering it during a release.
+
+Then delete the local `.p12` and keep a backup somewhere secure. A
+Developer ID certificate cannot be re-downloaded with its private key —
+only revoked and reissued.
+
+### Trying it end to end before tagging a release
+
+`macos.yml` has a `workflow_dispatch` trigger, so you can exercise the
+whole signed path without cutting a release. Leave the `tag` input
+empty and it builds artifacts only:
+
+```bash
+gh workflow run macos.yml
+gh run watch
+```
+
+Then download the artifact and confirm the goal state:
+
+```bash
+hdiutil attach VideoKidnapper-*-macos-arm64.dmg
+spctl -a -t exec -vvv /Volumes/VideoKidnapper/VideoKidnapper.app
+```
+
+```
+/Volumes/VideoKidnapper/VideoKidnapper.app: accepted
+source=Notarized Developer ID
+```
+
+`accepted` + `Notarized Developer ID` means users get a clean first
+launch. `rejected` means the build fell back to ad-hoc — check the
+"Detect signing configuration" step in the run log, which prints
+whether it found the secrets.
 
 | Secret | Purpose |
 |---|---|
