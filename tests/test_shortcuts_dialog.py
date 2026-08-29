@@ -15,7 +15,6 @@ the two ways that contract rots:
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from videokidnapper.ui.shortcuts_dialog import SHORTCUTS, Shortcut
@@ -54,9 +53,44 @@ _APP_SOURCE = (
 ).read_text(encoding="utf-8")
 
 
+class _BindRecorder:
+    """Stands in for the Tk root and records every sequence bound.
+
+    This used to be a regex over app.py looking for ``bind_all("<...>")``
+    string literals. Since 1.8.2 the accelerators are built by
+    ``_bind_accel`` (so each one binds under Control *and* Command for
+    macOS), and a computed sequence is invisible to a source grep — the
+    old test passed or failed on how the bindings were spelled rather
+    than on what actually got bound. Running the real method against a
+    recorder checks the thing we care about.
+    """
+
+    def __init__(self):
+        self.bound: set[str] = set()
+
+    def bind_all(self, sequence, handler):
+        self.bound.add(sequence.strip("<>"))
+
+    def __getattr__(self, name):
+        # Handlers are only *referenced* while binding, never called,
+        # so any callable will do.
+        return lambda *args, **kwargs: None
+
+
 def _bound_keysyms() -> set[str]:
-    """Extract the bracketed keysym from every ``bind_all`` call."""
-    return set(re.findall(r'bind_all\("<([^"]+)>"', _APP_SOURCE))
+    """Every keysym the app actually binds at startup."""
+    from videokidnapper import app as app_module
+
+    app_cls = next(
+        obj for obj in vars(app_module).values()
+        if isinstance(obj, type) and hasattr(obj, "_bind_keyboard_shortcuts")
+    )
+    recorder = _BindRecorder()
+    # Bind the real methods to the recorder; everything else falls
+    # through __getattr__.
+    recorder._bind_accel = app_cls._bind_accel.__get__(recorder)
+    app_cls._bind_keyboard_shortcuts(recorder)
+    return recorder.bound
 
 
 # Mapping from a human label ("Ctrl+E") to the Tk keysym it must be
