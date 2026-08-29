@@ -118,6 +118,77 @@ jobs:
           done
           "$RES/ffmpeg" -version | head -1
 
+      - name: Detect signing configuration
+        id: signing
+        # Secrets are unavailable to PRs from forks, and are simply
+        # absent until the repo owner adds them. Either way the build
+        # must still produce a working (ad-hoc signed) DMG rather than
+        # failing — so every signing step below is conditional on this.
+        env:
+          CERT: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          NOTARY_PW: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: |
+          if [ -n "${CERT:-}" ]; then
+            echo "sign=true" >> "$GITHUB_OUTPUT"
+            echo "Developer ID signing: enabled"
+          else
+            echo "sign=false" >> "$GITHUB_OUTPUT"
+            echo "Developer ID signing: disabled (no MACOS_CERT_P12_BASE64) — ad-hoc"
+          fi
+          if [ -n "${CERT:-}" ] && [ -n "${NOTARY_PW:-}" ]; then
+            echo "notarize=true" >> "$GITHUB_OUTPUT"
+            echo "Notarization: enabled"
+          else
+            echo "notarize=false" >> "$GITHUB_OUTPUT"
+            echo "Notarization: disabled"
+          fi
+
+      - name: Import Developer ID certificate
+        if: steps.signing.outputs.sign == 'true'
+        env:
+          CERT_B64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # A dedicated, throwaway keychain: never touch the runner's
+          # login keychain, and let the whole thing die with the VM.
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          # Random per-run password; it only guards a keychain that
+          # exists for the length of this job.
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          printf '%s' "$CERT_B64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -k "$KEYCHAIN" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+          # Let codesign use the key without an interactive prompt.
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+
+          # Resolve the identity from the keychain rather than trusting a
+          # hand-typed secret — a typo here would otherwise surface as a
+          # confusing codesign error much later.
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | grep 'Developer ID Application' | head -1 \
+            | sed -E 's/.*"(.*)"/\1/')"
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::no 'Developer ID Application' identity in the .p12."
+            echo "::error::Export it from Keychain Access *with its private key*."
+            security find-identity -v "$KEYCHAIN" || true
+            exit 1
+          fi
+          echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "Signing identity: $IDENTITY"
+
       - name: Re-sign the bundle
         # MUST run after FFmpeg lands in Contents/Resources. PyInstaller
         # ad-hoc signs the .app at build time, which seals a manifest of
@@ -127,13 +198,67 @@ jobs:
         # — unfixable by the right-click → Open workaround, because it
         # is not an unidentified-developer prompt. That shipped in 1.8.0
         # and made every macOS DMG unlaunchable.
+        #
+        # With a Developer ID available this also switches on the
+        # hardened runtime, which notarization requires. See
+        # packaging/macos/entitlements.plist for why each entitlement is
+        # needed by a PyInstaller-packaged CPython app.
+        env:
+          SIGNED: ${{ steps.signing.outputs.sign }}
         run: |
           set -euo pipefail
           APP="dist/VideoKidnapper.app"
           RES="$APP/Contents/Resources/assets/ffmpeg/bin"
-          # Inside-out: nested Mach-O first, then the bundle itself.
-          codesign --force --sign - --timestamp=none "$RES/ffmpeg" "$RES/ffprobe"
-          codesign --force --deep --sign - --timestamp=none "$APP"
+          ENTITLEMENTS="packaging/macos/entitlements.plist"
+
+          if [ "$SIGNED" != "true" ]; then
+            # Ad-hoc: no timestamp server, and the hardened runtime would
+            # only cause launch failures without a real identity.
+            codesign --force --deep --sign - --timestamp=none "$APP"
+            exit 0
+          fi
+
+          # --deep is explicitly discouraged by Apple for Developer ID
+          # and does not apply entitlements correctly, so walk the
+          # Mach-O files ourselves. Sorting by path depth (deepest
+          # first) guarantees nested code is signed before whatever
+          # contains it — signing a container invalidates anything
+          # signed inside it afterwards.
+          #
+          # The predicate below was checked against a real 1.8.1 bundle:
+          # it finds all 203 Mach-O files, including the bundled
+          # ffmpeg/ffprobe (which arrive signed by their upstream
+          # publisher and need *our* identity for notarization).
+          find "$APP/Contents" -type f \
+            \( -name '*.dylib' -o -name '*.so' -o -perm -u+x \) -print0 \
+            | xargs -0 file --mime-type 2>/dev/null \
+            | grep 'application/x-mach-binary' | cut -d: -f1 \
+            | awk '{print gsub(/\//,"/"), $0}' | sort -rn | cut -d' ' -f2- \
+            > /tmp/machos.txt
+          echo "signing $(wc -l < /tmp/machos.txt | tr -d ' ') nested Mach-O files"
+
+          # Nested code gets the hardened runtime but NOT the
+          # entitlements: those belong on the main executable, which the
+          # bundle signature below covers. A failure here would surface
+          # as an opaque "Invalid" from the notary service, so collect
+          # them and fail loudly instead of pressing on.
+          failed=0
+          while read -r macho; do
+            if ! codesign --force --sign "$SIGN_IDENTITY" --timestamp \
+                   --options runtime "$macho" 2>/tmp/cs.err; then
+              echo "::error::codesign failed on ${macho#"$APP/"}: $(cat /tmp/cs.err)"
+              failed=$((failed + 1))
+            fi
+          done < /tmp/machos.txt
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::$failed nested binaries could not be signed"
+            exit 1
+          fi
+
+          # Finally the bundle itself, with entitlements.
+          codesign --force --sign "$SIGN_IDENTITY" --timestamp \
+            --options runtime --entitlements "$ENTITLEMENTS" "$APP"
+          rm -f /tmp/machos.txt /tmp/cs.err
 
       - name: Verify signature (release gate)
         # The launch smoke-test below CANNOT catch a broken seal: the
@@ -213,6 +338,85 @@ jobs:
             hdiutil create -volname "VideoKidnapper" -srcfolder dmgroot -ov -format UDZO "$OUT"
           echo "dmg=$OUT" >> "$GITHUB_ENV"
           ls -la "$OUT"
+
+      - name: Sign the .dmg
+        if: steps.signing.outputs.sign == 'true'
+        # The disk image is itself a distributed artifact and Gatekeeper
+        # checks it before the app inside is ever mounted.
+        run: |
+          set -euo pipefail
+          codesign --force --sign "$SIGN_IDENTITY" --timestamp "$dmg"
+          codesign --verify --verbose=2 "$dmg"
+
+      - name: Notarize and staple
+        if: steps.signing.outputs.notarize == 'true'
+        env:
+          APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # --wait blocks until Apple returns a verdict (usually 1-5
+          # minutes). On rejection, print the full log — "Invalid" alone
+          # is useless for debugging, the log names the offending binary.
+          if ! xcrun notarytool submit "$dmg" \
+                 --apple-id "$APPLE_ID" \
+                 --team-id "$TEAM_ID" \
+                 --password "$NOTARY_PASSWORD" \
+                 --wait --timeout 30m \
+                 --output-format json > notary.json; then
+            echo "::error::notarization failed"
+            cat notary.json || true
+            id="$(python3 -c "import json;print(json.load(open('notary.json')).get('id',''))" 2>/dev/null || true)"
+            [ -n "$id" ] && xcrun notarytool log "$id" \
+              --apple-id "$APPLE_ID" --team-id "$TEAM_ID" \
+              --password "$NOTARY_PASSWORD" || true
+            exit 1
+          fi
+          cat notary.json
+
+          # Staple the ticket INTO the .dmg so first launch works with no
+          # network. Without this the app still passes, but only if the
+          # user is online when Gatekeeper phones home.
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          rm -f notary.json
+
+      - name: Verify the shipped .dmg the way a user's Mac will
+        # The earlier Gatekeeper dry-run checked the .app in the build
+        # tree. This checks the actual artifact being uploaded, with
+        # quarantine set, which is the only thing users ever touch.
+        env:
+          NOTARIZED: ${{ steps.signing.outputs.notarize }}
+        run: |
+          set -uo pipefail
+          rm -rf /tmp/dmgcheck && mkdir -p /tmp/dmgcheck
+          cp "$dmg" /tmp/dmgcheck/check.dmg
+          xattr -w com.apple.quarantine "0083;00000000;Safari;" /tmp/dmgcheck/check.dmg
+          hdiutil attach /tmp/dmgcheck/check.dmg -nobrowse -readonly \
+            -mountpoint /tmp/dmgcheck/mnt -quiet
+          verdict="$(spctl -a -t exec -vvv /tmp/dmgcheck/mnt/VideoKidnapper.app 2>&1 || true)"
+          echo "$verdict"
+          hdiutil detach /tmp/dmgcheck/mnt -quiet || true
+          rm -rf /tmp/dmgcheck
+
+          case "$verdict" in
+            *"sealed resource"*|*"invalid Info.plist"*|*"code has no resources"*)
+              echo "::error::bundle is structurally broken — users see \"VideoKidnapper is damaged\""
+              exit 1 ;;
+          esac
+
+          if [ "$NOTARIZED" = "true" ]; then
+            # Notarized builds must be *accepted*. Anything less means
+            # users still get a scary prompt despite paying for the cert.
+            case "$verdict" in
+              *accepted*) echo "notarized and accepted by Gatekeeper — clean first launch" ;;
+              *) echo "::error::notarization ran but Gatekeeper still says: $verdict"
+                 exit 1 ;;
+            esac
+          else
+            echo "note: un-notarized build — users get one 'Open Anyway' trip. Expected."
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

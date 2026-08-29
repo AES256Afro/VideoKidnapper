@@ -17,15 +17,14 @@ manage the subprocess lifecycle (progress parsing, cancellation, exit
 codes).
 """
 
-import os
 import subprocess
-import tempfile
 from pathlib import Path
 
 from videokidnapper.config import PRESETS
 from videokidnapper.core.ffmpeg._internals import (
     _encoder_quality_args, _get_ffmpeg, _log_ffmpeg_failure,
-    _parse_progress, _run_kwargs, pick_video_encoder, was_cancelled,
+    _mkstemp_path, _parse_progress, _run_kwargs, pick_video_encoder,
+    was_cancelled,
 )
 from videokidnapper.core.ffmpeg.filters import (
     _assemble_video_filters, _build_audio_speed,
@@ -33,19 +32,6 @@ from videokidnapper.core.ffmpeg.filters import (
     _build_paletteuse_filter, _build_scale_filter, _gif_loop_flag,
 )
 from videokidnapper.core.ffmpeg.probe import get_video_info
-
-
-def _mkstemp_path(suffix):
-    """Create a closed, empty temp file and return its Path.
-
-    ``tempfile.mktemp`` (the old approach) only reserved a *name*, so two
-    concurrent exports — reachable since the Batch Export tab — could race
-    to the same palette path. ``mkstemp`` creates the file atomically;
-    ffmpeg's ``-y`` overwrites it happily.
-    """
-    fd, name = tempfile.mkstemp(suffix=suffix)
-    os.close(fd)
-    return Path(name)
 
 
 # ---------------------------------------------------------------------------
