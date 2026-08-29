@@ -308,6 +308,23 @@ scope moves, criteria don't.
 - **Exit:** a release can be executed end-to-end from the checklist by
   someone tired at midnight without creative thinking.
 
+### M4.5 — v1.9.x: Editor layout — P1 / L
+
+The interaction problem behind M5's refactor, split out because it is
+worth shipping on its own. `ui/trim_tab.py` stacks every panel in one
+`CTkScrollableFrame`, preview included, so the video scrolls out of view
+exactly when a caption or sticker is being positioned — see
+[`UX-SWEEP.md`](UX-SWEEP.md) U1.
+
+Six layout directions are drawn up as a design canvas (pinned preview,
+rail + inspector, timeline dock, split compare, guided steps, focus +
+command palette), each with its trade-off noted. Pick one before the M5
+extraction starts — the split is much cheaper when the target layout is
+known.
+
+- **Exit:** the preview never leaves the viewport during a normal edit;
+  the default window size fits the chosen layout's primary task (U5).
+
 ### M5 — v2.0.0: UI test harness + monolith split — P2 / L
 
 - xvfb headless Tk on CI; 15–20 smoke tests on the highest-churn seams
