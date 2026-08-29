@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
+import sys
+
 import customtkinter as ctk
 
 from videokidnapper.ui import theme as T
@@ -56,6 +58,20 @@ SHORTCUTS: dict[str, list[Shortcut]] = {
         Shortcut("Esc",             "Close this overlay"),
     ],
 }
+
+
+def accel_label(keys: str) -> str:
+    """Render a shortcut label in the host platform's own vocabulary.
+
+    The table above is written in Windows/Linux terms because that is
+    where most users are. macOS spells the same accelerators ⌘ and ⇧,
+    and as of 1.8.2 the app binds Command there — so showing "Ctrl+S"
+    on a Mac would now be describing a key combination that is not the
+    documented one.
+    """
+    if sys.platform != "darwin":
+        return keys
+    return keys.replace("Ctrl+Shift+", "⌘⇧").replace("Ctrl+", "⌘")
 
 
 class ShortcutsDialog(ctk.CTkToplevel):
@@ -153,7 +169,7 @@ class ShortcutsDialog(ctk.CTkToplevel):
             row.pack(fill="x", padx=8, pady=2)
 
             kbd = ctk.CTkLabel(
-                row, text=f" {shortcut.keys} ",
+                row, text=f" {accel_label(shortcut.keys)} ",
                 font=T.font(T.SIZE_SM, "bold", mono=True),
                 text_color=T.TEXT,
                 fg_color=T.BG_RAISED,
