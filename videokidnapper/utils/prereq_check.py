@@ -7,11 +7,13 @@ Nothing here raises — all errors flow back as ``(ok, message)`` tuples so the
 UI can display them next to the relevant row.
 """
 
+import base64
 import importlib
 import hashlib
 import hmac
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -427,6 +429,42 @@ def _pip_name_for(import_name):
 # ---------------------------------------------------------------------------
 # Elevated terminal
 # ---------------------------------------------------------------------------
+#
+# Quoting contract for ``open_admin_terminal``: the joined command string
+# is treated as *data* at every layer — never interpolated raw into a
+# shell, AppleScript, or PowerShell string. Each platform wraps it in an
+# injection-proof encoding:
+#
+# - Windows: the inner command is Base64-encoded and run via PowerShell's
+#   ``-EncodedCommand``; the outer argv only ever contains [A-Za-z0-9+/=].
+# - macOS:   the command is ``shlex.quote``d for bash, then escaped for
+#   the AppleScript string literal (backslash + double-quote).
+# - Linux:   the command is ``shlex.quote``d for bash.
+#
+# If you add a new interpolated value to any of these paths, it must pass
+# through the same helpers — tests/test_prereq_check.py pins the emitted
+# bytes for hostile inputs.
+
+def _powershell_encoded(command):
+    """Encode a command for PowerShell ``-EncodedCommand`` (UTF-16LE Base64).
+
+    The encoded form contains only Base64 characters, so it survives every
+    quoting layer between this process and the elevated shell unchanged.
+    """
+    return base64.b64encode(command.encode("utf-16-le")).decode("ascii")
+
+
+def _applescript_do_script(command):
+    """Build a Terminal.app ``do script`` AppleScript for ``command``.
+
+    ``command`` must already be a safe *bash* command line (shlex-quoted).
+    This helper only handles the AppleScript string-literal layer: inside
+    a double-quoted AppleScript string, backslash and double-quote are the
+    only characters that need escaping.
+    """
+    escaped = command.replace("\\", "\\\\").replace('"', '\\"')
+    return f'tell application "Terminal" to do script "{escaped}"'
+
 
 def build_install_commands(missing_ffmpeg=True, missing_pip=None):
     """Return a list of shell commands appropriate for the host OS."""
@@ -464,28 +502,31 @@ def open_admin_terminal(commands):
     try:
         if sys.platform == "win32":
             # RunAs triggers the UAC prompt. -NoExit keeps the window open so
-            # the user can review the output.
+            # the user can review the output. The command itself travels as
+            # -EncodedCommand Base64 so no quoting layer can reinterpret it.
+            encoded = _powershell_encoded(joined)
             argv = [
                 "powershell", "-NoProfile",
                 "-Command",
-                f"Start-Process powershell -Verb RunAs -ArgumentList '-NoExit','-Command','{joined}'",
+                "Start-Process powershell -Verb RunAs "
+                f"-ArgumentList '-NoExit','-EncodedCommand','{encoded}'",
             ]
             subprocess.Popen(argv, creationflags=subprocess.CREATE_NO_WINDOW)
             return True, "Launched elevated PowerShell."
         if sys.platform == "darwin":
-            script = (
-                f'tell application "Terminal" to do script '
-                f'"sudo bash -c \\"{joined}\\""'
-            )
-            subprocess.Popen(["osascript", "-e", script])
+            # shlex.quote neutralizes the command for bash; the AppleScript
+            # helper then escapes the string-literal layer on top.
+            bash_cmd = "sudo bash -c " + shlex.quote(joined)
+            subprocess.Popen(["osascript", "-e", _applescript_do_script(bash_cmd)])
             return True, "Launched Terminal with sudo."
         # Linux: try common terminals in order.
+        bash_cmd = "sudo bash -c " + shlex.quote(joined)
         for term in ("gnome-terminal", "konsole", "xfce4-terminal", "xterm"):
             if shutil.which(term):
                 if term == "gnome-terminal":
-                    subprocess.Popen([term, "--", "bash", "-c", f"sudo bash -c '{joined}'; exec bash"])
+                    subprocess.Popen([term, "--", "bash", "-c", f"{bash_cmd}; exec bash"])
                 else:
-                    subprocess.Popen([term, "-e", f"sudo bash -c '{joined}'"])
+                    subprocess.Popen([term, "-e", bash_cmd])
                 return True, f"Launched {term} with sudo."
         return False, "No supported terminal emulator found."
     except Exception as e:

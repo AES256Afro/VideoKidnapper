@@ -17,10 +17,26 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 from collections import deque
+from pathlib import Path
 
 from videokidnapper.utils.ffmpeg_check import find_ffmpeg, find_ffprobe
+
+
+def _mkstemp_path(suffix):
+    """Create a closed, empty temp file and return its Path.
+
+    ``tempfile.mktemp`` (the old approach) only reserved a *name*, so two
+    concurrent exports — reachable since the Batch Export tab — could race
+    to the same path. ``mkstemp`` creates the file atomically; ffmpeg's
+    ``-y`` overwrites it happily. Callers own cleanup (``try/finally`` +
+    ``unlink(missing_ok=True)``).
+    """
+    fd, name = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+    return Path(name)
 
 
 # Module-level caches — lazy so import time stays cheap.
