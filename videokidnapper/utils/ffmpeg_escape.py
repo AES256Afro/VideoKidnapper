@@ -108,3 +108,54 @@ def sanitize_color(value: "str | None", default: str = "white") -> str:
         return default
     text = str(value).strip()
     return text if _COLOR_RE.match(text) else default
+
+
+# --- drawtext position expressions -----------------------------------------
+#
+# ``x={x_expr}:y={y_expr}`` is interpolated bare into the filter spec,
+# exactly like colours — so a crafted ``position`` in a ``.vidkid``
+# project file can terminate the option (``:``), the filter (``,`` /
+# ``;``), or the whole graph (``[``/``]``) and inject arbitrary filters,
+# including the file-reading ``movie=`` source. Same class of bug the
+# v1.8.1 colour fix closed, one field over.
+#
+# Legitimate values are exactly two shapes:
+#
+# 1. the anchor presets from ``config.POSITION_MAP`` — drawtext frame
+#    variables and arithmetic only: ``(w-tw)/2:h-th-20``, ``w-tw-20:20``;
+# 2. numeric drag positions: ``960:540`` (source-pixel ints/floats,
+#    possibly negative mid-drag).
+#
+# The allowlist below encodes that: one ``:`` separator, and each side
+# built solely from digits, letters (frame variables), arithmetic
+# operators, parentheses, dots, and spaces. No character that lavfi
+# treats as structure can appear, so the value can never break out of
+# the option it is interpolated into.
+DEFAULT_POSITION = "(w-tw)/2:h-th-20"
+
+_SAFE_EXPR_PART_RE = re.compile(r"^[0-9A-Za-z_+\-*/(). ]{1,100}$")
+_POSITION_PAIR_RE = re.compile(r"^-?\d+(?:\.\d+)?:-?\d+(?:\.\d+)?$")
+
+
+def sanitize_position_expr(value: "str | None",
+                           default: str = DEFAULT_POSITION) -> str:
+    """Return ``value`` if it is a safe drawtext ``x:y`` position, else
+    ``default``.
+
+    Validation — not escaping — is the right tool here for the same
+    reason as :func:`sanitize_color`: the value is interpolated without
+    containing quotes, and a value that needs escaping is by definition
+    not a position the UI could have produced. Falling back to the
+    default keeps a corrupt or hostile project openable.
+    """
+    if value is None:
+        return default
+    text = str(value).strip()
+    if _POSITION_PAIR_RE.match(text):
+        return text
+    if text.count(":") != 1:
+        return default
+    x_part, y_part = text.split(":", 1)
+    if _SAFE_EXPR_PART_RE.match(x_part) and _SAFE_EXPR_PART_RE.match(y_part):
+        return text
+    return default

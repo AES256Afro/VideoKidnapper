@@ -27,9 +27,8 @@ responsibility — we just ask for a size and get back a ready model.
 """
 
 import subprocess
-import tempfile
-from pathlib import Path
 
+from videokidnapper.core.ffmpeg._internals import _mkstemp_path
 from videokidnapper.utils.ffmpeg_check import find_ffmpeg
 
 
@@ -60,7 +59,7 @@ def extract_audio_segment(video_path, start=None, end=None, ffmpeg=None):
     file is a temporary path the caller is responsible for deleting.
     """
     ffmpeg = ffmpeg or str(find_ffmpeg() or "ffmpeg")
-    wav_path = Path(tempfile.mktemp(suffix=".wav"))
+    wav_path = _mkstemp_path(".wav")
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
     if start is not None:
         cmd += ["-ss", str(max(0.0, float(start)))]

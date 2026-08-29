@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+  SPDX-License-Identifier: Apache-2.0
+
+  Hardened-runtime entitlements for the notarized macOS build.
+
+  Notarization REQUIRES the hardened runtime (`codesign --options
+  runtime`), which switches on protections that a CPython app packaged
+  by PyInstaller trips over. Each entitlement below re-opens exactly one
+  of them — nothing here is speculative, and nothing grants network,
+  camera, or file-access privileges.
+
+  allow-jit / allow-unsigned-executable-memory
+      CPython allocates writable-then-executable memory for its own
+      bytecode machinery, and several C extensions (notably libffi,
+      which ctypes and cffi sit on) generate closures at runtime. Under
+      the hardened runtime that is fatal at import time.
+
+  disable-library-validation
+      The bundle loads a large tree of third-party .dylibs and .so files
+      that PyInstaller collected — OpenCV, Pillow, Tk, portaudio — plus
+      the bundled ffmpeg/ffprobe binaries. Library validation demands
+      every loaded library be signed by the *same* Team ID; these are
+      re-signed by the build, but validation still rejects loading them
+      from a Resources subtree, so it has to be off.
+
+  Deliberately NOT granted: allow-dyld-environment-variables and
+  debugger entitlements. Neither is needed and both weaken the build.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

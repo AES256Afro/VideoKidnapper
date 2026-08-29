@@ -18,12 +18,10 @@ crossfade lines up perfectly: transition k starts at
 """
 
 import subprocess
-import tempfile
 import threading
-from pathlib import Path
 
 from videokidnapper.core.ffmpeg._internals import (
-    _encoder_quality_args, _get_ffmpeg, _get_ffprobe,
+    _encoder_quality_args, _get_ffmpeg, _get_ffprobe, _mkstemp_path,
     _run_kwargs, pick_video_encoder,
 )
 from videokidnapper.core.ffmpeg.probe import get_video_info
@@ -241,7 +239,7 @@ def concat_clips(input_paths, output_path, progress_callback=None, cancel_event=
     """
     if not input_paths:
         return None
-    list_path = Path(tempfile.mktemp(suffix=".txt"))
+    list_path = _mkstemp_path(".txt")
     try:
         with open(list_path, "w", encoding="utf-8") as fh:
             for p in input_paths:
