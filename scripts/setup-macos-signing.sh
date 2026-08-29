@@ -6,6 +6,7 @@
 #
 #   ./scripts/setup-macos-signing.sh              # do it
 #   ./scripts/setup-macos-signing.sh --dry-run    # show what it would do
+#   ./scripts/setup-macos-signing.sh --p12 FILE   # use one validated export
 #
 # It exports the .p12 for you with `security export`, so you never have
 # to navigate Keychain Access — the step people get wrong by exporting
@@ -22,7 +23,38 @@ REPO="${VK_REPO:-AES256Afro/VideoKidnapper}"
 # keychain in tests without touching the real login keychain.
 KEYCHAIN="${VK_KEYCHAIN:-login.keychain-db}"
 DRY_RUN=0
-[ "${1:-}" = "--dry-run" ] && DRY_RUN=1
+P12_INPUT=""
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --dry-run)
+            DRY_RUN=1
+            ;;
+        --p12)
+            shift
+            if [ "$#" -eq 0 ]; then
+                echo "error: --p12 requires a path" >&2
+                exit 2
+            fi
+            P12_INPUT="$1"
+            ;;
+        -h|--help)
+            cat <<'EOF'
+usage: setup-macos-signing.sh [--dry-run] [--p12 FILE]
+
+  --dry-run   validate everything without writing GitHub secrets
+  --p12 FILE  use one existing Developer ID .p12 instead of exporting
+              every identity from the login keychain
+EOF
+            exit 0
+            ;;
+        *)
+            echo "error: unknown option: $1" >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
 
 G='\033[0;32m'; R='\033[0;31m'; Y='\033[0;33m'; B='\033[0;36m'; D='\033[2m'; O='\033[0m'
 ok()   { printf "  ${G}✓${O} %s\n" "$1"; }
@@ -102,22 +134,38 @@ step "3. Exporting the certificate and its private key"
 WORK="$(mktemp -d)"
 chmod 700 "$WORK"
 P12="$WORK/DeveloperID.p12"
-P12_PASSWORD="$(openssl rand -base64 24)"
-
-info "macOS will ask permission to export the private key — this is the"
-info "keychain prompt, and it is expected. Choose Allow."
-echo
-if ! security export -k "$KEYCHAIN" -t identities -f pkcs12 \
-        -P "$P12_PASSWORD" -o "$P12" >/dev/null 2>&1; then
-    if ! security export -t identities -f pkcs12 \
-            -P "$P12_PASSWORD" -o "$P12" >/dev/null 2>&1; then
-        bad "export failed (did you deny the keychain prompt?)"
-        info "You can export by hand instead — see packaging/macos/README.md"
+if [ -n "$P12_INPUT" ]; then
+    if [ ! -f "$P12_INPUT" ]; then
+        bad "no such .p12: $P12_INPUT"
         exit 1
+    fi
+    cp "$P12_INPUT" "$P12"
+    chmod 600 "$P12"
+    printf "  .p12 export password (hidden): "
+    read -rs P12_PASSWORD
+    echo
+    if [ -z "$P12_PASSWORD" ]; then
+        bad "a .p12 export password is required"
+        exit 1
+    fi
+    ok "using the provided .p12 (the original will not be modified)"
+else
+    P12_PASSWORD="$(openssl rand -base64 24)"
+    info "macOS will ask permission to export the private key. This is the"
+    info "keychain prompt, and it is expected. Choose Allow."
+    echo
+    if ! security export -k "$KEYCHAIN" -t identities -f pkcs12 \
+            -P "$P12_PASSWORD" -o "$P12" >/dev/null 2>&1; then
+        if ! security export -t identities -f pkcs12 \
+                -P "$P12_PASSWORD" -o "$P12" >/dev/null 2>&1; then
+            bad "export failed (did you deny the keychain prompt?)"
+            info "You can export by hand instead: see packaging/macos/README.md"
+            exit 1
+        fi
     fi
 fi
 [ -s "$P12" ] || { bad "export produced an empty file"; exit 1; }
-ok "exported ($(wc -c < "$P12" | tr -d ' ') bytes)"
+ok "staged ($(wc -c < "$P12" | tr -d ' ') bytes)"
 
 # --------------------------------------------------------------- 4. validate
 step "4. Checking the export is usable"
@@ -138,10 +186,34 @@ fi
 CERT_COUNT="$(printf '%s' "$DUMP" | grep -c -- "-----BEGIN CERTIFICATE-----" || true)"
 KEY_COUNT="$(printf '%s' "$DUMP" | grep -c -- "-----BEGIN.*PRIVATE KEY-----" || true)"
 if [ "${KEY_COUNT:-0}" -gt 1 ]; then
-    warn "$KEY_COUNT private keys in the export — more than the build needs"
+    bad "$KEY_COUNT private keys in the export: more than the build needs"
     info "(leaf + intermediates is normal for certificates; extra KEYS are not)"
+    info "Nothing was uploaded. Export only the Developer ID Application"
+    info "identity from Keychain Access → login → My Certificates, then"
+    info "follow packaging/macos/README.md."
+    exit 1
 fi
 info "$CERT_COUNT certificate(s), $KEY_COUNT private key(s)"
+
+EXPORTED_CERT="$(printf '%s' "$DUMP" | openssl x509 2>/dev/null)"
+EXPORTED_SUBJECT="$(printf '%s' "$EXPORTED_CERT" | openssl x509 -noout -subject -nameopt multiline 2>/dev/null)"
+EXPORTED_CN="$(printf '%s' "$EXPORTED_SUBJECT" | awk -F' = ' '/commonName/{print $2}')"
+EXPORTED_TEAM_ID="$(printf '%s' "$EXPORTED_SUBJECT" | awk -F' = ' '/organizationalUnitName/{print $2}')"
+case "$EXPORTED_CN" in
+    "Developer ID Application:"*) ok "certificate type: Developer ID Application" ;;
+    *)
+        bad "export resolved to the wrong certificate: ${EXPORTED_CN:-<none>}"
+        info "Nothing was uploaded. Export only the Developer ID Application"
+        info "identity from Keychain Access → login → My Certificates."
+        exit 1
+        ;;
+esac
+if [ "$EXPORTED_TEAM_ID" != "$TEAM_ID" ]; then
+    bad "exported certificate Team ID does not match $TEAM_ID"
+    info "Nothing was uploaded."
+    exit 1
+fi
+ok "exported Team ID matches: $TEAM_ID"
 
 if printf '%s' "$DUMP" | openssl x509 -noout -checkend 0 >/dev/null 2>&1; then
     ok "valid until $(printf '%s' "$DUMP" | openssl x509 -noout -enddate 2>/dev/null | cut -d= -f2)"
@@ -205,7 +277,8 @@ step "Done"
 if [ "$DRY_RUN" = "1" ]; then
     info "Re-run without --dry-run to write the secrets."
 else
-    ok "All five secrets are set. The temporary .p12 has been deleted."
+    ok "All five secrets are set. The temporary .p12 copy has been deleted."
+    [ -n "$P12_INPUT" ] && info "The original remains at: $P12_INPUT"
     echo
     info "Next: build a signed DMG without cutting a release —"
     info "  gh workflow run macos.yml --repo $REPO"
