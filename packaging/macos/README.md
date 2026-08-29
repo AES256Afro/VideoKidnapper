@@ -49,6 +49,19 @@ checks your notarization credentials against Apple before saving
 anything, and writes all five repository secrets. Add `--dry-run` to
 see what it would do first.
 
+If you already exported and validated exactly one Developer ID identity,
+pass that file directly so the helper does not export unrelated identities
+from the login keychain:
+
+```bash
+./scripts/setup-macos-signing.sh --dry-run --p12 ~/Documents/DeveloperID.p12
+./scripts/setup-macos-signing.sh --p12 ~/Documents/DeveloperID.p12
+```
+
+The password is read through a hidden prompt. The helper validates the
+certificate type, private-key count, and Team ID before writing anything.
+It works from a private temporary copy and does not modify the original.
+
 Nothing secret is printed or written outside a private temp directory
 that is deleted on exit, and the script refuses to continue rather than
 storing credentials Apple has already rejected.

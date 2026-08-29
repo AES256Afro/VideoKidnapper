@@ -106,7 +106,10 @@ case "$CN" in
         info "'Developer ID Application' for a .app/.dmg."
         ;;
     *)
-        warn "unrecognised certificate type: ${CN:-<none>}" ;;
+        bad "unrecognised certificate type: ${CN:-<none>}"
+        info "refusing to upload a private key that is not tied to a"
+        info "Developer ID Application certificate"
+        ;;
 esac
 
 # --- 4. Expiry ------------------------------------------------------------
@@ -126,7 +129,7 @@ if [ -n "$OU" ]; then
     ok "Team ID: $OU"
     info "use this for the MACOS_NOTARY_TEAM_ID secret"
 else
-    warn "no Team ID (OU) found in the certificate"
+    bad "no Team ID (OU) found in the certificate"
 fi
 
 # --- 6. The identity string codesign will use -----------------------------

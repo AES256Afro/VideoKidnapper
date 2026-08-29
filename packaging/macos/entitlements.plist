@@ -5,10 +5,10 @@
 
   Hardened-runtime entitlements for the notarized macOS build.
 
-  Notarization REQUIRES the hardened runtime (`codesign --options
-  runtime`), which switches on protections that a CPython app packaged
+  Notarization REQUIRES the hardened runtime signing option, which
+  switches on protections that a CPython app packaged
   by PyInstaller trips over. Each entitlement below re-opens exactly one
-  of them — nothing here is speculative, and nothing grants network,
+  of them. Nothing here is speculative, and nothing grants network,
   camera, or file-access privileges.
 
   allow-jit / allow-unsigned-executable-memory
@@ -19,7 +19,7 @@
 
   disable-library-validation
       The bundle loads a large tree of third-party .dylibs and .so files
-      that PyInstaller collected — OpenCV, Pillow, Tk, portaudio — plus
+      that PyInstaller collected: OpenCV, Pillow, Tk, portaudio, plus
       the bundled ffmpeg/ffprobe binaries. Library validation demands
       every loaded library be signed by the *same* Team ID; these are
       re-signed by the build, but validation still rejects loading them
