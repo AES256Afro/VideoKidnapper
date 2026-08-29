@@ -36,6 +36,28 @@ happens otherwise.
 
 ### One-time setup
 
+**The short way — one command:**
+
+```bash
+./scripts/setup-macos-signing.sh
+```
+
+It finds your Developer ID certificate, exports the `.p12` for you
+(generating and storing its passphrase, so there is nothing to invent
+or remember), verifies the export actually carries the private key,
+checks your notarization credentials against Apple before saving
+anything, and writes all five repository secrets. Add `--dry-run` to
+see what it would do first.
+
+Nothing secret is printed or written outside a private temp directory
+that is deleted on exit, and the script refuses to continue rather than
+storing credentials Apple has already rejected.
+
+The manual route below is the fallback — worth reading if the script
+stops on something, or if you would rather do it by hand.
+
+### One-time setup, by hand
+
 **1. Install the certificate.** Download the *Developer ID Application*
 `.cer` from [certificates](https://developer.apple.com/account/resources/certificates/list)
 and double-click it. It lands in the **login** keychain.
