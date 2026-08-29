@@ -21,6 +21,7 @@ from videokidnapper.utils.ffmpeg_escape import (
     escape_drawtext_value,
     escape_path,
     sanitize_color,
+    sanitize_position_expr,
 )
 
 
@@ -177,6 +178,14 @@ def _coerce_int(value, default=0):
         return default
 
 
+def _coerce_float(value, default=0.0):
+    """Best-effort float conversion, same fail-soft contract as _coerce_int."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _build_drawtext_filter(layer, fade=0.0):
     # Late import avoids a tk-at-import-time dependency during pytest collection
     # when the font-discovery path pulls in the UI layer.
@@ -192,7 +201,7 @@ def _build_drawtext_filter(layer, fade=0.0):
         bold=bool(layer.get("bold")),
         italic=bool(layer.get("italic")),
     ))
-    fontsize = int(layer.get("fontsize", 24))
+    fontsize = max(1, _coerce_int(layer.get("fontsize", 24), 24))
     # Colour options are unquoted in the filter spec, so an unvalidated
     # value escapes the option and injects filter graph — see
     # sanitize_color's docstring.
@@ -203,22 +212,26 @@ def _build_drawtext_filter(layer, fade=0.0):
     # keyframes with utils.keyframes.position_at, so parity is
     # structural, not coincidental.
     keyframes = layer.get("keyframes") or []
+    x_expr = y_expr = None
     if keyframes:
         from videokidnapper.utils.keyframes import compile_axis_expr
-        x_expr = f"'{compile_axis_expr(keyframes, 'x')}'"
-        y_expr = f"'{compile_axis_expr(keyframes, 'y')}'"
-    else:
-        pos_expr = layer.get("position", "(w-tw)/2:h-th-20")
-        # A drawtext position is an "x:y" pair. A stale/hand-edited layer
-        # with no colon (e.g. "center") would make the unpack raise
-        # ValueError and abort the whole encode; fall back to
-        # bottom-center instead.
-        if ":" not in str(pos_expr):
-            pos_expr = "(w-tw)/2:h-th-20"
-        x_expr, y_expr = str(pos_expr).split(":", 1)
-    start_t = float(layer.get("start", 0))
-    end_t = float(layer.get("end", 999999))
-    layer_fade = float(layer.get("fade", fade) or 0.0)
+        try:
+            x_expr = f"'{compile_axis_expr(keyframes, 'x')}'"
+            y_expr = f"'{compile_axis_expr(keyframes, 'y')}'"
+        except (KeyError, TypeError, ValueError):
+            # Corrupt keyframe data (e.g. a hand-edited project) falls
+            # back to the static position instead of aborting the encode.
+            x_expr = y_expr = None
+    if x_expr is None:
+        # Position is validated, not escaped: it is interpolated bare
+        # into the filter spec, so anything that is not provably a
+        # position expression falls back to the default — same contract
+        # as sanitize_color. See sanitize_position_expr's docstring.
+        pos_expr = sanitize_position_expr(layer.get("position"))
+        x_expr, y_expr = pos_expr.split(":", 1)
+    start_t = _coerce_float(layer.get("start", 0))
+    end_t = _coerce_float(layer.get("end", 999999), 999999)
+    layer_fade = _coerce_float(layer.get("fade", fade))
 
     parts = [
         f"drawtext=text='{text}'",
@@ -255,7 +268,7 @@ def _build_drawtext_filter(layer, fade=0.0):
 
     if layer.get("box"):
         boxcolor = sanitize_color(layer.get("boxcolor"), "black@0.6")
-        boxborderw = int(layer.get("boxborderw", 8))
+        boxborderw = max(0, _coerce_int(layer.get("boxborderw", 8), 8))
         parts.append("box=1")
         parts.append(f"boxcolor={boxcolor}")
         parts.append(f"boxborderw={boxborderw}")
@@ -393,7 +406,13 @@ def _overlay_position_expr(anchor, x=None, y=None):
     scaled or the main video is cropped.
     """
     if x is not None and y is not None:
-        return (f"{max(0, int(x))}", f"{max(0, int(y))}")
+        # Drag coordinates come from the layer dict — coerce fail-soft so
+        # a corrupt project falls back to the anchor instead of aborting
+        # the encode.
+        try:
+            return (f"{max(0, int(x))}", f"{max(0, int(y))}")
+        except (TypeError, ValueError):
+            pass
     pad = _OVERLAY_PAD
     return {
         "top_left":      (f"{pad}",                              f"{pad}"),
@@ -442,13 +461,17 @@ def _build_image_overlay_chain(image_layers, base_label, video_dur=None):
         stream_idx = idx + 1
 
         # Scale: fraction of main-video width. ``-1`` keeps aspect.
-        scale = float(layer.get("scale", 0.25))
+        # All numerics are coerced fail-soft: a corrupt or hand-edited
+        # project file must not abort the encode (same contract as the
+        # drawtext builder above).
+        scale = _coerce_float(layer.get("scale", 0.25), 0.25)
         scale = max(0.01, min(1.0, scale))
         # Opacity: ffmpeg's colorchannelmixer aa=<alpha>.
-        opacity = max(0.0, min(1.0, float(layer.get("opacity", 1.0))))
+        opacity = max(0.0, min(1.0, _coerce_float(layer.get("opacity", 1.0), 1.0)))
         # Timing — clip-relative because the input was already -ss'd.
-        start_t = max(0.0, float(layer.get("start", 0.0)))
-        end_t = float(layer.get("end", video_dur or 1e9))
+        start_t = max(0.0, _coerce_float(layer.get("start", 0.0)))
+        end_t = _coerce_float(layer.get("end", video_dur or 1e9),
+                              video_dur or 1e9)
         if video_dur is not None:
             end_t = min(end_t, video_dur)
         if end_t <= start_t:
