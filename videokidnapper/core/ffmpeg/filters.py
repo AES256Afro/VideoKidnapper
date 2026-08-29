@@ -506,9 +506,16 @@ def _build_image_overlay_chain(image_layers, base_label, video_dur=None):
         )
         out_label = f"v_ov{idx}"
         enable = f":enable='between(t\\,{start_t:.3f}\\,{end_t:.3f})'"
+        # shortest=1 is load-bearing, not cosmetic. Every overlay input
+        # is fed to ffmpeg with -loop 1 (still) or -stream_loop -1
+        # (animated), so it never reaches EOF. Any filter that has to
+        # buffer the whole stream then waits forever: palettegen, which
+        # every GIF export runs, hangs and writes a zero-byte file.
+        # Bounding the graph by the main video is also just correct —
+        # the overlay should never extend the clip.
         parts.append(
             f"[{current}][{scaled_label}]"
-            f"overlay=x={x_expr}:y={y_expr}{enable}[{out_label}]"
+            f"overlay=x={x_expr}:y={y_expr}:shortest=1{enable}[{out_label}]"
         )
         current = out_label
 

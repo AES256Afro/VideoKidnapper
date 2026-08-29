@@ -94,6 +94,16 @@ class ImageLayerWidget(ctk.CTkFrame):
             text_color=T.TEXT,
         ).pack(side="left")
 
+        # Animated stickers (GIF / APNG / animated WebP) render as moving
+        # overlays; stills do not. The distinction is invisible in a file
+        # path, and the preview canvas can only show one frame, so say it
+        # here rather than letting the export be the first hint.
+        self.animated_badge = ctk.CTkLabel(
+            row1, text="", font=T.font(T.SIZE_SM, "bold"),
+            text_color=T.ACCENT,
+        )
+        self.animated_badge.pack(side="left", padx=(8, 0))
+
         ctk.CTkButton(
             row1, text="✕", width=28, height=28,
             fg_color=T.DANGER, hover_color=T.DANGER_HOVER,
@@ -108,7 +118,7 @@ class ImageLayerWidget(ctk.CTkFrame):
 
         self.path_entry = ctk.CTkEntry(
             row2, textvariable=self.path_var,
-            placeholder_text="PNG / JPG path…",
+            placeholder_text="PNG / GIF / WebP path…",
             font=ctk.CTkFont(size=12), height=28,
         )
         self.path_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
@@ -183,6 +193,11 @@ class ImageLayerWidget(ctk.CTkFrame):
         )
         self.time_label.pack(side="right")
 
+        # Keep the badge honest whether the path arrives from Browse,
+        # a drag-drop, a restored project, or typing.
+        self.path_var.trace_add("write", self._refresh_animated_badge)
+        self._refresh_animated_badge()
+
     # ------------------------------------------------------------------
     def _pick_file(self):
         exts = " ".join(f"*{e}" for e in SUPPORTED_IMAGE_EXTS)
@@ -192,6 +207,31 @@ class ImageLayerWidget(ctk.CTkFrame):
         )
         if path:
             self.path_var.set(path)
+
+    def _refresh_animated_badge(self, *_args):
+        """Show a frame count when the chosen file is an animated sticker.
+
+        Probing is a Pillow header read, so it is cheap enough to run on
+        every path edit. It must never raise: a half-typed path in the
+        entry box is the normal case, not an error.
+        """
+        path = (self.path_var.get() or "").strip()
+        if not path:
+            self.animated_badge.configure(text="")
+            return
+        try:
+            from videokidnapper.utils.animated_media import probe_overlay
+
+            media = probe_overlay(path)
+        except Exception:
+            self.animated_badge.configure(text="")
+            return
+        if media.is_animated:
+            self.animated_badge.configure(
+                text=f"● animated · {media.n_frames} frames",
+            )
+        else:
+            self.animated_badge.configure(text="")
 
     def _on_remove(self):
         if self.on_remove:
