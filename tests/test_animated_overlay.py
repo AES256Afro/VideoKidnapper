@@ -27,7 +27,6 @@ import pytest
 
 from videokidnapper.core.ffmpeg.filters import _build_image_overlay_chain
 from videokidnapper.utils.animated_media import (
-    OverlayMedia,
     probe_overlay,
     resolve_overlay_inputs,
 )
