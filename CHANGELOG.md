@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Animated stickers.** Overlay an animated GIF, APNG, or WebP onto a video *or* onto a GIF export — reaction stickers, animated logos, looping accents. The sticker loops for as long as it is on screen, with the same position, scale, opacity, and timing controls still images already had. The overlay row labels animated files with their frame count, since a file path alone doesn't say whether something moves.
+
+### Fixed
+
+- **Adding a GIF overlay used to kill the export.** The file picker has always offered `.gif` and `.webp`, but every overlay was handed to FFmpeg as a still image (`-loop 1`, an option that only exists for the image2 demuxer). Picking an animated sticker made FFmpeg exit with `Option loop not found.` before writing a single frame, so the export just failed. Animated sources now get the right loop handling, and animated WebP — which FFmpeg cannot decode — is converted first instead of rendering frozen.
+- **GIF export with an overlay could hang forever.** Overlay inputs loop indefinitely, and the palette pass every GIF export runs has to read the whole stream before it can start, so it waited on an input that never ended and left a zero-byte file behind. The overlay is now bounded by the length of the video.
+
 ## [1.8.1] — 2026-08-05
 
 > **If you are on 1.8.0, upgrade.** That release had no working macOS install path: the `.dmg` refused to launch, and `pip install videokidnapper` produced a broken environment. Both are fixed here.
