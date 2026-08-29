@@ -308,6 +308,37 @@ class App(ctk.CTk):
             return self.trim_tab
         return None
 
+    def _bind_accel(self, body, handler, both_cases=True):
+        """Bind one app accelerator under every platform's modifier key.
+
+        Tk exposes Ctrl and Cmd as separate modifiers, and until 1.8.2
+        only ``<Control-...>`` was bound — so on macOS every accelerator
+        in the app was dead. ⌘O, ⌘S and ⌘E did nothing, on the one
+        platform that ships a signed DMG, while the shortcuts overlay
+        cheerfully advertised "Ctrl+O".
+
+        Both modifiers are bound everywhere rather than switching on
+        ``sys.platform``: Command never fires on Windows or Linux, and
+        leaving Control live on macOS costs nothing and helps anyone
+        arriving with Windows muscle memory.
+
+        Tk also treats ``<Control-s>`` and ``<Control-S>`` as different
+        events, because Shift changes the keysym — so each letter is
+        bound in both cases by default. A ``Shift-`` prefix in ``body``
+        is passed through untouched and only the letter is case-folded.
+
+        ``both_cases=False`` is for the undo/redo pair. Some Tk builds
+        deliver Ctrl+Shift+Z as ``<Control-Z>`` rather than
+        ``<Control-Shift-Z>``, so the upper-case form has to mean redo;
+        folding it in with undo would make redo undo instead.
+        """
+        prefix, _, key = body.rpartition("-")
+        prefix = f"{prefix}-" if prefix else ""
+        cases = {key.lower(), key.upper()} if both_cases else {key}
+        for modifier in ("Control", "Command"):
+            for case in cases:
+                self.bind_all(f"<{modifier}-{prefix}{case}>", handler)
+
     def _bind_keyboard_shortcuts(self):
         # Using bind_all so entries don't swallow them; the _editing_in_entry
         # guard keeps typing in text fields from triggering scrubs.
@@ -322,28 +353,27 @@ class App(ctk.CTk):
         self.bind_all("<Key-I>",   lambda e: self._shortcut(e, "keyboard_mark_in"))
         self.bind_all("<Key-o>",   lambda e: self._shortcut(e, "keyboard_mark_out"))
         self.bind_all("<Key-O>",   lambda e: self._shortcut(e, "keyboard_mark_out"))
-        self.bind_all("<Control-e>", lambda e: self._shortcut(e, "keyboard_export"))
-        self.bind_all("<Control-E>", lambda e: self._shortcut(e, "keyboard_export"))
-        self.bind_all("<Control-o>", lambda e: self._shortcut(e, "keyboard_open"))
-        self.bind_all("<Control-O>", lambda e: self._shortcut(e, "keyboard_open"))
-        self.bind_all("<Control-s>", self._save_project_shortcut)
-        self.bind_all("<Control-S>", self._save_project_shortcut)
-        self.bind_all("<Control-Shift-s>", self._save_project_as_shortcut)
-        self.bind_all("<Control-Shift-S>", self._save_project_as_shortcut)
-        self.bind_all("<Control-Shift-o>", self._open_project_shortcut)
-        self.bind_all("<Control-Shift-O>", self._open_project_shortcut)
+        self._bind_accel("e", lambda e: self._shortcut(e, "keyboard_export"))
+        self._bind_accel("o", lambda e: self._shortcut(e, "keyboard_open"))
+        self._bind_accel("s", self._save_project_shortcut)
+        self._bind_accel("Shift-s", self._save_project_as_shortcut)
+        self._bind_accel("Shift-o", self._open_project_shortcut)
         # Ctrl+V routes by what's on the clipboard: a web link opens the
         # Kidnap downloader from ANY tab; anything else falls through to
         # the active tab's own paste (clipboard image → overlay on Trim).
         # Entries keep native paste because _editing_in_entry short-circuits.
-        self.bind_all("<Control-v>", self._paste_shortcut)
-        self.bind_all("<Control-V>", self._paste_shortcut)
+        self._bind_accel("v", self._paste_shortcut)
         # Undo / redo. `<Control-Z>` fires on Ctrl+Shift+Z; pair with
         # `<Control-y>` so users coming from any editor convention work.
-        self.bind_all("<Control-z>",       lambda e: self._shortcut(e, "keyboard_undo"))
-        self.bind_all("<Control-Shift-Z>", lambda e: self._shortcut(e, "keyboard_redo"))
-        self.bind_all("<Control-y>",       lambda e: self._shortcut(e, "keyboard_redo"))
-        self.bind_all("<Control-Y>",       lambda e: self._shortcut(e, "keyboard_redo"))
+        # Case matters here — see _bind_accel's both_cases note. The
+        # upper-case bare form is Ctrl+Shift+Z on some Tk builds, so it
+        # must map to redo, not undo.
+        self._bind_accel("z", lambda e: self._shortcut(e, "keyboard_undo"),
+                         both_cases=False)
+        self._bind_accel("Z", lambda e: self._shortcut(e, "keyboard_redo"),
+                         both_cases=False)
+        self._bind_accel("Shift-z", lambda e: self._shortcut(e, "keyboard_redo"))
+        self._bind_accel("y", lambda e: self._shortcut(e, "keyboard_redo"))
         # `?` opens the shortcuts overlay. Not routed through _shortcut()
         # because the target is the app itself, not the active tab.
         self.bind_all("<Key-question>", self._shortcut_shortcuts_overlay)
