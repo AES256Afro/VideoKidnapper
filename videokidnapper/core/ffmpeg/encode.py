@@ -32,6 +32,9 @@ from videokidnapper.core.ffmpeg.filters import (
     _build_paletteuse_filter, _build_scale_filter, _gif_loop_flag,
 )
 from videokidnapper.core.ffmpeg.probe import get_video_info
+from videokidnapper.utils.animated_media import (
+    cleanup_transcode, resolve_overlay_inputs,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -93,10 +96,19 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
         "-i", str(input_path),
     ]
     # Image overlay inputs land after the main video input. They're NOT
-    # -ss'd because PNGs don't have a timeline — ffmpeg loops them and
-    # the per-layer enable='between(t,...)' handles when they show.
-    for img_path in (L["path"] for L in valid_images):
-        cmd += ["-loop", "1", "-i", str(img_path)]
+    # -ss'd because an overlay has no timeline of its own — ffmpeg loops
+    # it and the per-layer enable='between(t,...)' decides when it shows.
+    #
+    # The loop flag differs by source. `-loop 1` is an image2-demuxer
+    # option that holds one still frame; handing it a .gif makes ffmpeg
+    # abort with "Option loop not found." before writing a frame, which
+    # is how animated stickers silently killed exports. Animated sources
+    # need `-stream_loop -1` instead, and animated WebP additionally
+    # needs transcoding because ffmpeg cannot decode it. resolve_overlay_
+    # inputs() sorts all of that out; see utils/animated_media.py.
+    overlay_media, overlay_temps = resolve_overlay_inputs(valid_images)
+    for media in overlay_media:
+        cmd += media.input_args() + ["-i", media.path]
 
     cmd += [
         "-t", str(duration),
@@ -138,19 +150,25 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
         cmd += ["-vf", ",".join(filters)]
     cmd += ["-movflags", "+faststart", str(output_path)]
 
-    process = subprocess.Popen(
-        cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,
-        **_run_kwargs(),
-    )
-    tail = _parse_progress(process, duration, progress_callback, cancel_event)
-    process.wait()
-    if process.returncode != 0:
-        # A user Stop kills ffmpeg (rc -9); that is not a failure
-        # worth dumping a full error report for.
-        if not was_cancelled(cancel_event):
-            _log_ffmpeg_failure(cmd, process.returncode, tail)
-        return None
-    return output_path
+    try:
+        process = subprocess.Popen(
+            cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,
+            **_run_kwargs(),
+        )
+        tail = _parse_progress(process, duration, progress_callback, cancel_event)
+        process.wait()
+        if process.returncode != 0:
+            # A user Stop kills ffmpeg (rc -9); that is not a failure
+            # worth dumping a full error report for.
+            if not was_cancelled(cancel_event):
+                _log_ffmpeg_failure(cmd, process.returncode, tail)
+            return None
+        return output_path
+    finally:
+        # Any WebP sticker we transcoded to a temp GIF. ffmpeg has read
+        # it by now (success, failure, or cancel), so it always goes.
+        for temp_path in overlay_temps:
+            cleanup_transcode(temp_path)
 
 
 def trim_to_gif(input_path, start, end, preset_name, output_path,
