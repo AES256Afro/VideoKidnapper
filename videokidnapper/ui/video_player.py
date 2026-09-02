@@ -26,6 +26,7 @@ import tkinter as tk
 import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
+from videokidnapper.utils.coerce import coerce_float, coerce_int
 from videokidnapper.core import playback
 from videokidnapper.core.preview import get_frame_at
 from videokidnapper.ui import theme as T
@@ -389,8 +390,11 @@ class VideoPlayer(ctk.CTkFrame):
             text = (layer.get("text") or "").strip()
             if not text:
                 continue
-            start = layer.get("start", 0)
-            end = layer.get("end", 1e9)
+            # Coerced, not compared raw: a project with "start": "soon"
+            # would otherwise raise TypeError comparing str to float and
+            # take down the preview, while the export renders it fine.
+            start = coerce_float(layer.get("start", 0), 0.0)
+            end = coerce_float(layer.get("end", 1e9), 1e9)
             if not (start <= timestamp <= end):
                 continue
 
@@ -398,7 +402,7 @@ class VideoPlayer(ctk.CTkFrame):
             # so the preview and the export wrap identically.
             text = text.replace("\r\n", "\n").replace("\r", "\n")
 
-            fontsize = max(6, int(layer.get("fontsize", 24)))
+            fontsize = max(6, coerce_int(layer.get("fontsize", 24), 24))
             try:
                 font_path = _font_path_for_preview(
                     layer.get("font", "Arial"),
@@ -440,7 +444,7 @@ class VideoPlayer(ctk.CTkFrame):
             # then bordered glyphs.
             if layer.get("box"):
                 # Match ffmpeg drawtext's boxborderw=8 default for Subtitle.
-                pad = int(layer.get("boxborderw", 8))
+                pad = coerce_int(layer.get("boxborderw", 8), 8)
                 draw.rectangle(
                     (x - pad, y - pad, x + tw + pad, y + th + pad),
                     fill=(0, 0, 0, 160),
@@ -448,9 +452,9 @@ class VideoPlayer(ctk.CTkFrame):
 
             color = _parse_color_rgba(layer.get("fontcolor", "white"))
             try:
-                sx = int(layer.get("shadowx", 0) or 0)
-                sy = int(layer.get("shadowy", 0) or 0)
-                borderw = max(0, int(layer.get("borderw", 0) or 0))
+                sx = coerce_int(layer.get("shadowx", 0))
+                sy = coerce_int(layer.get("shadowy", 0))
+                borderw = max(0, coerce_int(layer.get("borderw", 0)))
             except (TypeError, ValueError):
                 sx = sy = borderw = 0
 
@@ -478,7 +482,7 @@ class VideoPlayer(ctk.CTkFrame):
 
             # Record the hit-test bbox in source-pixel space; include the
             # box border so users can grab the edge comfortably.
-            pad = int(layer.get("boxborderw", 8)) if layer.get("box") else 2
+            pad = coerce_int(layer.get("boxborderw", 8), 8) if layer.get("box") else 2
             self._text_bboxes.append(
                 (idx, x - pad, y - pad, x + tw + pad, y + th + pad),
             )
@@ -517,7 +521,9 @@ class VideoPlayer(ctk.CTkFrame):
         for idx, L in enumerate(layers):
             if not L.get("path"):
                 continue
-            if not (L.get("start", 0) <= timestamp <= L.get("end", 1e9)):
+            if not (coerce_float(L.get("start", 0), 0.0)
+                    <= timestamp
+                    <= coerce_float(L.get("end", 1e9), 1e9)):
                 continue
             visible.append((idx, L))
         if not visible:
@@ -563,14 +569,14 @@ class VideoPlayer(ctk.CTkFrame):
                     continue  # previously-failed load
 
             # Scale relative to the image's own width (matches ffmpeg).
-            scale = max(0.01, min(1.0, float(layer.get("scale", 0.25))))
+            scale = max(0.01, min(1.0, coerce_float(layer.get("scale", 0.25), 0.25)))
             sw, sh = src.size
             new_w = max(1, int(sw * scale))
             new_h = max(1, int(sh * scale))
             scaled = src.resize((new_w, new_h), Image.LANCZOS)
 
             # Opacity: pre-multiply alpha into the overlay's alpha band.
-            opacity = max(0.0, min(1.0, float(layer.get("opacity", 1.0))))
+            opacity = max(0.0, min(1.0, coerce_float(layer.get("opacity", 1.0), 1.0)))
             if opacity < 0.999:
                 alpha = scaled.split()[3]
                 alpha = alpha.point(lambda v, o=opacity: int(v * o))
