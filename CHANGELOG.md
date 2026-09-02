@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
+- **Exports are named after the video.** A folder of clips used to be a wall of `VidKid_trim_20260902_143022.mp4` where only the timestamp told them apart. Exports now take the source video's title — the real title for a download, the filename for a local file. **Export Options → File names** switches between *Video title*, *Video title + date*, *Video title + date & time*, and the old *VidKid + timestamp*, with a live example of what the next file will be called.
+
+  Titles are cleaned up on the way: path separators, control characters and Windows-illegal characters are removed, over-long titles are cut at a word boundary, and names that would collide with a Windows device (`CON`, `NUL`, `COM1`) are defused. Accents, CJK and emoji are kept. A second export of the same clip gets `_1`, `_2` rather than overwriting.
+
+### Added
+
 - **Animated stickers.** Overlay an animated GIF, APNG, or WebP onto a video *or* onto a GIF export — reaction stickers, animated logos, looping accents. The sticker loops for as long as it is on screen, with the same position, scale, opacity, and timing controls still images already had. The overlay row labels animated files with their frame count, since a file path alone doesn't say whether something moves.
 
 ### Fixed
