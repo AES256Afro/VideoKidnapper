@@ -12,6 +12,7 @@ import os
 import tempfile
 import threading
 from pathlib import Path
+from typing import Any
 
 
 _SETTINGS_PATH = Path.home() / ".videokidnapper_settings.json"
@@ -177,7 +178,7 @@ def _write(data):
         pass
 
 
-def get(key, default=None):
+def get(key: str, default: "Any" = None) -> "Any":
     data = _read()
     if key in data:
         return data[key]
@@ -186,7 +187,7 @@ def get(key, default=None):
     return default
 
 
-def set(key, value):   # noqa: A001 — deliberate shadow of builtin
+def set(key: str, value: "Any") -> None:   # noqa: A001 — deliberate shadow of builtin
     with _WRITE_LOCK:
         data = _read()
         data[key] = value
