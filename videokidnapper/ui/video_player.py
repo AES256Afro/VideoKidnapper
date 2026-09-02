@@ -58,6 +58,10 @@ class VideoPlayer(ctk.CTkFrame):
         # by path so panning through frames doesn't re-read them from disk.
         self._image_layers_provider = None
         self._image_cache = {}  # path → PIL.Image (RGBA)
+        # path → (frames, durations_ms) for animated stickers, or
+        # None once a path is known to be a still. Decoding every
+        # frame is done once per file, not once per preview tick.
+        self._image_anim_cache = {}
         self._playing = False
         self._play_after_id = None
         self._play_end = None
@@ -525,18 +529,38 @@ class VideoPlayer(ctk.CTkFrame):
         for idx, layer in visible:
             path = layer.get("path")
             # Cache hit? Use it. Cache miss: load once and remember.
-            src = self._image_cache.get(path)
-            if src is None:
-                try:
-                    src = Image.open(path).convert("RGBA")
-                except Exception:
-                    # Bad path / unreadable file — cache the failure as
-                    # None so we don't retry every frame tick.
-                    self._image_cache[path] = None
-                    continue
-                self._image_cache[path] = src
-            elif src is None:
-                continue  # previously-failed load
+            # Animated sticker? Pick the frame the export would show at
+            # this instant. ffmpeg loops the overlay continuously from
+            # the start of the encode, so the frame follows the timeline
+            # position modulo the loop length — see frame_index_at.
+            # Without this the preview sat on frame 0 while the exported
+            # file moved, the one place preview/export parity did not
+            # hold.
+            if path not in self._image_anim_cache:
+                from videokidnapper.utils.animated_media import (
+                    load_animation_frames,
+                )
+                self._image_anim_cache[path] = load_animation_frames(path)
+            animation = self._image_anim_cache[path]
+
+            if animation is not None:
+                from videokidnapper.utils.animated_media import frame_index_at
+
+                frames, durations = animation
+                src = frames[frame_index_at(durations, timestamp)]
+            else:
+                src = self._image_cache.get(path)
+                if src is None:
+                    try:
+                        src = Image.open(path).convert("RGBA")
+                    except Exception:
+                        # Bad path / unreadable file — cache the failure
+                        # as None so we don't retry every frame tick.
+                        self._image_cache[path] = None
+                        continue
+                    self._image_cache[path] = src
+                elif src is None:
+                    continue  # previously-failed load
 
             # Scale relative to the image's own width (matches ffmpeg).
             scale = max(0.01, min(1.0, float(layer.get("scale", 0.25))))

@@ -64,16 +64,22 @@ usability bug before it is a technical one. Fixed with real animated
 sticker support; the overlay row now also labels animated files, because
 a path does not tell you whether something moves.
 
-## U4 — The preview cannot show an animated sticker — P2
+## U4 — The preview cannot show an animated sticker — P2 — FIXED
 
 The canvas composites overlays with Pillow (`ui/video_player.py`), one
 frame per layer, so an animated sticker previews as its first frame while
 the export animates. The app otherwise holds a strict preview/export
 parity rule, and this is now the one place it does not hold.
 
-Mitigated for now by the "● animated · N frames" badge, which at least
-makes the difference visible. A real fix advances the sticker's frame
-with the playhead — cheap, since Pillow already has the frames decoded.
+Fixed: the preview now advances the sticker's frame with the playhead.
+Frames are decoded once per file and chosen by timeline position modulo
+the loop length, under a memory budget that falls back to a still for
+very large animations.
+
+Measured against ffmpeg 6.0, the first loop of a `-stream_loop -1`
+overlay runs ~0.133 s long and every loop after it is exactly nominal,
+so the preview sits within about one sticker frame and does not drift.
+Frame-exact parity is not claimed.
 
 ## U5 — Default window is too small for the layout — P2
 
@@ -105,7 +111,7 @@ here rather than rediscovering it.
 |---|---|
 | U2 macOS accelerators | fixed |
 | U3 animated stickers offered but broken | fixed |
-| U4 preview parity for animated stickers | badge only; frame stepping open |
+| U4 preview parity for animated stickers | fixed |
 | U1 preview scrolls away | six layout directions drafted; not implemented |
 | U5 window sizing | open, tied to U1 |
 | U6 feedback on slow/destructive actions | open |
