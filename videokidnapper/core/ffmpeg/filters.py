@@ -17,6 +17,7 @@ export alignment pixel-exact).
 """
 
 from videokidnapper.config import PRESETS
+from videokidnapper.utils.coerce import coerce_float, coerce_int
 from videokidnapper.utils.ffmpeg_escape import (
     escape_drawtext_value,
     escape_path,
@@ -170,20 +171,11 @@ def _fade_alpha_expr(start, end, fade):
     )
 
 
-def _coerce_int(value, default=0):
-    """Best-effort int conversion — corrupt layer dicts must not break encodes."""
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _coerce_float(value, default=0.0):
-    """Best-effort float conversion, same fail-soft contract as _coerce_int."""
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+# Shared with the preview canvas — see utils/coerce.py for why these do
+# not live next to either consumer. Aliased under the old private names
+# so existing callers and tests keep working.
+_coerce_int = coerce_int
+_coerce_float = coerce_float
 
 
 def _build_drawtext_filter(layer, fade=0.0):
