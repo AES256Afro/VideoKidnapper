@@ -81,6 +81,31 @@ overlay runs ~0.133 s long and every loop after it is exactly nominal,
 so the preview sits within about one sticker frame and does not drift.
 Frame-exact parity is not claimed.
 
+## U7 — Captions previewed at a fixed tiny size off Windows — P1 — FIXED
+
+`_find_font_path` was Windows-only by construction: a hardcoded
+`C:\Windows\Fonts`, Windows filenames, and a fallback to `arial.ttf`
+in that same directory. On macOS and Linux nothing ever resolved, the
+preview caught the `truetype()` failure and fell back to Pillow's
+`load_default()` bitmap face — which ignores the requested size.
+
+Measured on macOS before the fix:
+
+    fontsize= 12 -> rendered 24x 8 px
+    fontsize= 24 -> rendered 24x 8 px
+    fontsize= 48 -> rendered 24x 8 px
+    fontsize= 96 -> rendered 24x 8 px
+
+The font-size control did nothing visible, and the caption bbox was
+misaligned against the export by up to 57 px.
+
+Fixed: platform-aware search paths and per-platform filename
+candidates. A second, smaller error surfaced once fonts loaded — the
+preview measured *ink* extent with `textbbox` but drew with the
+ascender box at that point, so glyphs sat low by an amount that grew
+with size. Drawing from the ink origin closes it. Preview and export
+bboxes are now identical at every size tested (0 px delta at 24/48/72).
+
 ## U5 — Default window is too small for the layout — P2
 
 `WINDOW_SIZE = "1000x700"`, `MIN_WINDOW_SIZE = (680, 480)`
@@ -115,3 +140,4 @@ here rather than rediscovering it.
 | U1 preview scrolls away | six layout directions drafted; not implemented |
 | U5 window sizing | open, tied to U1 |
 | U6 feedback on slow/destructive actions | open |
+| U7 captions previewed at a fixed size off Windows | fixed |

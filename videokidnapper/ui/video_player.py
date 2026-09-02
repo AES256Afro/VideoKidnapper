@@ -413,10 +413,19 @@ class VideoPlayer(ctk.CTkFrame):
             except Exception:
                 font = ImageFont.load_default()
 
+            # `ink_dx/dy` is why the preview used to sit a few pixels
+            # below the export, by an amount that grew with font size.
+            # textbbox measures the INK, but multiline_text draws with
+            # the ascender box's top-left at the given point — so the
+            # glyphs land lower by the internal leading. ffmpeg's
+            # drawtext positions by the ink, so subtracting the offset
+            # is what makes `h-th-20` mean the same thing on both sides.
+            ink_dx = ink_dy = 0
             try:
                 bbox = measure.multiline_textbbox((0, 0), text, font=font,
                                                   spacing=0)
                 tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                ink_dx, ink_dy = bbox[0], bbox[1]
             except AttributeError:
                 tw, th = measure.textsize(text, font=font)
 
@@ -462,20 +471,21 @@ class VideoPlayer(ctk.CTkFrame):
                 shadow_rgba = _parse_color_rgba(
                     layer.get("shadowcolor", "black@0.7"))
                 draw.multiline_text(
-                    (x + sx, y + sy), text, fill=shadow_rgba,
-                    font=font, spacing=0,
+                    (x + sx - ink_dx, y + sy - ink_dy), text,
+                    fill=shadow_rgba, font=font, spacing=0,
                 )
 
             if borderw:
                 stroke_fill = _parse_color_rgba(
                     layer.get("bordercolor", "black"))
                 draw.multiline_text(
-                    (x, y), text, fill=color, font=font, spacing=0,
-                    stroke_width=borderw, stroke_fill=stroke_fill,
+                    (x - ink_dx, y - ink_dy), text, fill=color, font=font,
+                    spacing=0, stroke_width=borderw, stroke_fill=stroke_fill,
                 )
             else:
                 draw.multiline_text(
-                    (x, y), text, fill=color, font=font, spacing=0,
+                    (x - ink_dx, y - ink_dy), text, fill=color, font=font,
+                    spacing=0,
                 )
 
             overlay = Image.alpha_composite(overlay, scratch)

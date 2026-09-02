@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
 import os
+import sys
 import tkinter.font as tkfont
 
 import customtkinter as ctk
@@ -60,35 +61,117 @@ def _variant_font_path(regular_path, bold, italic):
     return regular_path
 
 
+# Where each platform keeps its fonts, most specific (user) first.
+#
+# This used to be Windows-only: a hardcoded C:\\Windows\\Fonts and
+# Windows filenames. On macOS and Linux nothing ever matched, so every
+# lookup returned a path that did not exist. The preview then fell
+# through to PIL's `load_default()` bitmap face and drew EVERY caption
+# at ~8 px tall no matter what size was chosen — on a captioning app,
+# the font-size control did nothing you could see.
+def _font_dirs():
+    if sys.platform == "win32":
+        return [os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts")]
+    if sys.platform == "darwin":
+        return [
+            os.path.expanduser("~/Library/Fonts"),
+            "/Library/Fonts",
+            # Arial, Impact, Georgia and friends live in Supplemental on
+            # modern macOS; the base dir holds the system faces.
+            "/System/Library/Fonts/Supplemental",
+            "/System/Library/Fonts",
+        ]
+    return [
+        os.path.expanduser("~/.fonts"),
+        os.path.expanduser("~/.local/share/fonts"),
+        "/usr/local/share/fonts",
+        "/usr/share/fonts",
+    ]
+
+
+# One logical font name to the filenames it goes by, across platforms.
+# Windows spellings first to keep that platform's resolution identical,
+# then macOS, then the metric-compatible substitutes Linux ships.
+_FONT_FILES = {
+    "arial":         ("arial.ttf", "Arial.ttf", "LiberationSans-Regular.ttf", "DejaVuSans.ttf"),
+    "arialblack":    ("ariblk.ttf", "Arial Black.ttf", "DejaVuSans-Bold.ttf"),
+    "segoeui":       ("segoeui.ttf", "SFNSDisplay.ttf", "DejaVuSans.ttf"),
+    "helvetica":     ("arial.ttf", "Helvetica.ttc", "Helvetica.ttf", "LiberationSans-Regular.ttf", "DejaVuSans.ttf"),
+    "verdana":       ("verdana.ttf", "Verdana.ttf", "DejaVuSans.ttf"),
+    "timesnewroman": ("times.ttf", "Times New Roman.ttf", "LiberationSerif-Regular.ttf", "DejaVuSerif.ttf"),
+    "couriernew":    ("cour.ttf", "Courier New.ttf", "Menlo.ttc", "LiberationMono-Regular.ttf", "DejaVuSansMono.ttf"),
+    "georgia":       ("georgia.ttf", "Georgia.ttf", "DejaVuSerif.ttf"),
+    "impact":        ("impact.ttf", "Impact.ttf", "DejaVuSans-Bold.ttf"),
+    "comicsansms":   ("comic.ttf", "Comic Sans MS.ttf", "DejaVuSans.ttf"),
+    "trebuchetms":   ("trebuc.ttf", "Trebuchet MS.ttf", "DejaVuSans.ttf"),
+    "tahoma":        ("tahoma.ttf", "Tahoma.ttf", "DejaVuSans.ttf"),
+    "calibri":       ("calibri.ttf", "Calibri.ttf", "DejaVuSans.ttf"),
+    "cambria":       ("cambria.ttc", "Cambria.ttc", "DejaVuSerif.ttf"),
+    # Keep monospace monospace: without a mono option here these fell
+    # through to the sans last-resort, which is a visibly wrong answer.
+    "consolas":      ("consola.ttf", "Consolas.ttf", "Menlo.ttc", "Courier New.ttf", "LiberationMono-Regular.ttf", "DejaVuSansMono.ttf"),
+    "lucidaconsole": ("lucon.ttf", "Lucida Console.ttf", "Menlo.ttc", "Courier New.ttf", "DejaVuSansMono.ttf"),
+}
+
+#: Anything present here beats returning a path that does not exist.
+_LAST_RESORT = (
+    "arial.ttf", "Arial.ttf", "Helvetica.ttc",
+    "LiberationSans-Regular.ttf", "DejaVuSans.ttf",
+)
+
+
+def _first_existing(filenames, dirs):
+    """First of ``filenames`` that exists in any of ``dirs``.
+
+    Linux nests fonts (``/usr/share/fonts/truetype/dejavu/…``), so each
+    directory is walked when a direct hit fails. The walk is bounded to
+    the listed roots and stops at the first match.
+    """
+    for directory in dirs:
+        for name in filenames:
+            candidate = os.path.join(directory, name)
+            if os.path.exists(candidate):
+                return candidate
+    wanted = {n.lower() for n in filenames}
+    for directory in dirs:
+        if not os.path.isdir(directory):
+            continue
+        for root, _subdirs, files in os.walk(directory):
+            for filename in files:
+                if filename.lower() in wanted:
+                    return os.path.join(root, filename)
+    return None
+
+
 def _find_font_path(font_name, bold=False, italic=False, fonts_dir=None):
-    if fonts_dir is None:
-        fonts_dir = os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts")
+    """Resolve a font name to a file on disk.
+
+    ``fonts_dir`` overrides the platform search path — the tests use it
+    to exercise resolution against a temp directory.
+    """
+    dirs = [fonts_dir] if fonts_dir is not None else _font_dirs()
     name_lower = font_name.lower().replace(" ", "")
-    common = {
-        "arial": "arial.ttf", "arialblack": "ariblk.ttf",
-        "segoeui": "segoeui.ttf", "helvetica": "arial.ttf",
-        "verdana": "verdana.ttf", "timesnewroman": "times.ttf",
-        "couriernew": "cour.ttf", "georgia": "georgia.ttf",
-        "impact": "impact.ttf", "comicsansms": "comic.ttf",
-        "trebuchetms": "trebuc.ttf", "tahoma": "tahoma.ttf",
-        "calibri": "calibri.ttf", "cambria": "cambria.ttc",
-        "consolas": "consola.ttf", "lucidaconsole": "lucon.ttf",
-    }
-    if name_lower in common:
-        path = os.path.join(fonts_dir, common[name_lower])
-        if os.path.exists(path):
-            return _variant_font_path(path, bold, italic)
-    # Try direct match
+
+    candidates = list(_FONT_FILES.get(name_lower, ()))
+    # Direct match on the name as typed, in the usual extensions.
+    bare = font_name.replace(" ", "")
     for ext in (".ttf", ".otf", ".ttc"):
-        path = os.path.join(fonts_dir, font_name.replace(" ", "") + ext)
-        if os.path.exists(path):
-            return _variant_font_path(path, bold, italic)
-        path = os.path.join(fonts_dir, font_name.replace(" ", "").lower() + ext)
-        if os.path.exists(path):
-            return _variant_font_path(path, bold, italic)
-    # Fallback to arial
-    return _variant_font_path(
-        os.path.join(fonts_dir, "arial.ttf"), bold, italic)
+        candidates += [bare + ext, bare.lower() + ext, font_name + ext]
+
+    found = _first_existing(candidates, dirs)
+    if found:
+        return _variant_font_path(found, bold, italic)
+
+    # Nothing matched by name — take any usable face over a path that
+    # does not exist, which is what made the preview render a bitmap
+    # stand-in at a fixed size.
+    fallback = _first_existing(_LAST_RESORT, dirs)
+    if fallback:
+        return _variant_font_path(fallback, bold, italic)
+
+    # Truly nothing (a locked-down box, or a temp dir in a test): keep
+    # the historical return shape so callers behave as they always have.
+    return _variant_font_path(os.path.join(dirs[0], "arial.ttf"), bold, italic)
 
 
 class TextLayerWidget(ctk.CTkFrame):
