@@ -1518,5 +1518,12 @@ class TrimTab(ctk.CTkFrame):
             "size_bytes": size,
             "mode":      "trim",
         })
-        if hasattr(self.app, "history_tab") and self.app.history_tab.winfo_exists():
-            self.app.history_tab.after(0, self.app.history_tab.refresh)
+        # Deliberately the non-forcing accessor: History is built on
+        # first view, and it loads its data at construction. Reaching
+        # through `self.app.history_tab` here would build it after every
+        # export just to refresh something nobody is looking at.
+        from videokidnapper.app import TAB_HISTORY
+
+        history = getattr(self.app, "_tab_if_built", lambda _n: None)(TAB_HISTORY)
+        if history is not None and history.winfo_exists():
+            history.after(0, history.refresh)
