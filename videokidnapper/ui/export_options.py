@@ -15,6 +15,9 @@ import customtkinter as ctk
 from videokidnapper.ui import theme as T
 from videokidnapper.ui.theme import button
 from videokidnapper.utils import settings
+from videokidnapper.utils.file_naming import (
+    LABEL_TO_STYLE, NAMING_STYLES, current_style,
+)
 
 
 SPEED_CHOICES = ["0.25x", "0.5x", "0.75x", "1x", "1.25x", "1.5x", "2x", "3x", "4x"]
@@ -124,6 +127,9 @@ class ExportOptionsPanel(ctk.CTkFrame):
         self._expanded = False
 
         self.output_folder_var = ctk.StringVar(value=settings.get("output_folder"))
+        self.naming_var = ctk.StringVar(
+            value=NAMING_STYLES[current_style()][0],
+        )
         self.speed_var  = ctk.StringVar(value=f"{settings.get('speed', 1.0)}x")
         self.rotate_var = ctk.StringVar(value=f"{settings.get('rotate', 0)}°")
         self.mute_var   = ctk.BooleanVar(value=settings.get("mute_audio", False))
@@ -207,6 +213,30 @@ class ExportOptionsPanel(ctk.CTkFrame):
                command=self._pick_folder).pack(side="left", padx=(0, 4))
         button(row1, "Open", variant="ghost", width=70, height=32,
                command=self._open_folder).pack(side="left")
+
+        # --- Row: File naming ---------------------------------------------
+        naming_row = ctk.CTkFrame(self.body, fg_color="transparent")
+        naming_row.pack(fill="x", padx=12, pady=(4, 4))
+
+        ctk.CTkLabel(
+            naming_row, text="File names",
+            font=T.font(T.SIZE_MD, "bold"),
+            text_color=T.TEXT_MUTED, width=120, anchor="w",
+        ).pack(side="left")
+
+        self._menu(
+            naming_row, self.naming_var,
+            [label for label, _fn in NAMING_STYLES.values()],
+            width=200,
+        ).pack(side="left", padx=(0, 8))
+
+        self.naming_preview = ctk.CTkLabel(
+            naming_row, text="",
+            font=T.font(T.SIZE_SM, mono=True),
+            text_color=T.TEXT_DIM, anchor="w",
+        )
+        self.naming_preview.pack(side="left", fill="x", expand=True)
+        self._refresh_naming_preview()
 
         # --- Row: Speed, rotate, aspect, fade -----------------------------
         row2 = ctk.CTkFrame(self.body, fg_color="transparent")
@@ -445,9 +475,31 @@ class ExportOptionsPanel(ctk.CTkFrame):
             lbl.configure(text=self._fmt_slider_value(var.get(), default))
         self._save()
 
+    def _refresh_naming_preview(self):
+        """Show what the next export will actually be called.
+
+        A style name alone does not tell you much; an example does. The
+        sample title is deliberately one that needs sanitizing, so the
+        preview also demonstrates that titles are cleaned up.
+        """
+        from videokidnapper.utils.file_naming import build_base_name
+
+        style = LABEL_TO_STYLE.get(self.naming_var.get(), "title")
+        try:
+            example = build_base_name("trim", "Cat Video: Take 2", style=style)
+        except Exception:
+            example = ""
+        if hasattr(self, "naming_preview"):
+            self.naming_preview.configure(
+                text=f"e.g.  {example}.mp4" if example else "",
+            )
+
     def _save(self, *_):
+        self._refresh_naming_preview()
         settings.update({
             "output_folder":    self.output_folder_var.get(),
+            "naming_style":
+                LABEL_TO_STYLE.get(self.naming_var.get(), "title"),
             "speed":            _speed_to_float(self.speed_var.get()),
             "rotate":           _rotate_to_int(self.rotate_var.get()),
             "mute_audio":       bool(self.mute_var.get()),

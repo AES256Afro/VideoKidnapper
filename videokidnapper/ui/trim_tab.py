@@ -48,6 +48,11 @@ class TrimTab(ctk.CTkFrame):
         )
         self.app = app
         self.video_path = None
+        # The name exports derive from. For a download this is the real
+        # title yt-dlp reported; for a local file it is the filename.
+        # Kept separately because the downloaded file's stem is
+        # truncated to 80 chars by the output template.
+        self.source_title = None
         self.video_info = None
         self._toast = None
 
@@ -608,6 +613,10 @@ class TrimTab(ctk.CTkFrame):
     def _on_downloaded_video(self, path, platform=None, title=None):
         """A DownloadBar download (single or batch) lands in the editor."""
         self._load_path(path)
+        # After _load_path, which seeds the title from the filename —
+        # the reported title is better, being untruncated.
+        if title:
+            self.source_title = title
         if platform:
             self._notify(f"Kidnapped from {platform} — trim away", "success")
 
@@ -633,6 +642,7 @@ class TrimTab(ctk.CTkFrame):
         try:
             self.video_path = path
             self.video_info = new_video_info
+            self.source_title = Path(path).stem
             # A crop rectangle from a previous video's source pixels doesn't
             # transfer — clear it so the export doesn't choke on out-of-bounds
             # coordinates.
@@ -970,9 +980,12 @@ class TrimTab(ctk.CTkFrame):
             if count < 2:
                 self.after(0, self._on_record_failed, "No frames captured")
                 return
+            # A screen recording has no source video, so the title
+            # styles fall back to "clip" — which is the honest answer.
             output = generate_export_path(
                 "record", "mp4",
                 base_dir=self.export_options.get_output_folder(),
+                source_name="screen recording",
             )
             preset = self.quality_var.get()
             result = frames_to_video(str(frame_dir), fps, preset, str(output))
@@ -1426,7 +1439,10 @@ class TrimTab(ctk.CTkFrame):
             for i, (start, end) in enumerate(ranges, 1):
                 if dialog.cancel_event.is_set():
                     break
-                output_path = str(generate_export_path("trim", ext, base_dir=output_dir))
+                output_path = str(generate_export_path(
+                    "trim", ext, base_dir=output_dir,
+                    source_name=self.source_title,
+                ))
 
                 def progress_cb(p, i=i):
                     if dialog.winfo_exists():
@@ -1474,6 +1490,7 @@ class TrimTab(ctk.CTkFrame):
             if concat and len(produced) > 1:
                 combined = str(generate_export_path(
                     "trim_concat", ext, base_dir=output_dir,
+                    source_name=self.source_title,
                 ))
                 # Pick transition from Export Options. "cut" stays on the
                 # fast lossless concat demuxer path; anything else re-
