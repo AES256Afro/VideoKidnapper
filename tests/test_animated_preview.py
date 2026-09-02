@@ -121,8 +121,6 @@ def test_oversized_animation_is_refused(tmp_path, monkeypatch):
 
 def test_zero_duration_frames_fall_back_to_a_sane_default(tmp_path):
     """Some GIFs report 0 ms, which would make the loop length zero."""
-    from PIL import Image
-
     path = tmp_path / "zero.gif"
     frames = _frames(count=3)
     frames[0].save(path, save_all=True, append_images=frames[1:],
