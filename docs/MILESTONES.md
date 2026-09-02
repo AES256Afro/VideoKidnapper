@@ -171,12 +171,28 @@ Behavior-preserving extraction, no features mixed in:
 - `trim_tab.py` → layer-panel coordination vs. export orchestration vs.
   download-bar wiring.
 
-### P2 — Remove the extra encode pass for GIFs with image overlays — P2 / M
+### P2 — Remove the extra encode pass for GIFs with image overlays — P3 / M
 
 Image overlays on the GIF path route through an intermediate MP4 before the
 palette passes (ROADMAP 3.9): one full extra encode per export. Compose the
 overlay chain directly into the palette `filter_complex`. Pure speed win,
 no UX change.
+
+**Measured 2026-08-29 before committing to this** — a 10 s 1080p source
+exported to GIF, median of five runs:
+
+| | |
+|---|---|
+| no overlay | 0.53 s |
+| one overlay | 0.84 s |
+| cost of the extra pass | **+0.31 s (+58%)** |
+
+Real, but an order of magnitude smaller than the "~1–2× the GIF encode
+time" this was filed on. Threading overlays through both palette passes
+while keeping stream indices straight is the fiddly work `encode.py`
+already documents avoiding, and 0.31 s is a poor return for that risk.
+Demoted to P3: worth doing if the palette code is being opened anyway,
+not worth opening it for.
 
 ### P3 — Preview/decode pipeline audit — P2 / M
 

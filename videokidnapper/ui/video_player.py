@@ -26,6 +26,7 @@ import tkinter as tk
 import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
+from videokidnapper.utils.coerce import coerce_float, coerce_int
 from videokidnapper.core import playback
 from videokidnapper.core.preview import get_frame_at
 from videokidnapper.ui import theme as T
@@ -58,6 +59,10 @@ class VideoPlayer(ctk.CTkFrame):
         # by path so panning through frames doesn't re-read them from disk.
         self._image_layers_provider = None
         self._image_cache = {}  # path → PIL.Image (RGBA)
+        # path → (frames, durations_ms) for animated stickers, or
+        # None once a path is known to be a still. Decoding every
+        # frame is done once per file, not once per preview tick.
+        self._image_anim_cache = {}
         self._playing = False
         self._play_after_id = None
         self._play_end = None
@@ -385,8 +390,11 @@ class VideoPlayer(ctk.CTkFrame):
             text = (layer.get("text") or "").strip()
             if not text:
                 continue
-            start = layer.get("start", 0)
-            end = layer.get("end", 1e9)
+            # Coerced, not compared raw: a project with "start": "soon"
+            # would otherwise raise TypeError comparing str to float and
+            # take down the preview, while the export renders it fine.
+            start = coerce_float(layer.get("start", 0), 0.0)
+            end = coerce_float(layer.get("end", 1e9), 1e9)
             if not (start <= timestamp <= end):
                 continue
 
@@ -394,7 +402,7 @@ class VideoPlayer(ctk.CTkFrame):
             # so the preview and the export wrap identically.
             text = text.replace("\r\n", "\n").replace("\r", "\n")
 
-            fontsize = max(6, int(layer.get("fontsize", 24)))
+            fontsize = max(6, coerce_int(layer.get("fontsize", 24), 24))
             try:
                 font_path = _font_path_for_preview(
                     layer.get("font", "Arial"),
@@ -405,10 +413,19 @@ class VideoPlayer(ctk.CTkFrame):
             except Exception:
                 font = ImageFont.load_default()
 
+            # `ink_dx/dy` is why the preview used to sit a few pixels
+            # below the export, by an amount that grew with font size.
+            # textbbox measures the INK, but multiline_text draws with
+            # the ascender box's top-left at the given point — so the
+            # glyphs land lower by the internal leading. ffmpeg's
+            # drawtext positions by the ink, so subtracting the offset
+            # is what makes `h-th-20` mean the same thing on both sides.
+            ink_dx = ink_dy = 0
             try:
                 bbox = measure.multiline_textbbox((0, 0), text, font=font,
                                                   spacing=0)
                 tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                ink_dx, ink_dy = bbox[0], bbox[1]
             except AttributeError:
                 tw, th = measure.textsize(text, font=font)
 
@@ -436,7 +453,7 @@ class VideoPlayer(ctk.CTkFrame):
             # then bordered glyphs.
             if layer.get("box"):
                 # Match ffmpeg drawtext's boxborderw=8 default for Subtitle.
-                pad = int(layer.get("boxborderw", 8))
+                pad = coerce_int(layer.get("boxborderw", 8), 8)
                 draw.rectangle(
                     (x - pad, y - pad, x + tw + pad, y + th + pad),
                     fill=(0, 0, 0, 160),
@@ -444,9 +461,9 @@ class VideoPlayer(ctk.CTkFrame):
 
             color = _parse_color_rgba(layer.get("fontcolor", "white"))
             try:
-                sx = int(layer.get("shadowx", 0) or 0)
-                sy = int(layer.get("shadowy", 0) or 0)
-                borderw = max(0, int(layer.get("borderw", 0) or 0))
+                sx = coerce_int(layer.get("shadowx", 0))
+                sy = coerce_int(layer.get("shadowy", 0))
+                borderw = max(0, coerce_int(layer.get("borderw", 0)))
             except (TypeError, ValueError):
                 sx = sy = borderw = 0
 
@@ -454,27 +471,28 @@ class VideoPlayer(ctk.CTkFrame):
                 shadow_rgba = _parse_color_rgba(
                     layer.get("shadowcolor", "black@0.7"))
                 draw.multiline_text(
-                    (x + sx, y + sy), text, fill=shadow_rgba,
-                    font=font, spacing=0,
+                    (x + sx - ink_dx, y + sy - ink_dy), text,
+                    fill=shadow_rgba, font=font, spacing=0,
                 )
 
             if borderw:
                 stroke_fill = _parse_color_rgba(
                     layer.get("bordercolor", "black"))
                 draw.multiline_text(
-                    (x, y), text, fill=color, font=font, spacing=0,
-                    stroke_width=borderw, stroke_fill=stroke_fill,
+                    (x - ink_dx, y - ink_dy), text, fill=color, font=font,
+                    spacing=0, stroke_width=borderw, stroke_fill=stroke_fill,
                 )
             else:
                 draw.multiline_text(
-                    (x, y), text, fill=color, font=font, spacing=0,
+                    (x - ink_dx, y - ink_dy), text, fill=color, font=font,
+                    spacing=0,
                 )
 
             overlay = Image.alpha_composite(overlay, scratch)
 
             # Record the hit-test bbox in source-pixel space; include the
             # box border so users can grab the edge comfortably.
-            pad = int(layer.get("boxborderw", 8)) if layer.get("box") else 2
+            pad = coerce_int(layer.get("boxborderw", 8), 8) if layer.get("box") else 2
             self._text_bboxes.append(
                 (idx, x - pad, y - pad, x + tw + pad, y + th + pad),
             )
@@ -513,7 +531,9 @@ class VideoPlayer(ctk.CTkFrame):
         for idx, L in enumerate(layers):
             if not L.get("path"):
                 continue
-            if not (L.get("start", 0) <= timestamp <= L.get("end", 1e9)):
+            if not (coerce_float(L.get("start", 0), 0.0)
+                    <= timestamp
+                    <= coerce_float(L.get("end", 1e9), 1e9)):
                 continue
             visible.append((idx, L))
         if not visible:
@@ -525,28 +545,48 @@ class VideoPlayer(ctk.CTkFrame):
         for idx, layer in visible:
             path = layer.get("path")
             # Cache hit? Use it. Cache miss: load once and remember.
-            src = self._image_cache.get(path)
-            if src is None:
-                try:
-                    src = Image.open(path).convert("RGBA")
-                except Exception:
-                    # Bad path / unreadable file — cache the failure as
-                    # None so we don't retry every frame tick.
-                    self._image_cache[path] = None
-                    continue
-                self._image_cache[path] = src
-            elif src is None:
-                continue  # previously-failed load
+            # Animated sticker? Pick the frame the export would show at
+            # this instant. ffmpeg loops the overlay continuously from
+            # the start of the encode, so the frame follows the timeline
+            # position modulo the loop length — see frame_index_at.
+            # Without this the preview sat on frame 0 while the exported
+            # file moved, the one place preview/export parity did not
+            # hold.
+            if path not in self._image_anim_cache:
+                from videokidnapper.utils.animated_media import (
+                    load_animation_frames,
+                )
+                self._image_anim_cache[path] = load_animation_frames(path)
+            animation = self._image_anim_cache[path]
+
+            if animation is not None:
+                from videokidnapper.utils.animated_media import frame_index_at
+
+                frames, durations = animation
+                src = frames[frame_index_at(durations, timestamp)]
+            else:
+                src = self._image_cache.get(path)
+                if src is None:
+                    try:
+                        src = Image.open(path).convert("RGBA")
+                    except Exception:
+                        # Bad path / unreadable file — cache the failure
+                        # as None so we don't retry every frame tick.
+                        self._image_cache[path] = None
+                        continue
+                    self._image_cache[path] = src
+                elif src is None:
+                    continue  # previously-failed load
 
             # Scale relative to the image's own width (matches ffmpeg).
-            scale = max(0.01, min(1.0, float(layer.get("scale", 0.25))))
+            scale = max(0.01, min(1.0, coerce_float(layer.get("scale", 0.25), 0.25)))
             sw, sh = src.size
             new_w = max(1, int(sw * scale))
             new_h = max(1, int(sh * scale))
             scaled = src.resize((new_w, new_h), Image.LANCZOS)
 
             # Opacity: pre-multiply alpha into the overlay's alpha band.
-            opacity = max(0.0, min(1.0, float(layer.get("opacity", 1.0))))
+            opacity = max(0.0, min(1.0, coerce_float(layer.get("opacity", 1.0), 1.0)))
             if opacity < 0.999:
                 alpha = scaled.split()[3]
                 alpha = alpha.point(lambda v, o=opacity: int(v * o))
