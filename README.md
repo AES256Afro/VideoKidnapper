@@ -281,7 +281,7 @@ When "Concat queued ranges" is enabled, the final merged output uses `_concat` i
 
 ## Tech stack
 
-- **CustomTkinter** — dark-themed GUI framework
+- **CustomTkinter** — modern Tk widget toolkit
 - **Pillow** — frame preview + live text-layer overlay
 - **yt-dlp** — multi-platform video downloading
 - **FFmpeg** — video/GIF encoding with drawtext overlays
