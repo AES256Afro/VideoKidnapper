@@ -2,7 +2,9 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.8.2] — 2026-09-03
+
+> **First release that opens on a Mac with no security prompt.** The `.dmg` is now Developer-ID signed and notarized by Apple. v1.8.1 needed a trip through *Open Anyway*; v1.8.0 would not open at all.
 
 ### Added
 
@@ -16,6 +18,7 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Changed
 
+- **macOS builds are signed and notarized.** Every release DMG is now signed with a Developer ID certificate, submitted to Apple's notary service, and has the notarization ticket stapled in — so it launches with a normal double-click, offline, with no *"Apple could not verify"* prompt. The release build fails if Gatekeeper reports anything other than `accepted`, so an unnotarized DMG can no longer ship by accident. Setting this up on a fresh machine is one command: `scripts/setup-macos-signing.sh`.
 - **Cream retro tech is the default theme** for new installs. An existing install keeps whatever it already has stored, so nobody's choice is overridden — pick Cream from the ◐ menu to switch.
 
 ### Fixed
