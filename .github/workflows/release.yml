@@ -109,10 +109,32 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${GITHUB_REF_NAME}"
+          # This job runs first, so it is the one that creates the
+          # Release; every other tag workflow finds it and only uploads
+          # assets with --clobber. Whatever notes go on here are the
+          # notes users see — and until v1.8.2 that was a single PyPI
+          # link, because the real notes lived in macos.yml's create
+          # call, which never ran. Take them from CHANGELOG.md instead.
+          python3 - "$tag" > notes.md <<'PY'
+          import re, sys, pathlib
+          tag = sys.argv[1]; version = tag.lstrip("v")
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          m = re.search(r"^## \[" + re.escape(version) + r"\][^\n]*\n(.*?)(?=^## \[|\Z)",
+                        text, re.S | re.M)
+          body = m.group(1).strip() if m else ""
+          head = f"Published to PyPI: https://pypi.org/project/videokidnapper/{version}/\n"
+          if body:
+              head += ("\n**macOS:** `*-macos-arm64.dmg` (Apple Silicon) · "
+                       "`*-macos-x86_64.dmg` (Intel). Signed and notarized by "
+                       "Apple; FFmpeg bundled.\n\n---\n\n")
+          else:
+              print(f"::warning::no CHANGELOG section for {version}; notes are the PyPI link only",
+                    file=sys.stderr)
+          print(head + body)
+          PY
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" dist/* --clobber
+            gh release edit "$tag" --notes-file notes.md
           else
-            gh release create "$tag" dist/* \
-              --title "$tag" \
-              --notes "Published to PyPI: https://pypi.org/project/videokidnapper/${tag#v}/"
+            gh release create "$tag" dist/* --title "$tag" --notes-file notes.md
           fi
