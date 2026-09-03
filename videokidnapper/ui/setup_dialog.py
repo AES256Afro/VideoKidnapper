@@ -41,7 +41,7 @@ FEATURES = [
     },
     {
         "key": "customtkinter", "label": "customtkinter",
-        "feature": "Dark-themed UI widgets (the app itself)",
+        "feature": "UI widgets (the app itself)",
         "optional": False, "required": True,
     },
     {

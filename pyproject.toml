@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "videokidnapper"
 dynamic = ["version"]
-description = "Dark-themed desktop tool for trimming videos, downloading clips from the open web, and exporting polished GIFs or MP4s with text overlays."
+description = "Desktop tool for trimming videos, downloading clips from the open web, and exporting polished GIFs or MP4s with text overlays."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
