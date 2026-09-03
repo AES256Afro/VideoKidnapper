@@ -208,15 +208,15 @@ class App(ctk.CTk):
         )
         self.shortcuts_btn.place(relx=1.0, rely=0, anchor="ne", x=-104, y=16)
 
-        # Theme toggle (takes effect on restart)
-        current = T.current_mode()
-        next_mode = "light" if current == "dark" else "dark"
+        # Theme picker (takes effect on restart). A popup menu rather
+        # than an inline dropdown so the header layout — everything here
+        # is placed by absolute x offset — does not have to move.
         self.theme_btn = ctk.CTkButton(
-            header, text="☾" if current == "dark" else "☀",
+            header, text="◐",
             fg_color=T.BG_RAISED, hover_color=T.BG_HOVER,
             text_color=T.TEXT, font=T.font(T.SIZE_LG, "bold"),
             corner_radius=14, width=36, height=28,
-            command=lambda: self._toggle_theme(next_mode),
+            command=self._open_theme_menu,
         )
         self.theme_btn.place(relx=1.0, rely=0, anchor="ne", x=-56, y=16)
 
@@ -646,7 +646,7 @@ class App(ctk.CTk):
         ShortcutsDialog(self)
 
     # ------------------------------------------------------------------
-    # Theme toggle
+    # Theme picker
     # ------------------------------------------------------------------
     #
     # A live theme swap would need us to walk every widget in the app
@@ -656,34 +656,39 @@ class App(ctk.CTk):
     # button feel broken (issue from user feedback: "This button does
     # nothing"). Trade: confirm-to-restart, which makes the click
     # visibly do *something* every time.
-    def _toggle_theme(self, mode):
-        T.set_mode(mode)
-        # Flip the button icon immediately so the user sees the click
-        # registered even if they pick "Later". Also flip the closure
-        # mode so a second click in the same session inverts again.
-        self._refresh_theme_btn(mode)
-        if self._confirm_theme_restart(mode):
+    def _open_theme_menu(self):
+        """Pop a menu of every theme beneath the theme button."""
+        import tkinter as tk
+
+        menu = tk.Menu(self, tearoff=0)
+        # Kept on self: a StringVar that gets collected while the menu is
+        # open loses the check mark on the current entry.
+        self._theme_menu_var = tk.StringVar(value=T.current_theme())
+        for key, label in T.THEME_LABELS.items():
+            menu.add_radiobutton(
+                label=label, value=key, variable=self._theme_menu_var,
+                command=lambda k=key: self._pick_theme(k),
+            )
+        x = self.theme_btn.winfo_rootx()
+        y = self.theme_btn.winfo_rooty() + self.theme_btn.winfo_height()
+        try:
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
+
+    def _pick_theme(self, key):
+        if key == T.current_theme():
+            return
+        T.set_theme(key)
+        label = T.THEME_LABELS.get(key, key)
+        if self._confirm_theme_restart(label):
             self._restart_app()
             return
         if self.status_bar:
             self.status_bar.show(
-                f"Theme set to {mode} — restart VideoKidnapper to apply.",
+                f"Theme set to {label} — restart VideoKidnapper to apply.",
                 "info",
             )
-
-    def _refresh_theme_btn(self, saved_mode):
-        """Rebind the theme button so its icon + command reflect ``saved_mode``.
-
-        ``saved_mode`` is the preference we just persisted. The button
-        should now display the OPPOSITE (what the next click would flip
-        to) so the icon matches the button's action, not the current
-        state. Matches the initial-construction convention.
-        """
-        next_mode = "light" if saved_mode == "dark" else "dark"
-        self.theme_btn.configure(
-            text="☾" if saved_mode == "dark" else "☀",
-            command=lambda: self._toggle_theme(next_mode),
-        )
 
     def _confirm_theme_restart(self, mode):
         """Modal yes/no for the restart prompt. Returns True if the user

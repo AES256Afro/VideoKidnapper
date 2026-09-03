@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Centralized design tokens for VideoKidnapper.
 
-Tokens are selected once at import time from the dark or light palette
-based on ``settings.get("theme")``. Changing the theme requires a restart
+Tokens are selected once at import time from the palette named by
+``settings.get("theme")`` — see ``PALETTES``. Changing the theme requires a restart
 because ctk widgets bake their colors at construction — reconfiguring them
 live is brittle and not worth the complexity.
 """
@@ -63,10 +63,110 @@ _LIGHT = {
     "CTK_MODE":     "light",
 }
 
+# Cream retro tech — the default. Warm beige plastic and burnt-orange
+# accents: the look of late-70s / 80s computing hardware. Text is a dark
+# warm brown rather than black so nothing reads as pure contrast.
+_CREAM = {
+    "BG_BASE":      "#EFE6D3",
+    "BG_SURFACE":   "#F7F0E1",
+    "BG_RAISED":    "#E6DAC2",
+    "BG_HOVER":     "#DCCEB2",
+    "BG_ACTIVE":    "#D0BF9E",
+    "BORDER":       "#C9B994",
+    "BORDER_STRONG":"#A8956C",
+    "ACCENT":       "#C9641E",
+    "ACCENT_HOVER": "#B1551A",
+    "ACCENT_ACTIVE":"#964614",
+    "ACCENT_GLOW":  "#E8894A",
+    "SUCCESS":      "#4F7A2E",
+    "WARN":         "#9A6B0A",
+    "DANGER":       "#B0392A",
+    "DANGER_HOVER": "#922E22",
+    "TEXT":         "#3B2F23",
+    "TEXT_MUTED":   "#6A5A46",
+    "TEXT_DIM":     "#8E7C5E",
+    "TEXT_ON_ACCENT": "#FFF8EC",
+    "CTK_MODE":     "light",
+}
+
+# Fallout — Pip-Boy phosphor: near-black green with a bright green
+# accent. SUCCESS shares the accent hue on purpose; the whole screen is
+# one colour of light and "good" should not introduce a second one.
+_FALLOUT = {
+    "BG_BASE":      "#0B1A0F",
+    "BG_SURFACE":   "#10231A",
+    "BG_RAISED":    "#163021",
+    "BG_HOVER":     "#1E3D2A",
+    "BG_ACTIVE":    "#274B33",
+    "BORDER":       "#1F4A2E",
+    "BORDER_STRONG":"#2E6B41",
+    "ACCENT":       "#2EE868",
+    "ACCENT_HOVER": "#26C956",
+    "ACCENT_ACTIVE":"#1FA847",
+    "ACCENT_GLOW":  "#7DFFA0",
+    "SUCCESS":      "#2EE868",
+    "WARN":         "#E8C22E",
+    "DANGER":       "#FF5A4A",
+    "DANGER_HOVER": "#D9463A",
+    "TEXT":         "#9CFFB5",
+    "TEXT_MUTED":   "#5FCB7E",
+    "TEXT_DIM":     "#3F9459",
+    "TEXT_ON_ACCENT": "#04120A",
+    "CTK_MODE":     "dark",
+}
+
+# Retro — 80s synthwave: deep violet with hot pink and cyan.
+_RETRO = {
+    "BG_BASE":      "#12081F",
+    "BG_SURFACE":   "#1A0F2E",
+    "BG_RAISED":    "#24163D",
+    "BG_HOVER":     "#2F1E4D",
+    "BG_ACTIVE":    "#3A275E",
+    "BORDER":       "#3C2A5E",
+    "BORDER_STRONG":"#5A3F8A",
+    "ACCENT":       "#FF3EA5",
+    "ACCENT_HOVER": "#E52F92",
+    "ACCENT_ACTIVE":"#C7237C",
+    "ACCENT_GLOW":  "#FF7CC4",
+    "SUCCESS":      "#2EE6D6",
+    "WARN":         "#FFB347",
+    "DANGER":       "#FF4D6D",
+    "DANGER_HOVER": "#D93A57",
+    "TEXT":         "#F2E9FF",
+    "TEXT_MUTED":   "#B49BD6",
+    "TEXT_DIM":     "#8A75A8",
+    "TEXT_ON_ACCENT": "#1A0A14",
+    "CTK_MODE":     "dark",
+}
+
+#: key -> palette. Adding a theme is one entry here plus a label below;
+#: the picker, the setting and tests/test_themes.py all read from this.
+PALETTES = {
+    "cream":   _CREAM,
+    "dark":    _DARK,
+    "light":   _LIGHT,
+    "fallout": _FALLOUT,
+    "retro":   _RETRO,
+}
+
+#: key -> what the picker shows. Order here is the order in the menu.
+THEME_LABELS = {
+    "cream":   "Cream retro tech",
+    "dark":    "Dark",
+    "light":   "Light",
+    "fallout": "Fallout",
+    "retro":   "Retro",
+}
+
+DEFAULT_THEME = "cream"
+
 
 def _select_palette():
-    mode = settings.get("theme", "dark")
-    return _LIGHT if mode == "light" else _DARK
+    """Palette for the stored preference, or the default when the value
+    is missing or names a theme this build does not have (a settings
+    file written by a newer version, say)."""
+    key = settings.get("theme", DEFAULT_THEME)
+    return PALETTES.get(key, PALETTES[DEFAULT_THEME])
 
 
 _PALETTE = _select_palette()
@@ -195,11 +295,26 @@ def configure_global():
 
 
 def current_mode():
+    """CustomTkinter appearance mode ("dark" / "light") of the active palette."""
     return _PALETTE["CTK_MODE"]
 
 
-def set_mode(mode):
-    """Persist a new theme preference. Caller must restart the app to apply."""
-    if mode not in ("dark", "light"):
-        mode = "dark"
-    settings.set("theme", mode)
+def current_theme():
+    """Key of the active palette (see PALETTES)."""
+    key = settings.get("theme", DEFAULT_THEME)
+    return key if key in PALETTES else DEFAULT_THEME
+
+
+def set_theme(key):
+    """Persist a theme preference. Caller must restart the app to apply.
+
+    An unknown key falls back to the default rather than raising: this
+    is reached from a settings file as well as from the picker.
+    """
+    if key not in PALETTES:
+        key = DEFAULT_THEME
+    settings.set("theme", key)
+
+
+# Older name kept for anything still calling it.
+set_mode = set_theme
