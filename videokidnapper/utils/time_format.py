@@ -33,6 +33,23 @@ def hms_to_seconds(hms: str) -> float:
     return h * 3600 + m * 60 + s + ms / 1000
 
 
+def seconds_to_short(seconds: float) -> str:
+    """Compact timecode for tight UI: ``0:07``, ``1:12``, ``1:02:03``.
+
+    ``seconds_to_hms`` is the right format where precision matters (the
+    trim readout, project files). It is far too wide for a chip in a
+    horizontal row, where the point is to scan several at once.
+    """
+    if seconds < 0:
+        seconds = 0
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
 def format_duration(seconds: float) -> str:
     """Short human label: ``12.3s`` under a minute, ``2m 15s`` otherwise."""
     if seconds < 60:
