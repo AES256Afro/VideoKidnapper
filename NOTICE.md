@@ -6,7 +6,7 @@ It depends on the following third-party projects. Their licenses are reproduced 
 
 | Project | License | Used for |
 |---|---|---|
-| [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) | MIT | Dark-themed Tk widgets |
+| [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) | MIT | Modern Tk widgets |
 | [Pillow](https://github.com/python-pillow/Pillow) | MIT-CMU / HPND | Image I/O, text overlay rendering |
 | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Unlicense | Multi-platform video extraction |
 | [mss](https://github.com/BoboTiG/python-mss) | MIT | Cross-platform screen capture |
