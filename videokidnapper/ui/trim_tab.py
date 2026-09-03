@@ -253,7 +253,7 @@ class TrimTab(ctk.CTkFrame):
         ).pack(side="right", padx=(4, 0))
 
         # Multi-range queue
-        self.range_queue = RangeQueue(body, on_remove=self._on_range_removed)
+        self.range_queue = RangeQueue(body, on_change=self._on_range_changed)
         self.range_queue.pack(fill="x", padx=12, pady=6)
 
         # Text layers
@@ -460,7 +460,7 @@ class TrimTab(ctk.CTkFrame):
         self._update_size_estimate()
         self._mark_project_dirty()
 
-    def _on_range_removed(self):
+    def _on_range_changed(self):
         self._update_export_enabled()
         self._request_snapshot(immediate=True)
 
