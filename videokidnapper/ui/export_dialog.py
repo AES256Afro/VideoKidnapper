@@ -7,6 +7,7 @@ import threading
 import customtkinter as ctk
 
 from videokidnapper.ui import theme as T
+from videokidnapper.utils.progress_stats import EtaEstimator
 from videokidnapper.ui.share_panel import SharePanel
 from videokidnapper.ui.theme import button
 
@@ -73,12 +74,29 @@ class ExportDialog(ctk.CTkToplevel):
         self.progress.pack(fill="x", padx=18, pady=(6, 4))
         self.progress.set(0)
 
+        # Percent on the right, time remaining on the left. A percentage
+        # answers "how far", not "how long" — without the second half a
+        # slow export is indistinguishable from a stuck one.
+        meta_row = ctk.CTkFrame(card, fg_color="transparent")
+        meta_row.pack(fill="x", padx=18, pady=(0, 12))
+
+        self.eta_label = ctk.CTkLabel(
+            meta_row, text="",
+            font=T.font(T.SIZE_SM),
+            text_color=T.TEXT_DIM, anchor="w",
+        )
+        self.eta_label.pack(side="left")
+
         self.percent_label = ctk.CTkLabel(
-            card, text="0%",
+            meta_row, text="0%",
             font=T.font(T.SIZE_SM, mono=True),
             text_color=T.TEXT_DIM, anchor="e",
         )
-        self.percent_label.pack(fill="x", padx=18, pady=(0, 12))
+        self.percent_label.pack(side="right")
+
+        # Fed from the outer fraction, which upstream has already
+        # unified across the GIF two-pass and multi-clip cases.
+        self._eta = EtaEstimator()
 
         # Share panel slot (populated on success)
         self._card = card
@@ -103,11 +121,18 @@ class ExportDialog(ctk.CTkToplevel):
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
     def update_progress(self, value, status_text=None):
-        if self.winfo_exists():
-            self.progress.set(value)
-            self.percent_label.configure(text=f"{int(value * 100)}%")
-            if status_text:
-                self.status_label.configure(text=status_text)
+        if not self.winfo_exists():
+            return
+        self.progress.set(value)
+        self.percent_label.configure(text=f"{int(value * 100)}%")
+        if status_text:
+            self.status_label.configure(text=status_text)
+
+        # An empty string is the honest output while the rate is still
+        # unknown, and again once the job stalls — better than leaving a
+        # stale countdown on screen implying progress that stopped.
+        stats = self._eta.update(value)
+        self.eta_label.configure(text=stats.eta_text)
 
     def export_complete(self, output_path):
         self._result = output_path
@@ -115,6 +140,7 @@ class ExportDialog(ctk.CTkToplevel):
             return
         self.progress.set(1.0)
         self.percent_label.configure(text="100%")
+        self.eta_label.configure(text="")
         fname = os.path.basename(output_path) if output_path else "Unknown"
         self.status_label.configure(text=f"Saved: {fname}", text_color=T.SUCCESS)
         self.icon_label.configure(text="✓", text_color=T.SUCCESS)
