@@ -152,7 +152,7 @@ class SetupDialog(ctk.CTkToplevel):
         self.console = ctk.CTkTextbox(
             card, height=150,
             font=T.font(T.SIZE_XS, mono=True),
-            fg_color="#0A0D12", text_color=T.TEXT_MUTED,
+            fg_color=T.BG_BASE, text_color=T.TEXT_MUTED,
             border_width=1, border_color=T.BORDER,
             corner_radius=T.RADIUS_SM, wrap="none",
         )
