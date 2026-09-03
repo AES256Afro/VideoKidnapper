@@ -41,7 +41,7 @@ _DEFAULTS = {
     "speed":            1.0,
     "rotate":           0,
     "crop":             None,
-    "theme":            "dark",         # "dark" | "light"
+    "theme":            "cream",        # a key of ui.theme.PALETTES
     "aspect_preset":    "Source",        # see ASPECT_PRESETS in config
     "concat_ranges":    False,
     "text_fade":        0.0,             # seconds
