@@ -14,6 +14,25 @@ from videokidnapper.ui import theme as T
 from videokidnapper.utils.time_format import format_duration, seconds_to_short
 
 
+def columns_for(available, chip_width, chip_count):
+    """How many chips fit across ``available`` pixels.
+
+    Split out from the widget so the wrapping arithmetic can be tested
+    without a real window: CI runners do not honour a geometry request,
+    and a test that measures actual pixels there is testing the runner.
+
+    ``available <= 1`` means "not laid out yet" — Tk reports that before
+    the first map — so everything goes on one row and the first real
+    <Configure> corrects it. Never returns 0: when a chip is wider than
+    the whole row, one per row is the best available answer.
+    """
+    if chip_count <= 0:
+        return 1
+    if available <= 1:
+        return chip_count
+    return max(1, available // max(1, chip_width))
+
+
 class RangeQueue(ctk.CTkFrame):
     _CHEVRON_OPEN   = "▾"
     _CHEVRON_CLOSED = "▸"
@@ -196,11 +215,11 @@ class RangeQueue(ctk.CTkFrame):
         """How many chips fit across the current width."""
         if not self._chip_frames:
             return 1
-        available = self.chips_frame.winfo_width()
-        if available <= 1:  # not laid out yet — assume one row
-            return len(self._chip_frames)
-        widest = max(c.winfo_reqwidth() for c in self._chip_frames) + 8
-        return max(1, available // max(1, widest))
+        return columns_for(
+            available=self.chips_frame.winfo_width(),
+            chip_width=max(c.winfo_reqwidth() for c in self._chip_frames) + 8,
+            chip_count=len(self._chip_frames),
+        )
 
     def _reflow_chips(self, columns=None):
         """Lay the chips out in a wrapping grid."""

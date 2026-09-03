@@ -154,33 +154,50 @@ def test_end_chips_disable_the_move_they_cannot_do(queue):
 
 # -------------------------------------------------------------- wrapping
 
+@pytest.mark.parametrize("available,chip_width,count,expected", [
+    (1000, 240, 8, 4),    # four across
+    (620,  240, 8, 2),    # narrower window, fewer columns
+    (240,  240, 8, 1),    # exactly one
+    (180,  258, 8, 1),    # chip wider than the row — one is the best answer
+    (0,    240, 8, 8),    # not laid out yet: one row, fixed on <Configure>
+    (1000, 240, 0, 1),    # no chips
+])
+def test_columns_for(available, chip_width, count, expected):
+    """The wrapping arithmetic, tested without a window.
+
+    A CI runner does not honour a geometry request — it reported ~180px
+    of usable width for a 1000px window — so a test that measures real
+    pixels there is testing the runner, not the layout.
+    """
+    from videokidnapper.ui.multi_range import columns_for
+
+    assert columns_for(available, chip_width, count) == expected
+
+
+def test_columns_for_never_returns_zero():
+    """A chip wider than the whole row still has to go somewhere."""
+    from videokidnapper.ui.multi_range import columns_for
+
+    for width in (1, 50, 999):
+        assert columns_for(width, 10_000, 5) >= 1
+
+
 def test_chips_wrap_instead_of_running_off_the_edge(queue):
-    """The regression this guards: eight chips in one row is ~1900px of
-    content in a ~980px window."""
+    """The regression this guards: eight chips packed side by side is
+    ~1900px of content in a ~980px window. Asserted through the grid,
+    for the reason given above."""
     widget, _changes, root = queue
     _add(widget, 8)
     root.update_idletasks()
-    widget._on_chips_resize()
-    root.update_idletasks()
+    widget._reflow_chips(columns=3)
 
-    widest = max(c.winfo_reqwidth() for c in widget._chip_frames)
-    available = widget.chips_frame.winfo_width()
-    assert widget._chip_columns * widest <= available, "a row still overflows"
-    rows = max(int(c.grid_info()["row"]) for c in widget._chip_frames) + 1
-    assert rows > 1, "eight chips should not fit on one row"
-
-
-def test_narrowing_the_window_uses_fewer_columns(queue):
-    widget, _changes, root = queue
-    _add(widget, 8)
-    root.update_idletasks()
-    widget._on_chips_resize()
-    wide = widget._chip_columns
-
-    root.geometry("620x700")
-    root.update_idletasks()
-    widget._on_chips_resize()
-    assert widget._chip_columns < wide
+    placements = [
+        (int(c.grid_info()["row"]), int(c.grid_info()["column"]))
+        for c in widget._chip_frames
+    ]
+    assert placements == [(0, 0), (0, 1), (0, 2),
+                          (1, 0), (1, 1), (1, 2),
+                          (2, 0), (2, 1)]
 
 
 def test_reflow_is_stable_when_nothing_changes(queue):
