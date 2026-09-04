@@ -29,15 +29,20 @@ Still in **Store listings → English → Screenshots**.
 
 1. Remove the existing screenshots.
 2. Upload the files from `assets/store/` (each is exactly 1920×1080, the size the Store requires):
-   - `01-studio-1920x1080.png` — the editor with a clip, caption, and queued cut
+   - `01-studio-1920x1080.png` — the editor with a clip, caption, and queued cuts
    - `02-download-1920x1080.png` — the download bar + batch queue
    - `03-start-1920x1080.png` — the empty/start state
    - `04-history-1920x1080.png` — export history
    - `05-setup-1920x1080.png` — the setup screen
-   - `06-motion-1920x1080.png` — motion-tracked caption following a subject across three frames
-3. Order them 01 → 06 (drag to reorder). The first is the hero shot.
+3. Order them 01 → 05 (drag to reorder). The first is the hero shot.
 
-To regenerate these after a UI change: `python scripts/capture_screenshots.py` (writes `assets/screenshots/*.png`), then the store-resize step in that script's notes produces `assets/store/*`.
+To regenerate these after a UI change, run the **Screenshots** workflow
+(Actions → Screenshots → Run workflow, theme `cream`). It captures on a
+Windows runner — real Segoe UI, and an interactive desktop so the grab
+works — and uploads `assets/screenshots/*.png` plus the 1920×1080
+`assets/store/*.png` as an artifact. Locally: `python
+scripts/capture_screenshots.py` then `python scripts/store_screenshots.py`
+(macOS needs Screen Recording permission for the terminal first).
 
 ## 3. Logo / Store images
 
@@ -70,7 +75,7 @@ If only the listing text/screenshots changed and the app itself didn't, you can 
 
 ## Certification notes
 
-Paste this into **Notes for certification** on every submission. It exists
+This is the text that lives on the product's **Additional Testing Information** page (Partner Center moved the notes there; the Submission Options page only links to it). It persists across submissions, so it only needs re-pasting if it has been cleared. It exists
 because a June 2026 submission was rejected under **Store policy 10.1.2.10
 (Functionality)** with *"Unusable Feature: Working offline"* — the tester
 disconnected the network, tried to download a video, and saw it fail.
@@ -81,13 +86,19 @@ note tells the reviewer that up front so they don't file the same finding.
 ```
 Testing notes:
 
-- VideoKidnapper's download feature fetches video from online services (YouTube, Reddit, Instagram, etc.), so it requires an active internet connection by design. This is the app's core purpose and is an inherently online operation.
+VideoKidnapper's download feature fetches video from online services such as YouTube, Reddit, and Instagram, so it requires an active internet connection by design.
 
-- When offline, the app does NOT present a broken feature. Attempting a download shows a clear, plain message ("No internet connection. Connect to the internet to download videos. You can still open a local file to trim, caption, and export.") and does not hang or show a cryptic error.
+When offline, attempting a download immediately shows: "No internet connection. Connect to the internet to download videos. You can still open a local file to trim, caption, and export." The app does not retry, hang, or show a technical DNS error.
 
-- All editing works fully offline. Use Open Video File (or drag a file in, or Record Screen) to load a local video, then trim, add captions and overlays, and export a GIF or MP4 with no connection.
+All editing works offline. Use Open Video File, drag in a local file, or use Record Screen. Then trim, add captions or overlays, and export a GIF or MP4 while disconnected.
 
-To verify offline behavior: launch the app, open any local video file, trim it, add a caption, and export. All of this succeeds with the network disconnected. The only feature that needs a connection is downloading from a URL, which cannot work offline for any app.
+To verify the previous policy 10.1.2.10 issue is resolved:
+1. Launch VideoKidnapper and disconnect LAN or Wi-Fi.
+2. Try a URL download and confirm the clear offline message appears immediately.
+3. Open a local video, trim it, add a caption, and export it.
+4. Confirm local editing and export complete without a network connection.
+
+The only feature that requires a connection is downloading media from an online URL.
 ```
 
 ---
