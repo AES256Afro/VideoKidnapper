@@ -44,43 +44,45 @@ Record your screen straight into the editor. Free and open source. FFmpeg is inc
 ### What's new in this version (Store field: "What's new in this version")
 
 User-facing changes only, no repo/doc housekeeping. Update this each
-release. For the 1.7.4 update that follows the 1.5.0 currently on the Store:
+release. For 1.8.2:
 
 ```
-- Motion-tracked captions: pin a caption to a moving subject and it follows them across the frame, like the click for more memes. Drag to set the path, or click Auto-track to follow the subject automatically.
-- One place for everything: open a file, record your screen, or paste a link, then trim, caption, and export in the same tab. No more hopping between a download tab and a trim tab.
-- Paste a video or GIF link with Ctrl+V from anywhere in the app to start a download.
-- Downloading Reddit GIF posts works again.
-- Clearer offline behaviour: with no internet, downloading now shows a plain message right away instead of a long wait, and opening and editing local files keeps working.
-- Smoother first run: if something it needs is missing, the app now installs it and opens on its own instead of stopping at a setup screen.
-- Refreshed the app icon and look.
+- Animated stickers: overlay an animated GIF, APNG, or WebP on a video or a GIF export. It loops for as long as it is on screen.
+- Five looks to choose from: Cream retro tech (the new default), Dark, Light, Fallout, and Retro.
+- Exports are named after the video instead of a timestamp, with a choice of naming styles in Export Options.
+- Exports show how much time is left, not just a percentage.
+- Reorder queued cuts with the arrow buttons on each one. The order is the order they are joined in.
+- Faster startup: the window opens in about half the time.
+- Fixed: adding a GIF overlay used to stop the export. Fixed: a GIF export with an overlay could hang.
 ```
 
 ### Product features (Store field: "Product features", one per line)
 
-Paste these one per line into the Store's "Product features" list:
+Paste these one per line into the Store's "Product features" list. The
+Store caps this at 20 lines, so adding one means merging or dropping
+one.
 
 ```
 Download from YouTube, Instagram, X, Reddit, Bluesky, Facebook, and 1,000+ more sites
-Paste a link or press Ctrl+V from anywhere to start
-Batch download a whole list of links at once
+Paste a link or press Ctrl+V from anywhere to start, or batch a whole list of links
 Reads browser cookies for private and age-gated videos
 Frame-accurate trimming with a waveform and thumbnail strip
-Queue multiple cuts and export them separately or stitched together
+Queue multiple cuts, reorder them, and export separately or stitched together
 Captions with outline, shadow, bold, italic, and multiple lines
 Preview matches the exported frame exactly
 Motion-tracked captions that follow a moving subject across the frame
 One-click Auto-track, or set the caption's motion path by hand
 Whisper auto-captions and .srt / .vtt import
-Logo, watermark, and sticker or GIF overlays placed anywhere on the frame
+Logo, watermark, and sticker overlays placed anywhere on the frame
+Animated GIF, APNG, and WebP stickers that loop on the video
 Paste an image from the clipboard as an overlay
 GIF tuning with dither, palette, and loop controls
-Hardware-encoded MP4 export
+Hardware-encoded MP4 export with time remaining shown while it runs
 Reframe 16:9 to 9:16 for Shorts, Reels, and TikTok with a blurred-background fill
 Speed, rotate, mute, audio-only, and colour adjustment
-Record your screen straight into the editor
-Runs fully offline with no account and no watermark
-Free and open source, with FFmpeg included
+Exports named after the video, with a choice of naming styles
+Five looks: Cream retro tech, Dark, Light, Fallout, and Retro
+Runs fully offline, free and open source, no account, no watermark, FFmpeg included
 ```
 
 ---
