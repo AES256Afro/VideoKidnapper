@@ -307,6 +307,11 @@ def _capture_one(name):
     with tempfile.TemporaryDirectory(prefix=f"vk-{name}-settings-") as temp:
         settings._SETTINGS_PATH = Path(temp) / "settings.json"
         settings.set("onboarding_complete", True)
+        # Theme is read once when ui.theme is imported, which happens
+        # inside fn(); write it before that so the capture matches.
+        theme = os.environ.get("VK_SCREENSHOT_THEME")
+        if theme:
+            settings.set("theme", theme)
         fn()
     return 0
 
