@@ -76,6 +76,17 @@ def get_video_info(input_path):
         duration = 0.0
     width = int(video_stream.get("width", 0)) if video_stream else 0
     height = int(video_stream.get("height", 0)) if video_stream else 0
+    # Phone footage is usually stored landscape with a Display Matrix
+    # telling players to rotate it. ffmpeg honours that on decode (so the
+    # preview and the export frames come out portrait), but the raw
+    # width/height above describe the stored frame, not the displayed
+    # one. Everything downstream that reasons about geometry — aspect
+    # presets, the crop tool's clamping, blur fill — was therefore
+    # working in the wrong orientation: a 9:16 preset on an already-9:16
+    # phone clip computed a crop wider than the frame and ffmpeg
+    # produced a mangled 720x1284. Report the displayed dimensions.
+    if video_stream and _display_rotation(video_stream) in (90, 270):
+        width, height = height, width
     fps_str = video_stream.get("r_frame_rate", "30/1") if video_stream else "30/1"
     try:
         num, den = fps_str.split("/")
@@ -89,6 +100,27 @@ def get_video_info(input_path):
         "fps": fps,
         "has_audio": audio_stream is not None,
     }
+
+
+def _display_rotation(stream):
+    """Rotation ffmpeg will apply on decode, normalised to 0/90/180/270.
+
+    Modern files carry it as Display Matrix side data; older ones as a
+    ``rotate`` stream tag (ffmpeg >= 5 ignores the tag, but ffprobe still
+    reports it and some players honour it, so it is checked second).
+    Anything unparseable counts as no rotation.
+    """
+    rotation = None
+    for side in stream.get("side_data_list") or []:
+        if side.get("side_data_type") == "Display Matrix" and "rotation" in side:
+            rotation = side["rotation"]
+            break
+    if rotation is None:
+        rotation = (stream.get("tags") or {}).get("rotate")
+    try:
+        return int(round(float(rotation))) % 360 if rotation is not None else 0
+    except (TypeError, ValueError):
+        return 0
 
 
 def extract_frame(input_path, timestamp_seconds):
