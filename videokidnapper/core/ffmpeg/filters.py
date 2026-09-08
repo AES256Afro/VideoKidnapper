@@ -16,6 +16,8 @@ source-frame pixels (that's what the preview overlay uses, which keeps
 export alignment pixel-exact).
 """
 
+import math
+
 from videokidnapper.config import PRESETS
 from videokidnapper.utils.coerce import coerce_float, coerce_int
 from videokidnapper.utils.ffmpeg_escape import (
@@ -279,18 +281,23 @@ def _build_text_filters(text_layers, fade=0.0):
 # Aspect-ratio crop (sits next to _build_crop_filter conceptually)
 # ---------------------------------------------------------------------------
 
-def _build_aspect_crop(preset, info, explicit_crop):
-    """Center-crop to a target aspect ratio like '1:1', '9:16', '16:9', '4:5', '3:4'.
-
-    If the user has already defined an explicit crop rect we defer to that —
-    aspect presets are just a convenience on top of no crop.
-    """
-    if explicit_crop:
-        return None
+def _aspect_target(preset):
+    """'9:16' -> 0.5625, or None for anything that is not a ratio."""
     try:
-        a, b = preset.split(":")
-        target = float(a) / float(b)
+        a, b = str(preset).split(":")
+        return float(a) / float(b)
     except (ValueError, ZeroDivisionError, AttributeError):
+        return None
+
+
+def _aspect_crop_box(preset, info):
+    """(w, h, x, y) of the centre crop that gives ``preset``'s ratio.
+
+    None when the ratio cannot be parsed, the source has no size, or the
+    source already has that ratio (so no crop is needed).
+    """
+    target = _aspect_target(preset)
+    if target is None:
         return None
     sw, sh = info.get("width", 0), info.get("height", 0)
     if sw <= 0 or sh <= 0:
@@ -308,13 +315,70 @@ def _build_aspect_crop(preset, info, explicit_crop):
         new_h = int(sw / target)
         x = 0
         y = (sh - new_h) // 2
-    return f"crop={max(2, new_w)}:{max(2, new_h)}:{max(0, x)}:{max(0, y)}"
+    return max(2, new_w), max(2, new_h), max(0, x), max(0, y)
+
+
+def _build_aspect_crop(preset, info, explicit_crop):
+    """Center-crop to a target aspect ratio like '1:1', '9:16', '16:9', '4:5', '3:4'.
+
+    If the user has already defined an explicit crop rect we defer to that —
+    aspect presets are just a convenience on top of no crop.
+    """
+    if explicit_crop:
+        return None
+    box = _aspect_crop_box(preset, info)
+    if box is None:
+        return None
+    w, h, x, y = box
+    return f"crop={w}:{h}:{x}:{y}"
+
+
+def _build_aspect_scale(preset_name, aspect, info):
+    """Final scale for an export with an aspect preset: an exact box.
+
+    Cropping a 1920x1080 source to 9:16 gives a 607-wide frame; scaling
+    that with ``scale=720:-2`` lands on 720x1284, because the crop was
+    truncated to a whole pixel and the scale rounded to an even one
+    independently. The blur-fill path has the same flaw (606x1080 ->
+    720x1282). A "9:16" export that is not 9:16 is exactly the odd-ratio
+    complaint, so instead compute the box from the preset width and the
+    target ratio: 720x1280, 720x720, 1080x1920. Heights are rounded to
+    even for yuv420p, so 16:9 at 720 wide is 720x406 — the same as the
+    ``-2`` path gave, which keeps matched-orientation exports unchanged.
+
+    Ultra has no width: use the cropped frame's own width, evened.
+    """
+    target = _aspect_target(aspect)
+    if target is None:
+        return None
+    preset_width = PRESETS[preset_name]["width"]
+    if preset_width is None:
+        box = _aspect_crop_box(aspect, info)
+        frame_w = box[0] if box else info.get("width", 0)
+        if frame_w <= 0:
+            return None
+        out_w = _even(frame_w)
+    else:
+        out_w = _even(preset_width)
+    # Nearest even, not rounded down: that is what ffmpeg's ``-2`` did,
+    # so matched-orientation exports (720x406, 480x854) stay identical.
+    out_h = _nearest_even(out_w / target)
+    return f"scale={out_w}:{out_h}"
 
 
 def _even(value):
     """Round down to the nearest even int (min 2) — yuv420p needs even dims."""
     value = int(value)
     return max(2, value - (value % 2))
+
+
+def _nearest_even(value):
+    """Round to the nearest even int (min 2), the way ffmpeg's ``-2`` does.
+
+    Ties round up: 720 wide at 16:9 is exactly 405.0, and ffmpeg gives
+    406. Python's ``round`` is banker's rounding and would give 404.
+    """
+    return max(2, int(math.floor(float(value) / 2.0 + 0.5)) * 2)
 
 
 def _build_aspect_fill_blur(preset, info, explicit_crop):
@@ -568,8 +632,14 @@ def _assemble_video_filters(preset_name, info, text_layers, options):
     # Drawtext at source-coord resolution — matches the preview exactly.
     filters.extend(_build_text_filters(text_layers, fade=options.get("text_fade", 0.0)))
 
-    # Scale LAST so text and frame are resized together.
-    f = _build_scale_filter(preset_name, info["width"])
+    # Scale LAST so text and frame are resized together. With an aspect
+    # preset the output must be an exact box (see _build_aspect_scale);
+    # otherwise the width-only scale preserves whatever ratio the source
+    # and any explicit crop produced.
+    if aspect and aspect != "Source":
+        f = _build_aspect_scale(preset_name, aspect, info)
+    else:
+        f = _build_scale_filter(preset_name, info["width"])
     if f:
         filters.append(f)
 

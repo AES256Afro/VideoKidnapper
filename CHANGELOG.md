@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Phone videos were treated as landscape.** Footage from a phone is stored sideways with a rotation flag that players honour; the app read the stored size and ignored the flag, so a portrait clip was handled as 1920×1080. The picture itself exported the right way up, but every decision based on the size was wrong: choosing the 9:16 preset on a clip that was already 9:16 computed a crop wider than the frame and produced a mangled 720×1284 file — "cut off", with an odd aspect ratio. Dimensions now follow the rotation flag, matching what the preview and the export actually show.
+- **Aspect presets now produce exact sizes.** Cropping a 16:9 source to 9:16 gives a 607-pixel-wide frame, and scaling that landed on 720×1284 (720×1282 with blur fill) instead of 720×1280, because the crop and the scale each rounded on their own. Exports with an aspect preset now scale to the canonical box for the quality setting: 720×1280, 720×720, 1080×1920. Exports whose source already matches the preset are unchanged.
+
 ## [1.8.2] — 2026-09-03
 
 > **First release that opens on a Mac with no security prompt.** The `.dmg` is now Developer-ID signed and notarized by Apple. v1.8.1 needed a trip through *Open Anyway*; v1.8.0 would not open at all.
