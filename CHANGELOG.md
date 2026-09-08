@@ -2,7 +2,9 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.8.3] — 2026-09-08
+
+> **Fixes exports that came out cut off or at an odd aspect ratio.** Portrait phone video was being handled as landscape, and aspect presets did not produce their exact ratio.
 
 ### Fixed
 
