@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-License-Identifier: Apache-2.0
+#
+# Capture app screenshots on a Windows runner and publish them as an
+# artifact. Windows because that is where the Store screenshots are
+# seen, and because the runner has an interactive desktop, so
+# PIL.ImageGrab works and the app renders with its real fonts (Segoe UI,
+# Consolas). A macOS dev box blocks screen capture behind a permission
+# prompt, and would render with fallback fonts anyway.
+#
+# Manual trigger only; nothing here is part of a release.
+
+name: Screenshots
+
+on:
+  workflow_dispatch:
+    inputs:
+      theme:
+        description: "Theme to capture in (a key of ui.theme.PALETTES)"
+        required: false
+        default: "cream"
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    name: Capture on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps + ffmpeg
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install "opencv-contrib-python-headless>=4.8"
+          choco install ffmpeg -y --no-progress
+
+      - name: Report display
+        # The capture clips if the app window is larger than the screen,
+        # so record what we have. Resize is best-effort: the cmdlet is not
+        # on every image.
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          Write-Host "Primary screen: $($b.Width)x$($b.Height)"
+          if (Get-Command Set-DisplayResolution -ErrorAction SilentlyContinue) {
+            try { Set-DisplayResolution -Width 1920 -Height 1080 -Force } catch { Write-Host "resize failed: $_" }
+            $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            Write-Host "After resize: $($b.Width)x$($b.Height)"
+          }
+
+      - name: Capture
+        shell: pwsh
+        env:
+          VK_THEME: ${{ github.event.inputs.theme }}
+        run: |
+          # The script isolates settings per shot; seed the theme through
+          # the defaults so every capture uses the requested palette.
+          $env:VK_SCREENSHOT_THEME = $env:VK_THEME
+          python scripts/capture_screenshots.py
+          Get-ChildItem assets/screenshots/*.png | ForEach-Object { Write-Host ("  {0}  {1} bytes" -f $_.Name, $_.Length) }
+
+      - name: Store-size versions
+        shell: pwsh
+        run: python scripts/store_screenshots.py --theme "${{ github.event.inputs.theme }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: screenshots-${{ github.event.inputs.theme }}
+          path: |
+            assets/screenshots/*.png
+            assets/store/*.png
+          retention-days: 7
