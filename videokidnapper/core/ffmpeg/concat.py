@@ -20,6 +20,7 @@ crossfade lines up perfectly: transition k starts at
 import subprocess
 import threading
 
+from videokidnapper.core.ffmpeg.color import OUTPUT_COLOR_ARGS, TAG_WORKING_FILTER
 from videokidnapper.core.ffmpeg._internals import (
     _encoder_quality_args, _get_ffmpeg, _get_ffprobe, _mkstemp_path,
     _run_kwargs, pick_video_encoder,
@@ -144,6 +145,10 @@ def _build_xfade_filter_complex(
             )
             last_a = out
 
+    # Label the joined frames as BT.709 limited so ffmpeg 7+ tags the
+    # file (it takes tags from the frames, see color.TAG_WORKING_FILTER).
+    parts[n - 2] = parts[n - 2].replace("[vout]", "[vjoin]")
+    parts.insert(n - 1, f"[vjoin]{TAG_WORKING_FILTER}[vout]")
     filter_complex = ";".join(parts)
     v_map = "[vout]"
     a_map = "[aout]" if has_audio else None
@@ -216,7 +221,8 @@ def concat_clips_with_transition(
         cmd += ["-map", a_map, "-c:a", "aac", "-b:a", "192k"]
     else:
         cmd += ["-an"]
-    cmd += ["-c:v", encoder, *q_args, "-movflags", "+faststart", str(output_path)]
+    cmd += ["-c:v", encoder, *q_args, *OUTPUT_COLOR_ARGS,
+            "-movflags", "+faststart", str(output_path)]
 
     process = subprocess.Popen(
         cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,

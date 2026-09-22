@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+> **Exports now look like the video you started with, and like the preview.** Phone footage no longer comes out darker and faded, and captions and stickers land where you placed them.
+
+### Added
+
+- **Captions always stay on screen.** A caption wider than the exported frame now wraps onto more lines instead of running off both edges. One still too tall for the frame, from many lines or a big font on a small frame, steps its font size down until it fits. No position can push a caption off either: one dragged past an edge, or a motion path that leaves the frame, stops at the edge with its outline intact. All of this follows the export's real frame, so switching to a 9:16 preset re-fits automatically, and the preview lands on the same pixels as the export. The text you typed is never changed, and wrapping can be switched off per caption.
+
+### Fixed
+
+- **Phone video exported darker and faded.** iPhones and many Android phones record HDR, and nothing converted it to normal video, so exports came out about 26 levels darker with a third of the colour. MP4s also stayed 10-bit HDR, which many phones, browsers and chat apps can't play. HDR is now tone-mapped to standard colour on the way in, and every MP4 is written as 8-bit BT.709 with its colour tagged, so every player shows it the same way. The tags are set on the frames as well as the file, because ffmpeg 7 and later ignore file-level tags that the frames contradict. If an ffmpeg build rejects the HDR conversion, the export still completes with a plain conversion rather than failing. Measured on HDR test footage, exports now match the SDR original within compression noise. The preview uses the same conversion, so it shows the colours you will get.
+- **Captions were cut off in vertical and cropped exports.** The preview placed captions on the full frame, but the export drew them after the aspect preset, crop, blur fill or rotation had reshaped it. A centred caption that fit the 16:9 preview was sliced off at both edges of a 9:16 export, and dragged captions landed offset by the crop. The preview now shows the exported frame, dims whatever an aspect preset cuts away, and places, sizes and wraps captions exactly as the export does.
+- **Stickers came out much larger than in the preview.** Stickers were added after the export was scaled down, so a sticker that covered a fifth of the preview covered four fifths of a Low-quality export. They are now added before the downscale.
+- **Multi-line captions sat lower in the preview than in the export.** The preview spaced lines differently from ffmpeg, by up to 30 pixels on a four-line caption. ffmpeg itself changed its line spacing in version 6.1, so the preview now detects which spacing the installed ffmpeg uses and copies it. Checked against ffmpeg 6.0, 6.1 and the current development build.
+- **Animated PNG stickers could hang the export forever.** On current ffmpeg, which the Windows installer and the Linux AppImage ship, looping an animated PNG made ffmpeg spin without finishing. Animated PNGs now loop through ffmpeg's own PNG reader, which works on every version tested. An animated PNG saved to play a set number of times now plays that many times instead of forever.
+- **An aspect preset plus a 90° rotation stretched the picture.** The preset was applied before rotating, so a 9:16 preset on rotated landscape video produced a sideways strip stretched about three times too tall. The preset now applies to the rotated picture.
+- **Smaller colour shifts.** GIFs from untagged HD video and sticker images were converted with the colour matrix meant for standard-definition video, shifting every hue slightly. Full-range video is now converted to the standard range that all players expect.
+- **Ultra quality now means maximum quality.** With the encoder on Auto, Ultra exports used the Mac's hardware encoder, which scored noticeably worse on grainy footage. Auto now uses the software encoder for Ultra. Other presets keep hardware speed, and an encoder you pick by name is always used.
+- **Crops are no longer upscaled.** A crop narrower than the quality preset's width was stretched up to that width. It now keeps its own resolution.
+- **Cover art could be mistaken for the video.** Files with an embedded thumbnail listed first were measured by the thumbnail's size and colour. Cover art is now skipped.
+
 ## [1.8.3] — 2026-09-08
 
 > **Fixes exports that came out cut off or at an odd aspect ratio.** Portrait phone video was being handled as landscape, and aspect presets did not produce their exact ratio.
