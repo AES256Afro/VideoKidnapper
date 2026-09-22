@@ -30,3 +30,6 @@ temp_frames/
 .antigravity/
 
 dist-msix/
+
+# FFmpeg installed by the Setup screen for source checkouts.
+assets/ffmpeg/

@@ -30,6 +30,49 @@ _FFMPEG_WIN_URL = (
 _FFMPEG_WIN_SHA256_URL = _FFMPEG_WIN_URL + ".sha256"
 FFMPEG_DOWNLOAD_SOURCE = "gyan.dev (official Windows FFmpeg builds)"
 
+# macOS: the same static builds the notarized .dmg bundles (see
+# .github/workflows/macos.yml). The publisher does not post checksums,
+# so the digests are pinned here for one release tag and were computed
+# from the published files. Bumping the tag means re-pinning all four.
+_FFMPEG_MAC_TAG = "b6.1.1"
+_FFMPEG_MAC_BASE = (
+    "https://github.com/eugeneware/ffmpeg-static/releases/download/"
+    + _FFMPEG_MAC_TAG
+)
+_FFMPEG_MAC_SHA256 = {
+    ("arm64", "ffmpeg"):  "a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584",
+    ("arm64", "ffprobe"): "bb2db6f5d8cef919da12fbf592119a987202a8c060a886f3cab091f9cab90b64",
+    ("x64", "ffmpeg"):    "ebdddc936f61e14049a2d4b549a412b8a40deeff6540e58a9f2a2da9e6b18894",
+    ("x64", "ffprobe"):   "fa3add0ce901f7241abe0dfc0155d958fc834aca3f8ce61f87cc712ae669c1e0",
+}
+FFMPEG_DOWNLOAD_SOURCE_MAC = (
+    f"eugeneware/ffmpeg-static {_FFMPEG_MAC_TAG} on GitHub "
+    "(the build the Mac app bundles)"
+)
+
+
+def can_auto_install_ffmpeg():
+    """True where the app can fetch a verified FFmpeg itself."""
+    return sys.platform in ("win32", "darwin")
+
+
+def ffmpeg_download_source():
+    """Where FFmpeg comes from on this platform, for the consent text."""
+    if sys.platform == "darwin":
+        return FFMPEG_DOWNLOAD_SOURCE_MAC
+    return FFMPEG_DOWNLOAD_SOURCE
+
+
+def _mac_arch():
+    """Asset suffix for this Mac: ``arm64`` or ``x64``, else ``None``."""
+    import platform
+    machine = platform.machine().lower()
+    if machine == "arm64":
+        return "arm64"
+    if machine in ("x86_64", "amd64"):
+        return "x64"
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Detection
@@ -94,11 +137,20 @@ def has_any_missing(required_only=True):
 # ---------------------------------------------------------------------------
 
 def install_ffmpeg_portable(dest_dir, progress_cb=None):
-    """Download and verify the gyan.dev FFmpeg essentials archive."""
+    """Download a verified FFmpeg into ``dest_dir``; ``(ok, message)``.
+
+    Windows: the gyan.dev essentials archive, checked against the
+    publisher's SHA-256. macOS: the static builds the Mac app bundles,
+    checked against digests pinned in this file. Linux: not automatic;
+    the message names the package manager.
+    """
+    if sys.platform == "darwin":
+        return _install_ffmpeg_macos(Path(dest_dir), progress_cb)
     if sys.platform != "win32":
         return False, (
-            "Automatic install is Windows-only. On macOS run "
-            "`brew install ffmpeg`; on Linux use your package manager."
+            "Automatic install is not available on this system. Install "
+            "FFmpeg with your package manager (for example "
+            "`sudo apt-get install ffmpeg`) and relaunch."
         )
 
     dest_dir = Path(dest_dir)
@@ -138,6 +190,54 @@ def install_ffmpeg_portable(dest_dir, progress_cb=None):
             zip_path.unlink(missing_ok=True)
 
 
+_MACHO_MAGICS = (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe")  # 64-bit, universal
+
+
+def _install_ffmpeg_macos(dest_dir, progress_cb=None):
+    arch = _mac_arch()
+    if arch is None:
+        return False, "Unrecognised Mac architecture; run `brew install ffmpeg`."
+    staged = {}
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix=".videokidnapper-ffmpeg-", dir=dest_dir,
+        ) as staging:
+            for i, name in enumerate(("ffmpeg", "ffprobe")):
+                expected = _FFMPEG_MAC_SHA256[(arch, name)]
+                target = Path(staging) / name
+
+                def note(p, _text, i=i, name=name):
+                    if progress_cb:
+                        progress_cb(0.02 + (i + p) * 0.45,
+                                    f"Downloading {name}... {int(p * 100)}%")
+
+                actual = _download_with_sha256(
+                    f"{_FFMPEG_MAC_BASE}/{name}-darwin-{arch}", target,
+                    progress_cb=lambda p, text, note=note: note(
+                        max(0.0, (p - 0.05) / 0.84), text),
+                )
+                if not hmac.compare_digest(actual, expected):
+                    return False, (
+                        f"{name} failed its SHA-256 integrity check. "
+                        "Nothing was installed. Please retry."
+                    )
+                with open(target, "rb") as fh:
+                    magic = fh.read(4)
+                if magic not in _MACHO_MAGICS or target.stat().st_size < 1024 * 1024:
+                    return False, f"Downloaded {name} is not a Mac executable."
+                os.chmod(target, 0o755)
+                staged[name] = target
+            if progress_cb:
+                progress_cb(0.95, "Verified. Installing ffmpeg and ffprobe...")
+            _install_staged_binaries(staged, dest_dir)
+        if progress_cb:
+            progress_cb(1.0, "FFmpeg verified and installed")
+        return True, f"Verified SHA-256 and installed to {dest_dir}"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
 def _parse_sha256(text):
     """Return the first SHA-256 digest in publisher checksum text."""
     match = re.search(r"(?i)(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])", text or "")
@@ -147,19 +247,22 @@ def _parse_sha256(text):
 
 
 def _fetch_expected_sha256(url):
+    from videokidnapper.utils.certs import ssl_context
     request = urllib.request.Request(
         url, headers={"User-Agent": "VideoKidnapper prerequisite installer"},
     )
-    with urllib.request.urlopen(request, timeout=15) as response:
+    with urllib.request.urlopen(request, timeout=15, context=ssl_context()) as response:
         return _parse_sha256(response.read(4096).decode("ascii", errors="replace"))
 
 
 def _download_with_sha256(url, target, progress_cb=None):
+    from videokidnapper.utils.certs import ssl_context
     request = urllib.request.Request(
         url, headers={"User-Agent": "VideoKidnapper prerequisite installer"},
     )
     digest = hashlib.sha256()
-    with urllib.request.urlopen(request, timeout=30) as response, open(target, "wb") as out:
+    with urllib.request.urlopen(request, timeout=30, context=ssl_context()) as response, \
+            open(target, "wb") as out:
         total = int(response.headers.get("Content-Length") or 0)
         downloaded = 0
         while True:

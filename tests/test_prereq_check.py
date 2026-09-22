@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
+import os
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -320,3 +321,104 @@ def test_staged_binary_install_rolls_back_on_failure(tmp_path, monkeypatch):
         )
     assert (dest / "ffmpeg.exe").read_bytes() == b"old-ffmpeg.exe"
     assert (dest / "ffprobe.exe").read_bytes() == b"old-ffprobe.exe"
+
+
+# ---------------------------------------------------------------------------
+# macOS automatic install
+# ---------------------------------------------------------------------------
+
+MACHO = b"\xcf\xfa\xed\xfe"
+
+
+def _fake_download(payloads):
+    """Stand-in for _download_with_sha256: writes canned bytes per URL."""
+    import hashlib
+
+    def download(url, target, progress_cb=None):
+        data = payloads[url.rsplit("/", 1)[1]]
+        Path(target).write_bytes(data)
+        if progress_cb:
+            progress_cb(0.5, "Downloading FFmpeg... 50%")
+        return hashlib.sha256(data).hexdigest()
+    return download
+
+
+def _mac(monkeypatch, arch="arm64"):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(prereq_check, "_mac_arch", lambda: arch)
+
+
+def test_mac_install_verifies_pinned_digests_and_installs(tmp_path, monkeypatch):
+    import hashlib
+    _mac(monkeypatch)
+    payloads = {"ffmpeg-darwin-arm64": MACHO + b"f" * (2 << 20),
+                "ffprobe-darwin-arm64": MACHO + b"p" * (2 << 20)}
+    monkeypatch.setattr(prereq_check, "_FFMPEG_MAC_SHA256", {
+        ("arm64", "ffmpeg"): hashlib.sha256(payloads["ffmpeg-darwin-arm64"]).hexdigest(),
+        ("arm64", "ffprobe"): hashlib.sha256(payloads["ffprobe-darwin-arm64"]).hexdigest(),
+    })
+    monkeypatch.setattr(prereq_check, "_download_with_sha256", _fake_download(payloads))
+    notes = []
+    ok, msg = prereq_check.install_ffmpeg_portable(
+        tmp_path / "bin", progress_cb=lambda p, n: notes.append((p, n)))
+    assert ok, msg
+    for name in ("ffmpeg", "ffprobe"):
+        installed = tmp_path / "bin" / name
+        assert installed.read_bytes() == payloads[f"{name}-darwin-arm64"]
+        assert os.access(installed, os.X_OK)
+    assert notes[-1][0] == 1.0
+    assert not list((tmp_path / "bin").glob(".videokidnapper-ffmpeg-*"))
+
+
+def test_mac_install_refuses_a_tampered_download(tmp_path, monkeypatch):
+    _mac(monkeypatch)
+    payloads = {"ffmpeg-darwin-arm64": MACHO + b"f" * (2 << 20),
+                "ffprobe-darwin-arm64": MACHO + b"p" * (2 << 20)}
+    monkeypatch.setattr(prereq_check, "_FFMPEG_MAC_SHA256", {
+        ("arm64", "ffmpeg"): "0" * 64, ("arm64", "ffprobe"): "0" * 64})
+    monkeypatch.setattr(prereq_check, "_download_with_sha256", _fake_download(payloads))
+    ok, msg = prereq_check.install_ffmpeg_portable(tmp_path / "bin")
+    assert ok is False and "SHA-256" in msg
+    assert not (tmp_path / "bin" / "ffmpeg").exists()
+
+
+def test_mac_install_refuses_a_non_executable(tmp_path, monkeypatch):
+    import hashlib
+    _mac(monkeypatch, "x64")
+    html = b"<html>rate limited</html>" + b" " * (2 << 20)
+    payloads = {"ffmpeg-darwin-x64": html, "ffprobe-darwin-x64": html}
+    monkeypatch.setattr(prereq_check, "_FFMPEG_MAC_SHA256", {
+        ("x64", "ffmpeg"): hashlib.sha256(html).hexdigest(),
+        ("x64", "ffprobe"): hashlib.sha256(html).hexdigest()})
+    monkeypatch.setattr(prereq_check, "_download_with_sha256", _fake_download(payloads))
+    ok, msg = prereq_check.install_ffmpeg_portable(tmp_path / "bin")
+    assert ok is False and "not a Mac executable" in msg
+
+
+def test_mac_install_keeps_the_old_binaries_on_failure(tmp_path, monkeypatch):
+    _mac(monkeypatch)
+    dest = tmp_path / "bin"
+    dest.mkdir()
+    (dest / "ffmpeg").write_bytes(b"old")
+    monkeypatch.setattr(prereq_check, "_download_with_sha256",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("no network")))
+    ok, msg = prereq_check.install_ffmpeg_portable(dest)
+    assert ok is False and "no network" in msg
+    assert (dest / "ffmpeg").read_bytes() == b"old"
+
+
+def test_pinned_mac_digests_cover_both_architectures():
+    for arch in ("arm64", "x64"):
+        for name in ("ffmpeg", "ffprobe"):
+            digest = prereq_check._FFMPEG_MAC_SHA256[(arch, name)]
+            assert len(digest) == 64 and int(digest, 16)
+
+
+def test_auto_install_is_offered_only_where_it_works(monkeypatch):
+    for platform, expected in (("win32", True), ("darwin", True), ("linux", False)):
+        monkeypatch.setattr(sys, "platform", platform)
+        assert prereq_check.can_auto_install_ffmpeg() is expected
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert "GitHub" in prereq_check.ffmpeg_download_source()
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert "gyan" in prereq_check.ffmpeg_download_source()

@@ -93,7 +93,7 @@ New installs start with a short three-step welcome and direct actions for openin
 
 Opened from the **⚙ Setup** button in the header. When FFmpeg is missing on first run, a setup screen explains the source, destination, and integrity check before asking permission to install. Each row describes a prerequisite and the feature it unlocks; required items are pre-checked, optional ones wait for opt-in. **Select all missing** toggles every installable row.
 
-- **Install Selected** runs in a background thread: FFmpeg is pulled as a portable Windows build from gyan.dev, checked against the publisher's SHA-256 digest, staged, and then placed in `assets/ffmpeg/bin/` (the app's fallback lookup path). Python packages use `python -m pip install --user`; no admin access is needed.
+- **Install Selected** runs in a background thread: FFmpeg is pulled as a portable build (gyan.dev on Windows, checked against the publisher's SHA-256 digest; on macOS the same static build the Mac app bundles, checked against digests pinned in the source), staged, and then placed in `assets/ffmpeg/bin/` (the app's fallback lookup path). Python packages use `python -m pip install --user`; no admin access is needed.
 - **Open Admin Terminal** launches an elevated shell pre-populated with the right commands for your OS: `winget install Gyan.FFmpeg` on Windows (via PowerShell `Start-Process -Verb RunAs`), `brew install ffmpeg` on macOS (via Terminal + `osascript`), `sudo apt-get install ffmpeg` on Linux. If no terminal is available, commands are copied to the clipboard as a fallback.
 - **Relaunch** restarts the current process so newly-installed prerequisites are picked up.
 
@@ -212,7 +212,7 @@ videokidnapper                        # launches the GUI
 videokidnapper --help                 # CLI mode
 ```
 
-You still need FFmpeg on `PATH` (or use the in-app **⚙ Setup** dialog to install a verified portable copy on Windows).
+You still need FFmpeg on `PATH`, or let the in-app **⚙ Setup** screen install a verified portable copy (Windows and macOS). On Linux use your package manager.
 
 ### Option E — Clone and install (contributors / latest `main`)
 
@@ -232,7 +232,7 @@ pip install -r requirements.txt
 
 Three options — the Setup dialog handles all of them:
 
-- **Auto-install (Windows)**: open **⚙ Setup** → check FFmpeg → **Install Selected**. Pulls the gyan.dev essentials build into `assets/ffmpeg/bin/`.
+- **Auto-install (Windows and macOS)**: open **⚙ Setup** → check FFmpeg → **Install Selected**. Pulls a verified build into `assets/ffmpeg/bin/`: gyan.dev essentials on Windows, the static build the Mac app bundles on macOS.
 - **Manual portable**: drop `ffmpeg.exe` and `ffprobe.exe` into `assets/ffmpeg/bin/` yourself.
 - **System install**: `winget install Gyan.FFmpeg` (Windows) / `brew install ffmpeg` (macOS) / `sudo apt install ffmpeg` (Linux).
 
