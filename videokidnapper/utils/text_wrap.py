@@ -104,24 +104,57 @@ def numeric_position(position):
         return None
 
 
-def drawtext_vmetrics(font, text):
-    """``(y_max, y_min, line_h)`` the way ffmpeg's drawtext measures them.
+def _glyph_extent(font, chars):
+    """(highest top, lowest bottom) of ``chars``' ink, y up from baseline."""
+    top = bottom = 0
+    for ch in set(chars) - {"\n"}:
+        _l, t, _r, b = font.getbbox(ch, anchor="ls")
+        top = max(top, -t)
+        bottom = min(bottom, -b)
+    return top, bottom
 
-    drawtext takes the highest glyph top and the lowest glyph bottom over
-    the whole caption (y up, baseline 0), and advances every line by the
-    difference, so a caption is ``line_h * lines`` tall. Newlines are not
-    glyphs. ``None`` if the font can't be measured.
-    """
-    y_max = y_min = 0
+
+def _modern_drawtext():
     try:
-        for ch in set(text) - {"\n"}:
-            _l, top, _r, bottom = font.getbbox(ch, anchor="ls")
-            y_max = max(y_max, -top)
-            y_min = min(y_min, -bottom)
+        from videokidnapper.core.ffmpeg._internals import drawtext_is_modern
+        return drawtext_is_modern()
+    except Exception:
+        return True
+
+
+def drawtext_layout(font, text):
+    """``(first_baseline, line_h, height)`` of ``text`` as drawtext lays it out.
+
+    ``first_baseline`` is the first line's baseline below the caption's
+    top edge, ``line_h`` the distance between baselines, ``height`` the
+    caption's ``th``. There are two layouts, and the preview copies the
+    one the installed ffmpeg uses (see ``drawtext_is_modern``):
+
+    - ffmpeg 6.1 and later: lines advance by the font's line height; the
+      caption runs from the first line's highest ink to the last line's
+      lowest.
+    - 6.0 and earlier: every line is as tall as the ink from the highest
+      glyph to the lowest anywhere in the caption.
+
+    ``None`` if the font can't be measured.
+    """
+    lines = text.split("\n")
+    try:
+        if _modern_drawtext():
+            try:
+                line_h = font.font.height
+            except AttributeError:
+                ascent, descent = font.getmetrics()
+                line_h = ascent + descent
+            first_top, _ = _glyph_extent(font, lines[0])
+            _, last_bottom = _glyph_extent(font, lines[-1])
+            height = line_h * (len(lines) - 1) + first_top - last_bottom
+            return first_top, line_h, height
+        top, bottom = _glyph_extent(font, text)
     except Exception:
         return None
-    line_h = y_max - y_min
-    return (y_max, y_min, line_h) if line_h > 0 else None
+    line_h = top - bottom
+    return (top, line_h, line_h * len(lines)) if line_h > 0 else None
 
 
 def edge_margin(layer):
@@ -181,8 +214,8 @@ def _fits(layer, wrapped, font, frame_w, budget_h):
         return False
     if budget_h <= 0:
         return True
-    metrics = drawtext_vmetrics(font, wrapped)
-    return metrics is None or metrics[2] * len(lines) <= budget_h
+    layout = drawtext_layout(font, wrapped)
+    return layout is None or layout[2] <= budget_h
 
 
 def wrap_layer_text(layer, text, font, frame_w):

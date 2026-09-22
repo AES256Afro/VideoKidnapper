@@ -249,3 +249,33 @@ def _log_ffmpeg_failure(cmd, returncode, stderr_tail):
                 print(f"  {line}", file=sys.stderr)
     except Exception:
         pass
+
+
+_drawtext_modern_cache = None
+
+
+def drawtext_is_modern():
+    """True when this ffmpeg's drawtext uses the 6.1+ text layout.
+
+    ffmpeg 6.1 rewrote drawtext (HarfBuzz shaping, ``text_align`` /
+    ``y_align``) and changed how multi-line text is spaced: lines now
+    advance by the font's own line height, where 6.0 and earlier
+    advanced by the ink height of the tallest glyph. The preview must
+    copy whichever one will render the export, and the new options are
+    the reliable way to tell them apart. Defaults to modern when ffmpeg
+    can't be asked, as current builds are.
+    """
+    global _drawtext_modern_cache
+    if _drawtext_modern_cache is not None:
+        return _drawtext_modern_cache
+    try:
+        result = subprocess.run(
+            [_get_ffmpeg(), "-hide_banner", "-h", "filter=drawtext"],
+            capture_output=True, text=True, timeout=8, **_run_kwargs(),
+        )
+        out = (result.stdout or "") + (result.stderr or "")
+        modern = "y_align" in out if "drawtext" in out.lower() else True
+    except Exception:
+        modern = True
+    _drawtext_modern_cache = modern
+    return modern

@@ -26,7 +26,7 @@ import tkinter as tk
 import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
-from videokidnapper.utils.text_wrap import drawtext_vmetrics
+from videokidnapper.utils.text_wrap import drawtext_layout
 
 from videokidnapper.utils.coerce import coerce_float, coerce_int
 from videokidnapper.core import playback
@@ -540,16 +540,14 @@ class VideoPlayer(ctk.CTkFrame):
             except AttributeError:
                 tw, th = measure.textsize(text, font=font)
 
-            # Multi-line captions follow drawtext's line model instead of
-            # Pillow's: every line is one "max glyph height" tall (the
-            # ink from the tallest ascender to the deepest descender in
-            # the whole caption), and th is that times the line count.
-            # Pillow spaces lines tighter, so wrapped captions previewed
-            # up to ~20 px lower than they exported.
+            # Multi-line captions follow the installed drawtext's line
+            # model instead of Pillow's (see text_wrap.drawtext_layout).
+            # Pillow spaces lines differently, so wrapped captions
+            # previewed up to ~30 px away from where they exported.
             lines = text.split("\n")
-            vmetrics = drawtext_vmetrics(font, text) if len(lines) > 1 else None
-            if vmetrics:
-                th = vmetrics[2] * len(lines)
+            layout = drawtext_layout(font, text) if len(lines) > 1 else None
+            if layout:
+                th = layout[2]
 
             keyframes = layer.get("keyframes") or []
             if keyframes:
@@ -595,11 +593,11 @@ class VideoPlayer(ctk.CTkFrame):
                 sx = sy = borderw = 0
 
             def paint(dx, dy, fill, **kw):
-                if vmetrics:
-                    y_max, _y_min, line_h = vmetrics
+                if layout:
+                    first_baseline, line_h, _th = layout
                     for i, line in enumerate(lines):
                         draw.text(
-                            (x + dx - ink_dx, y + dy + y_max + i * line_h),
+                            (x + dx - ink_dx, y + dy + first_baseline + i * line_h),
                             line, fill=fill, font=font, anchor="ls", **kw,
                         )
                 else:

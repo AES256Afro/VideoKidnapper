@@ -80,6 +80,16 @@ class OverlayMedia:
         it ends and works across demuxers, so it is the animated case.
         """
         if self.needs_stream_loop:
+            if os.path.splitext(self.path)[1].lower() in (".png", ".apng"):
+                # APNG loops inside its own demuxer instead. With
+                # -stream_loop, current ffmpeg (7+/master: the build the
+                # Windows installer and AppImage ship) fails to re-read
+                # the file from the top and spins on "Invalid data"
+                # forever, hanging the export. Measured: -ignore_loop 0
+                # animates correctly on 6.0, 6.1 and master. It honours
+                # the file's own play count, and stickers are nearly
+                # always saved to loop forever.
+                return ["-ignore_loop", "0"]
             return ["-stream_loop", "-1"]
         return ["-loop", "1"]
 
