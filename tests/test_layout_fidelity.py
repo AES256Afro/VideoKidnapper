@@ -262,3 +262,29 @@ def test_sticker_keeps_its_size_relative_to_the_frame(black_landscape, tmp_path)
     cols = (frame > 128).any(axis=0).nonzero()[0]
     width_share = (cols.max() - cols.min() + 1) / 480
     assert width_share == pytest.approx(400 / 1920, abs=0.02)
+
+
+def test_every_caption_position_is_clamped_inside_the_frame():
+    """Drags near an edge and motion paths can't push text off."""
+    layer = {"text": "hi", "fontsize": 40, "position": "1900:1070", "borderw": 3}
+    draw = next(f for f in _assemble_video_filters("Ultra", HD, [layer], {})
+                if f.startswith("drawtext"))
+    # outline (3) + 2 px so the anti-aliased edge stays visible
+    assert "x='clip(1900,5,max(5,w-tw-5))'" in draw
+    assert "y='clip(1070,5,max(5,h-th-5))'" in draw
+
+
+def test_caption_too_tall_for_the_frame_is_shrunk():
+    from PIL import ImageFont
+
+    from videokidnapper.ui.text_layers import _find_font_path
+    from videokidnapper.utils.text_wrap import drawtext_vmetrics, fit_layer_text
+
+    path = _find_font_path("Arial")
+    text, font, size = fit_layer_text(
+        {}, " ".join(["caption"] * 40),
+        lambda s: ImageFont.truetype(path, s), 220, 1920, 1080)
+    assert size < 220
+    lines = text.split("\n")
+    assert drawtext_vmetrics(font, text)[2] * len(lines) <= 1080 - 40
+    assert max(font.getlength(line) for line in lines) <= 1920 - 40

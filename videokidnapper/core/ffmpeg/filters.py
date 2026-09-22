@@ -185,13 +185,16 @@ _coerce_int = coerce_int
 _coerce_float = coerce_float
 
 
-def _build_drawtext_filter(layer, fade=0.0, frame_w=None):
+def _build_drawtext_filter(layer, fade=0.0, frame_w=None, frame_h=None):
     """One ``drawtext=`` filter for a caption layer.
 
-    ``frame_w`` is the layout-frame width (see ``core.frame_geometry``).
-    When given, the caption is word-wrapped to fit it exactly the way the
-    preview wraps it. drawtext itself never wraps, so without this a
-    long caption on a narrow (e.g. 9:16) export ran off both edges.
+    ``frame_w``/``frame_h`` is the layout frame (see
+    ``core.frame_geometry``). When given, the caption is kept on screen
+    exactly the way the preview keeps it: word-wrapped to the width,
+    shrunk if it is still too tall, and clamped so no position (a drag
+    near an edge, a motion path) can push it off the frame. drawtext
+    does none of this itself, so a long caption on a narrow (e.g. 9:16)
+    export used to run off both edges.
     """
     # Late import avoids a tk-at-import-time dependency during pytest collection
     # when the font-discovery path pulls in the UI layer.
@@ -208,7 +211,8 @@ def _build_drawtext_filter(layer, fade=0.0, frame_w=None):
     )
     fontsize = max(1, _coerce_int(layer.get("fontsize", 24), 24))
     if frame_w:
-        raw_text = _wrap_for_frame(layer, raw_text, raw_font_path, fontsize, frame_w)
+        raw_text, fontsize = _fit_to_frame(
+            layer, raw_text, raw_font_path, fontsize, frame_w, frame_h)
     text = escape_drawtext_value(raw_text)
     font_path = escape_path(raw_font_path)
     # Colour options are unquoted in the filter spec, so an unvalidated
@@ -238,6 +242,9 @@ def _build_drawtext_filter(layer, fade=0.0, frame_w=None):
         # as sanitize_color. See sanitize_position_expr's docstring.
         pos_expr = sanitize_position_expr(layer.get("position"))
         x_expr, y_expr = pos_expr.split(":", 1)
+    if frame_w:
+        x_expr = _clamp_expr(x_expr, "w", "tw", layer)
+        y_expr = _clamp_expr(y_expr, "h", "th", layer)
     start_t = _coerce_float(layer.get("start", 0))
     end_t = _coerce_float(layer.get("end", 999999), 999999)
     layer_fade = _coerce_float(layer.get("fade", fade))
@@ -285,25 +292,47 @@ def _build_drawtext_filter(layer, fade=0.0, frame_w=None):
     return ":".join(parts)
 
 
-def _build_text_filters(text_layers, fade=0.0, frame_w=None):
+def _build_text_filters(text_layers, fade=0.0, frame_w=None, frame_h=None):
     if not text_layers:
         return []
-    return [_build_drawtext_filter(layer, fade=fade, frame_w=frame_w)
+    return [_build_drawtext_filter(layer, fade=fade, frame_w=frame_w, frame_h=frame_h)
             for layer in text_layers if layer.get("text", "").strip()]
 
 
-def _wrap_for_frame(layer, text, font_path, fontsize, frame_w):
-    """Wrap ``text`` to ``frame_w`` with the font drawtext will use."""
-    from videokidnapper.utils.text_wrap import wrap_layer_text
+def _fit_to_frame(layer, text, font_path, fontsize, frame_w, frame_h):
+    """Wrap (and if needed shrink) ``text`` with the font drawtext uses.
+
+    Returns ``(text, fontsize)``. Shares ``utils.text_wrap`` with the
+    preview, so both land on the same lines and the same size.
+    """
+    from videokidnapper.utils.text_wrap import fit_layer_text
     try:
         from PIL import ImageFont
-        font = ImageFont.truetype(str(font_path), fontsize)
+
+        def make_font(size):
+            return ImageFont.truetype(str(font_path), size)
+
+        text, _font, size = fit_layer_text(
+            layer, text, make_font, fontsize, frame_w, frame_h)
+        return text, size
     except Exception:
-        # No usable font file to measure with: export unwrapped rather
+        # No usable font file to measure with: export as typed rather
         # than fail. drawtext will fail loudly on its own if the font
         # is really unusable.
-        return text
-    return wrap_layer_text(layer, text, font, frame_w)
+        return text, fontsize
+
+
+def _clamp_expr(expr, frame_var, size_var, layer):
+    """Keep a drawtext coordinate inside the frame, outline included.
+
+    ``expr`` may be a preset (``(w-tw)/2``), a dragged pixel value or a
+    motion-path expression. Commas are safe inside the single quotes, the
+    same way motion paths are already passed.
+    """
+    from videokidnapper.utils.text_wrap import clamp_margin
+    inner = expr[1:-1] if len(expr) > 1 and expr[0] == expr[-1] == "'" else expr
+    m = clamp_margin(layer)
+    return f"'clip({inner},{m},max({m},{frame_var}-{size_var}-{m}))'"
 
 
 # ---------------------------------------------------------------------------
@@ -712,10 +741,11 @@ def _assemble_video_filters(preset_name, info, text_layers, options,
     if f:
         filters.append(f)
 
-    # Drawtext in layout-frame pixels, wrapped to the layout width.
-    frame_w = export_geometry(info, options).size[0] or None
+    # Drawtext in layout-frame pixels, fitted inside the layout frame.
+    frame_w, frame_h = export_geometry(info, options).size
     filters.extend(_build_text_filters(
-        text_layers, fade=options.get("text_fade", 0.0), frame_w=frame_w,
+        text_layers, fade=options.get("text_fade", 0.0),
+        frame_w=frame_w or None, frame_h=frame_h or None,
     ))
 
     if include_scale:

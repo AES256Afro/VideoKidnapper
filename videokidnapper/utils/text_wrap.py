@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
-"""Word-wrap captions to the width of the exported frame.
+"""Keep captions inside the exported frame: wrap, shrink, clamp.
 
 ffmpeg's drawtext never wraps: a caption wider than the frame just runs
 off both edges. That is most visible on a 9:16 export of landscape
 video, where the frame is a third as wide as the one the caption was
-typed against. Captions are now wrapped to the layout frame, in the
-export and in the preview alike, using the same font file and size, so
-the lines break in the same places on both sides.
+typed against. Captions are now wrapped to the layout frame, shrunk if
+they are still too tall, and clamped so no position can push them off,
+in the export and in the preview alike, using the same font file and
+size, so both land on the same pixels.
 
 The caption text the user typed is never modified; wrapping happens at
 render time, so changing the aspect preset re-wraps automatically.
@@ -101,6 +102,87 @@ def numeric_position(position):
         return float(a), float(b)
     except ValueError:
         return None
+
+
+def drawtext_vmetrics(font, text):
+    """``(y_max, y_min, line_h)`` the way ffmpeg's drawtext measures them.
+
+    drawtext takes the highest glyph top and the lowest glyph bottom over
+    the whole caption (y up, baseline 0), and advances every line by the
+    difference, so a caption is ``line_h * lines`` tall. Newlines are not
+    glyphs. ``None`` if the font can't be measured.
+    """
+    y_max = y_min = 0
+    try:
+        for ch in set(text) - {"\n"}:
+            _l, top, _r, bottom = font.getbbox(ch, anchor="ls")
+            y_max = max(y_max, -top)
+            y_min = min(y_min, -bottom)
+    except Exception:
+        return None
+    line_h = y_max - y_min
+    return (y_max, y_min, line_h) if line_h > 0 else None
+
+
+def edge_margin(layer):
+    """Pixels the outline or background box reach beyond the glyphs."""
+    margin = max(0, coerce_int(layer.get("borderw", 0)))
+    if layer.get("box"):
+        margin = max(margin, coerce_int(layer.get("boxborderw", 8), 8))
+    return margin
+
+
+def clamp_margin(layer):
+    """Closest a caption may sit to the frame edge when kept on screen.
+
+    The outline/box reach, plus 2 px so the glyphs' anti-aliased edge is
+    never the frame's last row or column.
+    """
+    return edge_margin(layer) + 2
+
+
+#: Smallest size a caption is shrunk to while fitting it into the frame.
+MIN_FIT_SIZE = 10
+
+
+def fit_layer_text(layer, text, make_font, fontsize, frame_w, frame_h):
+    """Wrap a caption, and shrink it if needed, so it fits the frame.
+
+    Wrapping keeps it inside the frame's width. A caption can still be
+    too tall (many lines, or a big font on a small frame), or have a
+    single character wider than the frame; then the font steps down 10%
+    at a time until it fits, to no smaller than ``MIN_FIT_SIZE``.
+
+    ``make_font(size)`` returns a Pillow FreeType font. The export and
+    the preview both call this with the same font file, so they agree on
+    the lines and the size. Returns ``(text, font, size)``.
+    """
+    size = max(1, int(fontsize))
+    font = make_font(size)
+    if layer.get("wrap") is False or not frame_w:
+        return text, font, size
+    budget_h = (frame_h or 0) - 2 * EDGE_PAD - 2 * edge_margin(layer)
+    while True:
+        wrapped = wrap_layer_text(layer, text, font, frame_w)
+        if size <= MIN_FIT_SIZE or _fits(layer, wrapped, font, frame_w, budget_h):
+            return wrapped, font, size
+        size = max(MIN_FIT_SIZE, int(size * 0.9))
+        font = make_font(size)
+
+
+def _fits(layer, wrapped, font, frame_w, budget_h):
+    lines = wrapped.split("\n")
+    width_budget = frame_w - 2 * edge_margin(layer)
+    try:
+        widest = max(font.getlength(line) for line in lines)
+    except Exception:
+        return True
+    if widest > width_budget:
+        return False
+    if budget_h <= 0:
+        return True
+    metrics = drawtext_vmetrics(font, wrapped)
+    return metrics is None or metrics[2] * len(lines) <= budget_h
 
 
 def wrap_layer_text(layer, text, font, frame_w):
