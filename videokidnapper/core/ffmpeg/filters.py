@@ -9,16 +9,21 @@ or ``-filter_complex``.
 
 Ordering convention established by :func:`_assemble_video_filters`:
 
-    aspect-crop → crop → rotate → color-eq → speed → drawtext → scale
+    aspect-crop → crop → rotate → colour-normalise → color-eq → speed
+    → drawtext → [image overlays] → scale
 
-Drawtext MUST come before scale so fontsize / x:y are interpreted in
-source-frame pixels (that's what the preview overlay uses, which keeps
-export alignment pixel-exact).
+Drawtext and overlays MUST come before scale so fontsize / x:y are
+interpreted in layout-frame pixels: the exported frame before the final
+downscale. The preview lays captions out in that same frame (see
+``core.frame_geometry``), which is what keeps export alignment exact.
 """
 
 import math
 
 from videokidnapper.config import PRESETS
+from videokidnapper.core.ffmpeg.color import (
+    build_normalize_filter, rgba_to_working_filter,
+)
 from videokidnapper.utils.coerce import coerce_float, coerce_int
 from videokidnapper.utils.ffmpeg_escape import (
     escape_drawtext_value,
@@ -180,7 +185,17 @@ _coerce_int = coerce_int
 _coerce_float = coerce_float
 
 
-def _build_drawtext_filter(layer, fade=0.0):
+def _build_drawtext_filter(layer, fade=0.0, frame_w=None, frame_h=None):
+    """One ``drawtext=`` filter for a caption layer.
+
+    ``frame_w``/``frame_h`` is the layout frame (see
+    ``core.frame_geometry``). When given, the caption is kept on screen
+    exactly the way the preview keeps it: word-wrapped to the width,
+    shrunk if it is still too tall, and clamped so no position (a drag
+    near an edge, a motion path) can push it off the frame. drawtext
+    does none of this itself, so a long caption on a narrow (e.g. 9:16)
+    export used to run off both edges.
+    """
     # Late import avoids a tk-at-import-time dependency during pytest collection
     # when the font-discovery path pulls in the UI layer.
     from videokidnapper.ui.text_layers import _find_font_path
@@ -189,13 +204,17 @@ def _build_drawtext_filter(layer, fade=0.0):
     # us \r\n. drawtext renders embedded \n as line breaks, but a stray
     # \r shows up as a tofu glyph.
     raw_text = str(layer.get("text", "")).replace("\r\n", "\n").replace("\r", "\n")
-    text = escape_drawtext_value(raw_text)
-    font_path = escape_path(_find_font_path(
+    raw_font_path = _find_font_path(
         layer.get("font", "Arial"),
         bold=bool(layer.get("bold")),
         italic=bool(layer.get("italic")),
-    ))
+    )
     fontsize = max(1, _coerce_int(layer.get("fontsize", 24), 24))
+    if frame_w:
+        raw_text, fontsize = _fit_to_frame(
+            layer, raw_text, raw_font_path, fontsize, frame_w, frame_h)
+    text = escape_drawtext_value(raw_text)
+    font_path = escape_path(raw_font_path)
     # Colour options are unquoted in the filter spec, so an unvalidated
     # value escapes the option and injects filter graph — see
     # sanitize_color's docstring.
@@ -223,6 +242,9 @@ def _build_drawtext_filter(layer, fade=0.0):
         # as sanitize_color. See sanitize_position_expr's docstring.
         pos_expr = sanitize_position_expr(layer.get("position"))
         x_expr, y_expr = pos_expr.split(":", 1)
+    if frame_w:
+        x_expr = _clamp_expr(x_expr, "w", "tw", layer)
+        y_expr = _clamp_expr(y_expr, "h", "th", layer)
     start_t = _coerce_float(layer.get("start", 0))
     end_t = _coerce_float(layer.get("end", 999999), 999999)
     layer_fade = _coerce_float(layer.get("fade", fade))
@@ -270,11 +292,47 @@ def _build_drawtext_filter(layer, fade=0.0):
     return ":".join(parts)
 
 
-def _build_text_filters(text_layers, fade=0.0):
+def _build_text_filters(text_layers, fade=0.0, frame_w=None, frame_h=None):
     if not text_layers:
         return []
-    return [_build_drawtext_filter(layer, fade=fade)
+    return [_build_drawtext_filter(layer, fade=fade, frame_w=frame_w, frame_h=frame_h)
             for layer in text_layers if layer.get("text", "").strip()]
+
+
+def _fit_to_frame(layer, text, font_path, fontsize, frame_w, frame_h):
+    """Wrap (and if needed shrink) ``text`` with the font drawtext uses.
+
+    Returns ``(text, fontsize)``. Shares ``utils.text_wrap`` with the
+    preview, so both land on the same lines and the same size.
+    """
+    from videokidnapper.utils.text_wrap import fit_layer_text
+    try:
+        from PIL import ImageFont
+
+        def make_font(size):
+            return ImageFont.truetype(str(font_path), size)
+
+        text, _font, size = fit_layer_text(
+            layer, text, make_font, fontsize, frame_w, frame_h)
+        return text, size
+    except Exception:
+        # No usable font file to measure with: export as typed rather
+        # than fail. drawtext will fail loudly on its own if the font
+        # is really unusable.
+        return text, fontsize
+
+
+def _clamp_expr(expr, frame_var, size_var, layer):
+    """Keep a drawtext coordinate inside the frame, outline included.
+
+    ``expr`` may be a preset (``(w-tw)/2``), a dragged pixel value or a
+    motion-path expression. Commas are safe inside the single quotes, the
+    same way motion paths are already passed.
+    """
+    from videokidnapper.utils.text_wrap import clamp_margin
+    inner = expr[1:-1] if len(expr) > 1 and expr[0] == expr[-1] == "'" else expr
+    m = clamp_margin(layer)
+    return f"'clip({inner},{m},max({m},{frame_var}-{size_var}-{m}))'"
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +439,32 @@ def _nearest_even(value):
     return max(2, int(math.floor(float(value) / 2.0 + 0.5)) * 2)
 
 
+def _blur_canvas(preset, info):
+    """(canvas_w, canvas_h, blur_radius) for blur fill, or None.
+
+    Shared with ``core.frame_geometry`` so the preview composes the same
+    canvas the export does.
+    """
+    target = _aspect_target(preset)
+    if target is None:
+        return None
+    sw, sh = info.get("width", 0), info.get("height", 0)
+    if sw <= 0 or sh <= 0:
+        return None
+    src_ratio = sw / sh
+    if abs(src_ratio - target) < 0.001:
+        return None
+    # Canvas: keep the constraining source dimension, derive the other
+    # from the target ratio. A 16:9 source going 9:16 keeps its height.
+    if src_ratio > target:
+        canvas_w, canvas_h = _even(sh * target), _even(sh)
+    else:
+        canvas_w, canvas_h = _even(sw), _even(sw / target)
+    # Blur strength scales with the canvas so 480p and 4K look alike.
+    radius = max(2, min(canvas_w, canvas_h) // 20)
+    return canvas_w, canvas_h, radius
+
+
 def _build_aspect_fill_blur(preset, info, explicit_crop):
     """Fit the source into a target aspect ratio over a blurred copy of itself.
 
@@ -404,25 +488,10 @@ def _build_aspect_fill_blur(preset, info, explicit_crop):
     """
     if explicit_crop:
         return None
-    try:
-        a, b = preset.split(":")
-        target = float(a) / float(b)
-    except (ValueError, ZeroDivisionError, AttributeError):
+    canvas = _blur_canvas(preset, info)
+    if canvas is None:
         return None
-    sw, sh = info.get("width", 0), info.get("height", 0)
-    if sw <= 0 or sh <= 0:
-        return None
-    src_ratio = sw / sh
-    if abs(src_ratio - target) < 0.001:
-        return None
-    # Canvas: keep the constraining source dimension, derive the other
-    # from the target ratio. A 16:9 source going 9:16 keeps its height.
-    if src_ratio > target:
-        canvas_w, canvas_h = _even(sh * target), _even(sh)
-    else:
-        canvas_w, canvas_h = _even(sw), _even(sw / target)
-    # Blur strength scales with the canvas so 480p and 4K look alike.
-    radius = max(2, min(canvas_w, canvas_h) // 20)
+    canvas_w, canvas_h, radius = canvas
     size = f"{canvas_w}:{canvas_h}"
     return (
         f"split=2[bfm][bfb];"
@@ -542,18 +611,23 @@ def _build_image_overlay_chain(image_layers, base_label, video_dur=None):
         # relative to video width"; a future pass could rebuild to
         # take video width via a separate computed fraction.
         scaled_label = f"ov{idx}s"
+        # The last step converts the RGBA sticker into the video's
+        # colour space with the HD matrix. Left to the overlay filter,
+        # that conversion used the SD matrix and tinted the sticker.
         parts.append(
             f"[{stream_idx}:v]"
             f"format=rgba,"
             f"scale=iw*{scale:.3f}:-1,"
-            f"colorchannelmixer=aa={opacity:.3f}"
+            f"colorchannelmixer=aa={opacity:.3f},"
+            f"{rgba_to_working_filter()}"
             f"[{scaled_label}]"
         )
 
         # Drag-positioned overlays carry explicit pixel coords that win
         # over the anchor. ``x`` / ``y`` come from the VideoPlayer drag
-        # handler in source-video coordinate space, so they go through
-        # the overlay filter directly without a scale transform.
+        # handler in layout-frame space, the same space this overlay
+        # runs in (before the final downscale), so they go through
+        # directly.
         drag_x = layer.get("x")
         drag_y = layer.get("y")
         x_expr, y_expr = _overlay_position_expr(
@@ -582,33 +656,60 @@ def _build_image_overlay_chain(image_layers, base_label, video_dur=None):
 # Full video filter chain assembly
 # ---------------------------------------------------------------------------
 
-def _assemble_video_filters(preset_name, info, text_layers, options):
+def _assemble_video_filters(preset_name, info, text_layers, options,
+                            include_scale=True):
     """Build the video filter chain in the right order.
 
-    Order: (aspect-crop) → crop → rotate → color-eq → speed → drawtext → scale.
+    Order: (aspect-crop) → crop → rotate → colour-normalise → color-eq
+    → speed → drawtext → scale.
 
     ``drawtext`` MUST come before ``scale`` so fontsize and x/y are
-    interpreted in source-frame pixels — that's what the UI preview uses,
-    so exports match 1:1. If ``scale`` came first (the old order), then on
+    interpreted in layout-frame pixels, the space the preview lays
+    captions out in. If ``scale`` came first (the old order), then on
     a 1920×1080 source with Medium preset (→720-wide), a custom position
     of ``x=960:y=540`` would land at pixel 960 of a 720-wide frame and
     overshoot the right edge.
+
+    ``include_scale=False`` leaves the final scale off, for callers that
+    compose image overlays first and scale afterwards (see
+    :func:`_build_final_scale`). Stickers placed before the scale land
+    where the preview shows them; placed after it, they came out up to
+    four times larger relative to the frame.
     """
+    from videokidnapper.core.frame_geometry import (
+        aspect_after_rotate, export_geometry,
+    )
+
     filters = []
     options = options or {}
+    color = build_normalize_filter(info)
+    state = {"color": color}
 
-    # Aspect preset is a second crop; `_build_aspect_crop` itself defers
-    # to any explicit crop, so putting aspect first is harmless. The
-    # "blur" fill mode swaps the crop for a fit-over-blurred-background
-    # composite at the same chain position.
-    aspect = options.get("aspect_preset")
-    if aspect and aspect != "Source":
+    def add_aspect(frame_info):
+        # Aspect preset is a second crop; `_build_aspect_crop` itself
+        # defers to any explicit crop. The "blur" fill mode swaps the
+        # crop for a fit-over-blurred-background composite at the same
+        # chain position.
+        aspect = options.get("aspect_preset")
+        if not aspect or aspect == "Source":
+            return
         if options.get("aspect_fill_mode") == "blur":
-            f = _build_aspect_fill_blur(aspect, info, options.get("crop"))
+            f = _build_aspect_fill_blur(aspect, frame_info, options.get("crop"))
+            if f and state["color"]:
+                # Blur fill scales and composites; do that on frames
+                # that are already in the working colour space.
+                filters.append(state["color"])
+                state["color"] = None
         else:
-            f = _build_aspect_crop(aspect, info, options.get("crop"))
+            f = _build_aspect_crop(aspect, frame_info, options.get("crop"))
         if f:
             filters.append(f)
+
+    # Turned 90°/270°, the frame's sides swap, so the aspect preset (which
+    # describes the output) is applied after the rotation.
+    rotate_first = aspect_after_rotate(options)
+    if not rotate_first:
+        add_aspect(info)
 
     f = _build_crop_filter(options.get("crop"), info)
     if f:
@@ -617,6 +718,17 @@ def _assemble_video_filters(preset_name, info, text_layers, options):
     f = _build_rotate_filter(options.get("rotate"))
     if f:
         filters.append(f)
+
+    if rotate_first:
+        add_aspect(_rotated_info(info))
+    color = state["color"]
+
+    # Colour normalisation (HDR tone mapping, full-range / SD-matrix
+    # conversion) runs after the pure geometry ops, so it touches only
+    # the pixels that survive the crop, and before anything that paints
+    # or grades pixels, so those work on the colours the viewer sees.
+    if color:
+        filters.append(color)
 
     # Color grade (eq=) runs after the geometric ops but before speed —
     # keeps the per-pixel pass working on already-cropped / rotated
@@ -629,21 +741,48 @@ def _assemble_video_filters(preset_name, info, text_layers, options):
     if f:
         filters.append(f)
 
-    # Drawtext at source-coord resolution — matches the preview exactly.
-    filters.extend(_build_text_filters(text_layers, fade=options.get("text_fade", 0.0)))
+    # Drawtext in layout-frame pixels, fitted inside the layout frame.
+    frame_w, frame_h = export_geometry(info, options).size
+    filters.extend(_build_text_filters(
+        text_layers, fade=options.get("text_fade", 0.0),
+        frame_w=frame_w or None, frame_h=frame_h or None,
+    ))
 
-    # Scale LAST so text and frame are resized together. With an aspect
-    # preset the output must be an exact box (see _build_aspect_scale);
-    # otherwise the width-only scale preserves whatever ratio the source
-    # and any explicit crop produced.
-    if aspect and aspect != "Source":
-        f = _build_aspect_scale(preset_name, aspect, info)
-    else:
-        f = _build_scale_filter(preset_name, info["width"])
-    if f:
-        filters.append(f)
+    if include_scale:
+        f = _build_final_scale(preset_name, info, options)
+        if f:
+            filters.append(f)
 
     return filters
+
+
+def _rotated_info(info):
+    """``info`` with width and height swapped, for a 90°/270° turn."""
+    rotated = dict(info)
+    rotated["width"], rotated["height"] = info.get("height", 0), info.get("width", 0)
+    return rotated
+
+
+def _build_final_scale(preset_name, info, options):
+    """The last step: downscale the layout frame to the preset's size.
+
+    With an aspect preset the output must be an exact box (see
+    _build_aspect_scale); otherwise a width-only scale preserves whatever
+    ratio the source and any crop produced. The width compared against
+    the preset is the layout frame's, not the source's, so a crop is
+    never blown up past its own resolution.
+    """
+    from videokidnapper.core.frame_geometry import export_geometry
+
+    from videokidnapper.core.frame_geometry import aspect_after_rotate
+
+    options = options or {}
+    aspect = options.get("aspect_preset")
+    if aspect and aspect != "Source":
+        frame_info = _rotated_info(info) if aspect_after_rotate(options) else info
+        return _build_aspect_scale(preset_name, aspect, frame_info)
+    layout_w = export_geometry(info, options).size[0] or info.get("width")
+    return _build_scale_filter(preset_name, layout_w)
 
 
 # ---------------------------------------------------------------------------

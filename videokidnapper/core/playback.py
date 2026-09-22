@@ -353,6 +353,15 @@ class AudioVideoPlayer:
         output_params = []
         if end is not None:
             output_params += ["-t", str(max(0.01, float(end) - float(start)))]
+        # Same colour chain as the export and the still preview, so HDR
+        # footage plays back with the colours it will export with.
+        try:
+            from videokidnapper.core.ffmpeg.probe import preview_color_filter
+            vf = preview_color_filter(self.video_path)
+        except Exception:
+            vf = None
+        if vf:
+            output_params += ["-vf", vf]
 
         try:
             reader = imageio_ffmpeg.read_frames(

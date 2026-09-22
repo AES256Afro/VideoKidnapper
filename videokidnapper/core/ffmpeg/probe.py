@@ -62,7 +62,13 @@ def get_video_info(input_path):
     video_stream = None
     audio_stream = None
     for s in data.get("streams", []):
-        if s.get("codec_type") == "video" and video_stream is None:
+        # Embedded cover art (an MP3/M4A thumbnail, a podcast's episode
+        # image) is reported as a video stream, and some files list it
+        # first. Taking it would describe a 600x600 still instead of the
+        # real picture: wrong size for every geometry decision and the
+        # wrong colour tags for the colour pipeline.
+        if (s.get("codec_type") == "video" and video_stream is None
+                and not (s.get("disposition") or {}).get("attached_pic")):
             video_stream = s
         elif s.get("codec_type") == "audio" and audio_stream is None:
             audio_stream = s
@@ -99,7 +105,23 @@ def get_video_info(input_path):
         "height": height,
         "fps": fps,
         "has_audio": audio_stream is not None,
+        # Colour description of the source, consumed by
+        # videokidnapper.core.ffmpeg.color. Absent or "unknown" values
+        # are normal (plenty of files are untagged) and handled there.
+        "pix_fmt": _stream_str(video_stream, "pix_fmt"),
+        "color_range": _stream_str(video_stream, "color_range"),
+        "color_space": _stream_str(video_stream, "color_space"),
+        "color_transfer": _stream_str(video_stream, "color_transfer"),
+        "color_primaries": _stream_str(video_stream, "color_primaries"),
     }
+
+
+def _stream_str(stream, key):
+    """``stream[key]`` as a lower-case string, or ``""`` when absent."""
+    if not stream:
+        return ""
+    value = stream.get(key)
+    return str(value).strip().lower() if value is not None else ""
 
 
 def _display_rotation(stream):
@@ -138,11 +160,23 @@ def extract_frame(input_path, timestamp_seconds):
         "-ss", str(timestamp_seconds),
         "-i", str(input_path),
         "-vframes", "1",
+    ]
+    vf = preview_color_filter(input_path)
+    if vf:
+        cmd += ["-vf", vf]
+    cmd += [
         "-f", "image2pipe",
         "-vcodec", "png",
         "-",
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=10, **_run_kwargs())
+    if (result.returncode != 0 or not result.stdout) and vf:
+        from videokidnapper.core.ffmpeg import color
+        if color.uses_tonemap(vf) and color.disable_tonemap():
+            # zscale rejected the HDR conversion on this ffmpeg build;
+            # show the frame with the plain conversion instead of none.
+            _preview_filter_cache.clear()
+            return extract_frame(input_path, timestamp_seconds)
     if result.returncode != 0 or not result.stdout:
         return None
     return Image.open(io.BytesIO(result.stdout))
@@ -198,3 +232,38 @@ def extract_waveform(input_path, buckets=400, duration=None):
         peak = max(abs(s) for s in chunk) / 32767.0
         peaks.append(min(1.0, peak))
     return peaks
+
+
+_preview_filter_cache = {}
+
+
+def preview_color_filter(input_path):
+    """The colour chain the preview decodes ``input_path`` through.
+
+    The export's colour normalisation plus an RGB conversion with the
+    right matrix (see ``core.ffmpeg.color``), so the preview shows the
+    colours the export will have. HDR phone footage in particular used
+    to preview as flat and dark as it exported. Cached per file version:
+    scrubbing asks for this on every frame, and a probe per frame would
+    double the cost of each one. Returns ``None`` if the file can't be
+    probed, and the caller decodes the old way.
+    """
+    import os
+
+    from videokidnapper.core.ffmpeg.color import preview_filter
+
+    try:
+        st = os.stat(input_path)
+        key = (str(input_path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+    if key in _preview_filter_cache:
+        return _preview_filter_cache[key]
+    try:
+        vf = preview_filter(get_video_info(input_path))
+    except Exception:
+        vf = None
+    if len(_preview_filter_cache) > 64:
+        _preview_filter_cache.clear()
+    _preview_filter_cache[key] = vf
+    return vf
