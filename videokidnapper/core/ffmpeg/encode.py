@@ -162,9 +162,11 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
         )
         if overlay_chain:
             fc = f"[0:v]{base_chain}[vbase];{overlay_chain}"
-            if final_scale:
-                fc += f";[{final_label}]{final_scale}[vout]"
-                final_label = "vout"
+            # Final scale, then label the frames as the working colour
+            # space (see the -vf branch below for why).
+            tail = [final_scale] if final_scale else []
+            fc += f";[{final_label}]{','.join(tail + [TAG_WORKING_FILTER])}[vout]"
+            final_label = "vout"
             cmd += [
                 "-filter_complex", fc,
                 "-map", f"[{final_label}]",
@@ -176,9 +178,13 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
             # Every overlay layer had invalid timing and was dropped, so
             # there's nothing to compose. Don't emit a filter_complex with
             # a dangling ``;`` (ffmpeg rejects it) — fall back to -vf.
-            cmd += ["-vf", ",".join(filters)]
-    elif filters:
-        cmd += ["-vf", ",".join(filters)]
+            cmd += ["-vf", ",".join(filters + [TAG_WORKING_FILTER])]
+    else:
+        # Label the frames as BT.709 limited. ffmpeg 7 and later take the
+        # file's colour tags from the frames and ignore -colorspace and
+        # friends when the frames say "unspecified", which left SDR
+        # exports untagged. The output flags stay for older versions.
+        cmd += ["-vf", ",".join(filters + [TAG_WORKING_FILTER])]
     cmd += ["-movflags", "+faststart", str(output_path)]
 
     retry = False
@@ -391,6 +397,7 @@ def frames_to_video(frame_dir, fps, preset_name, output_path,
     # the default conversion used the SD matrix, which players showing
     # HD video then decoded with the HD one, shifting every colour.
     filters.append("scale=out_color_matrix=bt709:out_range=tv")
+    filters.append(TAG_WORKING_FILTER)
 
     cmd = [
         _get_ffmpeg(), "-y",

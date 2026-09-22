@@ -118,6 +118,12 @@ def test_tracker_boxes_map_back_to_source(player):
     assert player.layout_rect_to_source(0, 0, 50, 40) == (656, 0, 706, 40)
 
 
+def _same_place(a, b, tol=2):
+    """Ink boxes agree. ffmpeg 6.1+ places glyphs at sub-pixel offsets,
+    so an edge can rasterise one pixel over; layout errors are tens."""
+    return all(abs(p - q) <= tol for p, q in zip(a, b))
+
+
 @pytest.mark.skipif(
     __import__("shutil").which("ffmpeg") is None, reason="ffmpeg not on PATH")
 @pytest.mark.parametrize("position", ["(w-tw)/2:20", "(w-tw)/2:h-th-20"])
@@ -154,7 +160,8 @@ def test_wrapped_caption_lands_on_the_same_pixels(player, tmp_path, position):
         ys, xs = m.any(1).nonzero()[0], m.any(0).nonzero()[0]
         return xs.min(), ys.min(), xs.max(), ys.max()
 
-    assert ink_box(np.asarray(preview.convert("L"))) == ink_box(exported)
+    got, want = ink_box(np.asarray(preview.convert("L"))), ink_box(exported)
+    assert _same_place(got, want), (got, want)
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +217,7 @@ def test_dragged_caption_is_kept_on_screen(player, tmp_path, position):
     player.layers.append(layer)
     preview = player._apply_text_overlay(Image.new("RGB", (1920, 1080)), 0.5)
     px = _ink(preview.convert("L"))
-    assert all(abs(a - b) <= 2 for a, b in zip(px, exported)), (px, exported)
+    assert _same_place(px, exported), (px, exported)
 
 
 @need_ffmpeg
@@ -222,7 +229,7 @@ def test_too_tall_caption_shrinks_to_fit(player, tmp_path):
     assert _inside(exported), exported
     player.layers.append(layer)
     preview = player._apply_text_overlay(Image.new("RGB", (1920, 1080)), 0.5)
-    assert _ink(preview.convert("L")) == exported
+    assert _same_place(_ink(preview.convert("L")), exported)
 
 
 @need_ffmpeg

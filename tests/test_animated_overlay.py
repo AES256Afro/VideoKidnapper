@@ -106,7 +106,10 @@ def test_ffmpeg_readable_animations_use_stream_loop(stickers, kind):
     media = probe_overlay(stickers[kind])
     assert media.is_animated is True
     assert media.n_frames > 1
-    assert media.input_args() == ["-stream_loop", "-1"]
+    # APNG loops in its own demuxer: -stream_loop hangs current ffmpeg
+    # on it (see OverlayMedia.input_args).
+    expected = ["-ignore_loop", "0"] if kind == "apng" else ["-stream_loop", "-1"]
+    assert media.input_args() == expected
     assert media.needs_transcode is False
 
 

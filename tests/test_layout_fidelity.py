@@ -278,7 +278,7 @@ def test_caption_too_tall_for_the_frame_is_shrunk():
     from PIL import ImageFont
 
     from videokidnapper.ui.text_layers import _find_font_path
-    from videokidnapper.utils.text_wrap import drawtext_vmetrics, fit_layer_text
+    from videokidnapper.utils.text_wrap import drawtext_layout, fit_layer_text
 
     path = _find_font_path("Arial")
     text, font, size = fit_layer_text(
@@ -286,5 +286,5 @@ def test_caption_too_tall_for_the_frame_is_shrunk():
         lambda s: ImageFont.truetype(path, s), 220, 1920, 1080)
     assert size < 220
     lines = text.split("\n")
-    assert drawtext_vmetrics(font, text)[2] * len(lines) <= 1080 - 40
+    assert drawtext_layout(font, text)[2] <= 1080 - 40
     assert max(font.getlength(line) for line in lines) <= 1920 - 40
