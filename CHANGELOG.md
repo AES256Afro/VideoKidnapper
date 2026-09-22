@@ -22,6 +22,9 @@ All notable changes to this project are documented here. The format is based on 
 - **Ultra quality now means maximum quality.** With the encoder on Auto, Ultra exports used the Mac's hardware encoder, which scored noticeably worse on grainy footage. Auto now uses the software encoder for Ultra. Other presets keep hardware speed, and an encoder you pick by name is always used.
 - **Crops are no longer upscaled.** A crop narrower than the quality preset's width was stretched up to that width. It now keeps its own resolution.
 - **Cover art could be mistaken for the video.** Files with an embedded thumbnail listed first were measured by the thumbnail's size and colour. Cover art is now skipped.
+- **Running from source on a Mac could not download anything.** Python from python.org ships without root certificates, so on such a Python every HTTPS connection failed: the FFmpeg download, yt-dlp, the update check. The app now uses certifi's root certificates when the interpreter has none. Only macOS is touched, only when there is no store, and a certificate path you set yourself is always respected.
+- **FFmpeg now installs itself on a Mac.** The setup screen offered "Install and continue" on every system and then failed on macOS, because the automatic install only existed for Windows, and the reason was hidden behind "Open Setup". macOS now downloads the same static build the Mac app bundles and checks it against digests pinned in the source before installing. Where automatic install still isn't possible (Linux), the screen shows the install command instead of a button that can't work, and any failure now says why.
+
 
 ## [1.8.3] — 2026-09-08
 
