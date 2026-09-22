@@ -26,8 +26,9 @@ from videokidnapper.core.ffmpeg._internals import (
     _mkstemp_path, _parse_progress, _run_kwargs, pick_video_encoder,
     was_cancelled,
 )
+from videokidnapper.core.ffmpeg.color import OUTPUT_COLOR_ARGS, TAG_WORKING_FILTER
 from videokidnapper.core.ffmpeg.filters import (
-    _assemble_video_filters, _build_audio_speed,
+    _assemble_video_filters, _build_audio_speed, _build_final_scale,
     _build_image_overlay_chain, _build_palettegen_filter,
     _build_paletteuse_filter, _build_scale_filter, _gif_loop_flag,
 )
@@ -40,6 +41,21 @@ from videokidnapper.utils.animated_media import (
 # ---------------------------------------------------------------------------
 # Trim entry points — the app's primary export paths
 # ---------------------------------------------------------------------------
+
+def _encoder_preference(preset_name, options):
+    """Encoder preference for an export: ``"auto"`` means speed, mostly.
+
+    Ultra is the "keep it as close to the source as possible" preset, and
+    there the hardware encoders fall short: on grainy footage macOS's
+    VideoToolbox measured SSIM 0.907 against libx264's 0.969 at the same
+    preset. So Auto picks libx264 for Ultra. An encoder the user chose
+    by name is always honoured.
+    """
+    preference = (options or {}).get("hw_encoder", "auto")
+    if preset_name == "Ultra" and preference == "auto":
+        return "off"
+    return preference
+
 
 def trim_to_video(input_path, start, end, preset_name, output_path,
                   text_layers=None, image_layers=None,
@@ -82,14 +98,14 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
             return None
         return output_path
 
-    filters = _assemble_video_filters(preset_name, info, text_layers, options)
-
     # If there are image overlays we switch from -vf to -filter_complex
     # and add one -i per image. The existing video filter chain becomes
-    # the first stage; the overlay chain composes on top of its output.
+    # the first stage; the overlay chain composes on top of its output,
+    # and the final downscale runs last, after the overlays.
     valid_images = [L for L in (image_layers or []) if (L or {}).get("path")]
+    filters = _assemble_video_filters(preset_name, info, text_layers, options)
 
-    encoder = pick_video_encoder(options.get("hw_encoder", "auto"))
+    encoder = pick_video_encoder(_encoder_preference(preset_name, options))
     cmd = [
         _get_ffmpeg(), "-y",
         "-ss", str(start),
@@ -116,6 +132,9 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
         "-c:v", encoder,
     ]
     cmd += _encoder_quality_args(encoder, preset["video_crf"])
+    # 8-bit BT.709 limited range, stated explicitly: plays everywhere,
+    # and no player has to guess the colour from the frame size.
+    cmd += list(OUTPUT_COLOR_ARGS)
 
     if mute_audio or not info.get("has_audio"):
         cmd += ["-an"]
@@ -127,13 +146,24 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
 
     if valid_images:
         # filter_complex path: pipe the video chain into a labelled
-        # output, then overlay each image on top.
-        base_chain = ",".join(filters) if filters else "null"
+        # output, overlay each image on top, then downscale. Overlays go
+        # BEFORE the scale so a sticker's size and dragged position are
+        # in the same layout-frame pixels the preview uses. After the
+        # scale (the old order) a sticker came out up to 4x larger
+        # relative to the frame at the Low preset.
+        pre_scale = _assemble_video_filters(
+            preset_name, info, text_layers, options, include_scale=False,
+        )
+        final_scale = _build_final_scale(preset_name, info, options)
+        base_chain = ",".join(pre_scale) if pre_scale else "null"
         overlay_chain, final_label, _inputs = _build_image_overlay_chain(
             valid_images, base_label="vbase", video_dur=duration,
         )
         if overlay_chain:
             fc = f"[0:v]{base_chain}[vbase];{overlay_chain}"
+            if final_scale:
+                fc += f";[{final_label}]{final_scale}[vout]"
+                final_label = "vout"
             cmd += [
                 "-filter_complex", fc,
                 "-map", f"[{final_label}]",
@@ -247,7 +277,17 @@ def trim_to_gif(input_path, start, end, preset_name, output_path,
     palette_path = _mkstemp_path(".png")
 
     filters = [f"fps={preset['fps']}"]
-    filters.extend(_assemble_video_filters(preset_name, info, text_layers, options))
+    filters.extend(_assemble_video_filters(
+        preset_name, info, text_layers, options, include_scale=False,
+    ))
+    # Label the frames with their real colour space before the final
+    # scale, which is where ffmpeg converts to RGB for the palette.
+    # Untagged video was otherwise converted with the SD matrix,
+    # shifting every hue.
+    filters.append(TAG_WORKING_FILTER)
+    final_scale = _build_final_scale(preset_name, info, options)
+    if final_scale:
+        filters.append(final_scale)
     filter_str = ",".join(filters)
 
     palettegen = _build_palettegen_filter(
@@ -321,6 +361,10 @@ def frames_to_video(frame_dir, fps, preset_name, output_path,
     scale = _build_scale_filter(preset_name)
     if scale:
         filters.append(scale)
+    # Screen frames are RGB. Convert with the HD matrix and say so;
+    # the default conversion used the SD matrix, which players showing
+    # HD video then decoded with the HD one, shifting every colour.
+    filters.append("scale=out_color_matrix=bt709:out_range=tv")
 
     cmd = [
         _get_ffmpeg(), "-y",
@@ -330,7 +374,7 @@ def frames_to_video(frame_dir, fps, preset_name, output_path,
         "-c:v", "libx264",
         "-crf", str(preset["video_crf"]),
         "-preset", "medium",
-        "-pix_fmt", "yuv420p",
+        *OUTPUT_COLOR_ARGS,
     ]
     if filters:
         cmd += ["-vf", ",".join(filters)]

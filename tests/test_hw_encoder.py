@@ -143,3 +143,14 @@ def test_fade_alpha_expr_returns_expression():
     expr = ffmpeg_backend._fade_alpha_expr(1, 5, 0.5)
     assert expr is not None
     assert "if(" in expr
+
+
+def test_auto_prefers_quality_at_ultra():
+    """Ultra is the near-lossless preset; Auto must not trade it for speed."""
+    from videokidnapper.core.ffmpeg.encode import _encoder_preference
+    assert _encoder_preference("Ultra", {"hw_encoder": "auto"}) == "off"
+    assert _encoder_preference("Ultra", {}) == "off"
+    assert _encoder_preference("High", {"hw_encoder": "auto"}) == "auto"
+    # A named encoder is the user's explicit choice and always wins.
+    assert _encoder_preference("Ultra", {"hw_encoder": "h264_videotoolbox"}) \
+        == "h264_videotoolbox"
