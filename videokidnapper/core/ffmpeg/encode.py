@@ -26,6 +26,7 @@ from videokidnapper.core.ffmpeg._internals import (
     _mkstemp_path, _parse_progress, _run_kwargs, pick_video_encoder,
     was_cancelled,
 )
+from videokidnapper.core.ffmpeg import color as _color
 from videokidnapper.core.ffmpeg.color import OUTPUT_COLOR_ARGS, TAG_WORKING_FILTER
 from videokidnapper.core.ffmpeg.filters import (
     _assemble_video_filters, _build_audio_speed, _build_final_scale,
@@ -180,6 +181,7 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
         cmd += ["-vf", ",".join(filters)]
     cmd += ["-movflags", "+faststart", str(output_path)]
 
+    retry = False
     try:
         process = subprocess.Popen(
             cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,
@@ -192,13 +194,26 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
             # worth dumping a full error report for.
             if not was_cancelled(cancel_event):
                 _log_ffmpeg_failure(cmd, process.returncode, tail)
-            return None
-        return output_path
+                if _color.uses_tonemap(cmd) and _color.disable_tonemap():
+                    # This ffmpeg's zscale rejected the HDR conversion.
+                    # Export again with the plain conversion rather
+                    # than hand the user nothing.
+                    retry = True
+            if not retry:
+                return None
+        else:
+            return output_path
     finally:
         # Any WebP sticker we transcoded to a temp GIF. ffmpeg has read
         # it by now (success, failure, or cancel), so it always goes.
         for temp_path in overlay_temps:
             cleanup_transcode(temp_path)
+    return trim_to_video(
+        input_path, start, end, preset_name, output_path,
+        text_layers=text_layers, image_layers=image_layers,
+        progress_callback=progress_callback, cancel_event=cancel_event,
+        options=options,
+    )
 
 
 def trim_to_gif(input_path, start, end, preset_name, output_path,
@@ -335,12 +350,23 @@ def trim_to_gif(input_path, start, end, preset_name, output_path,
         if process.returncode != 0:
             # A user Stop kills ffmpeg (rc -9); that is not a failure
             # worth dumping a full error report for.
-            if not was_cancelled(cancel_event):
-                _log_ffmpeg_failure(cmd2, process.returncode, tail)
-            return None
-        return output_path
+            if was_cancelled(cancel_event):
+                return None
+            _log_ffmpeg_failure(cmd2, process.returncode, tail)
+            if not (_color.uses_tonemap(filter_str) and _color.disable_tonemap()):
+                return None
+            # This ffmpeg's zscale rejected the HDR conversion: retry
+            # with the plain conversion (see color.disable_tonemap).
+        else:
+            return output_path
     finally:
         palette_path.unlink(missing_ok=True)
+    return trim_to_gif(
+        input_path, start, end, preset_name, output_path,
+        text_layers=text_layers, image_layers=image_layers,
+        progress_callback=progress_callback, cancel_event=cancel_event,
+        options=options,
+    )
 
 
 # ---------------------------------------------------------------------------

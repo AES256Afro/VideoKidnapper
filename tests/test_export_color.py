@@ -33,7 +33,11 @@ CARD = (f"smptehdbars=s={W}x{H // 2}:r=24:d=1.5[a];"
 
 
 def _run(cmd):
-    subprocess.run(cmd, check=True, capture_output=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        # Surface ffmpeg's own message; CI logs are useless without it.
+        raise AssertionError(
+            f"ffmpeg failed ({result.returncode}): {result.stderr[-800:]}\n{cmd}")
 
 
 def _has_hevc():
@@ -70,8 +74,10 @@ def sources(tmp_path_factory):
             # npl=203 on the step that writes the HDR transfer: SDR white
             # lands on BT.2408 reference white, as camera footage does.
             _run(["ffmpeg", "-v", "error", "-y", "-i", str(sdr), "-vf",
-                  "zscale=min=709:pin=709:tin=709:rin=limited:t=linear,format=gbrpf32le,"
-                  f"zscale=tin=linear:pin=709:p=2020:t={trc}:npl=203:m=2020_ncl:r=limited,"
+                  "zscale=min=709:pin=709:tin=709:rin=limited"
+                  ":t=linear:m=gbr:p=709:r=full,format=gbrpf32le,"
+                  "zscale=min=gbr:tin=linear:pin=709:rin=full"
+                  f":p=2020:t={trc}:npl=203:m=2020_ncl:r=limited,"
                   "format=yuv420p10le",
                   "-c:v", "libx265", "-x265-params", "log-level=error", "-crf", "8",
                   "-colorspace", "bt2020nc", "-color_primaries", "bt2020",
@@ -167,3 +173,22 @@ def test_sticker_keeps_its_colour(sources, tmp_path):
     frame = np.frombuffer(raw, np.uint8).reshape(H, W, 3).astype(float)
     patch = frame[H // 2 - 40:H // 2 + 40, W // 2 - 40:W // 2 + 40].mean((0, 1))
     assert np.abs(patch - [220, 30, 30]).max() < 8, patch
+
+
+@pytest.mark.parametrize("fmt", ["mp4", "gif"])
+def test_export_survives_an_ffmpeg_whose_zscale_rejects_the_chain(
+        sources, tmp_path, monkeypatch, fmt):
+    """zimg differs between ffmpeg builds. If this build's zscale refuses
+    the HDR conversion, export with the plain conversion instead of
+    failing outright."""
+    if "hlg" not in sources:
+        pytest.skip("this ffmpeg can't make/tone-map HDR test footage")
+    # A chain zscale is guaranteed to reject stands in for such a build.
+    monkeypatch.setattr(color, "_tonemap_chain",
+                        lambda *_a: "zscale=tin=linear:t=bogus,format=yuv420p")
+    monkeypatch.setattr(color, "_tonemap_broken", False)
+    fn = trim_to_video if fmt == "mp4" else trim_to_gif
+    out = fn(str(sources["hlg"]), 0.0, 1.0, "Low", str(tmp_path / f"out.{fmt}"),
+             options={"hw_encoder": "off"})
+    assert out and (tmp_path / f"out.{fmt}").stat().st_size > 0
+    assert color._tonemap_broken, "the failing chain should be switched off"

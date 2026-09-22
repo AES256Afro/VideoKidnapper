@@ -170,6 +170,13 @@ def extract_frame(input_path, timestamp_seconds):
         "-",
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=10, **_run_kwargs())
+    if (result.returncode != 0 or not result.stdout) and vf:
+        from videokidnapper.core.ffmpeg import color
+        if color.uses_tonemap(vf) and color.disable_tonemap():
+            # zscale rejected the HDR conversion on this ffmpeg build;
+            # show the frame with the plain conversion instead of none.
+            _preview_filter_cache.clear()
+            return extract_frame(input_path, timestamp_seconds)
     if result.returncode != 0 or not result.stdout:
         return None
     return Image.open(io.BytesIO(result.stdout))

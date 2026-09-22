@@ -106,10 +106,36 @@ def available_filters():
     return _filters_cache
 
 
+_tonemap_broken = False
+
+
 def can_tonemap(filters=None):
     """True when HDR can be converted properly on this ffmpeg build."""
+    if _tonemap_broken:
+        return False
     filters = available_filters() if filters is None else filters
     return "zscale" in filters and "tonemap" in filters
+
+
+def uses_tonemap(filter_text):
+    """True when an ffmpeg command or filter string runs the tone mapper."""
+    return "zscale=" in str(filter_text)
+
+
+def disable_tonemap():
+    """Stop using zscale/tonemap for the rest of this session.
+
+    Called when a command using them fails. zimg (the library behind
+    zscale) differs between ffmpeg builds and some reject conversions
+    others accept. Falling back to a plain 8-bit conversion keeps the
+    export working, with flatter colour, instead of failing it. Returns
+    True the first time, so the caller retries exactly once.
+    """
+    global _tonemap_broken
+    if _tonemap_broken:
+        return False
+    _tonemap_broken = True
+    return True
 
 
 def describe(info):
@@ -155,18 +181,23 @@ def needs_normalize(info):
 
 def _tonemap_chain(transfer, color_range):
     zin = "full" if color_range == "pc" else "limited"
+    # Every property of every stage is spelled out. tonemap does not pass
+    # the transfer through (a zscale that guesses its input is how you get
+    # dark video), and newer zimg builds refuse RGB frames that are still
+    # labelled with a YUV matrix, so the RGB stages say matrix=gbr and
+    # full range explicitly.
     return (
-        # 1. HDR signal → linear light, with reference white = 1.0.
+        # 1. HDR signal → linear-light RGB, with reference white = 1.0.
         f"zscale=tin={transfer}:min=2020_ncl:pin=2020:rin={zin}"
-        f":t=linear:npl={_REFERENCE_WHITE_NITS},format=gbrpf32le,"
-        # 2. BT.2020 → BT.709 primaries, still linear.
-        "zscale=tin=linear:pin=2020:t=linear:p=709,"
+        f":t=linear:npl={_REFERENCE_WHITE_NITS}:m=gbr:r=full,format=gbrpf32le,"
+        # 2. BT.2020 → BT.709 primaries, still linear RGB.
+        "zscale=tin=linear:min=gbr:pin=2020:rin=full"
+        ":t=linear:m=gbr:p=709:r=full,"
         # 3. Roll highlights above reference white off towards the peak.
         f"tonemap=tonemap=mobius:param=0.9:desat=0:peak={_PEAK},"
-        # 4. Back to gamma-encoded 8-bit BT.709. Every input property is
-        #    spelled out: tonemap does not pass the transfer through, and
-        #    a zscale that guesses its input is how you get dark video.
-        "zscale=tin=linear:pin=709:t=709:m=709:r=limited,format=yuv420p"
+        # 4. Back to gamma-encoded 8-bit BT.709, limited range.
+        "zscale=tin=linear:min=gbr:pin=709:rin=full:t=709:m=709:p=709:r=limited,"
+        "format=yuv420p"
     )
 
 
