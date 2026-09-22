@@ -849,26 +849,48 @@ class App(ctk.CTk):
         self._setup_btnrow = ctk.CTkFrame(self._setup_frame, fg_color="transparent")
         self._setup_btnrow.pack()
 
-        self._setup_detail = ctk.CTkLabel(
-            self._setup_frame,
-            text=(
+        # Offer the automatic install only where it can actually work.
+        # It used to be offered on every platform and then fail on macOS
+        # and Linux with the reason hidden behind "Open Setup".
+        needs_manual_ffmpeg = (
+            "ffmpeg" in missing and not prereq_check.can_auto_install_ffmpeg()
+        )
+        if needs_manual_ffmpeg:
+            command = prereq_check.build_install_commands(
+                missing_ffmpeg=True, missing_pip=[])[0]
+            detail = (
+                "Automatic FFmpeg install is not available on this system. "
+                f"Install it with:\n{command}\nthen check again."
+            )
+        elif "ffmpeg" in missing:
+            detail = (
                 "Nothing downloads until you approve. FFmpeg comes from "
-                f"{prereq_check.FFMPEG_DOWNLOAD_SOURCE}, is checked with the "
-                "publisher's SHA-256 digest, and installs without admin access."
-                if "ffmpeg" in missing else
+                f"{prereq_check.ffmpeg_download_source()}, is checked "
+                "against its SHA-256 digest, and installs without admin access."
+            )
+        else:
+            detail = (
                 "Nothing installs until you approve. Python packages use this "
                 "Python installation and do not require admin access."
-            ),
+            )
+        self._setup_detail = ctk.CTkLabel(
+            self._setup_frame, text=detail,
             font=T.font(T.SIZE_SM), text_color=T.TEXT_DIM,
             justify="center", wraplength=520,
         )
         self._setup_detail.pack(pady=(10, 0), before=self._setup_btnrow)
 
         from videokidnapper.ui.theme import button
-        button(
-            self._setup_btnrow, "Install and continue", variant="primary",
-            width=180, command=lambda: self._confirm_setup_install(missing),
-        ).pack(side="left", padx=4)
+        if needs_manual_ffmpeg:
+            button(
+                self._setup_btnrow, "Check again", variant="primary",
+                width=150, command=self._recheck_setup,
+            ).pack(side="left", padx=4)
+        else:
+            button(
+                self._setup_btnrow, "Install and continue", variant="primary",
+                width=180, command=lambda: self._confirm_setup_install(missing),
+            ).pack(side="left", padx=4)
         button(
             self._setup_btnrow, "Review details", variant="secondary",
             width=140, command=self._open_setup_dialog,
@@ -877,6 +899,16 @@ class App(ctk.CTk):
             self._setup_btnrow, "Exit", variant="ghost",
             width=80, command=self.destroy,
         ).pack(side="left", padx=4)
+
+    def _recheck_setup(self):
+        """The user installed something by hand: look again."""
+        from videokidnapper.utils import prereq_check
+        if not prereq_check.missing_required():
+            self._finish_setup_and_launch()
+            return
+        self._setup_frame.destroy()
+        self._setup_frame = None
+        self._show_setup_landing()
 
     def _confirm_setup_install(self, missing):
         for widget in self._setup_btnrow.winfo_children():
@@ -981,12 +1013,17 @@ class App(ctk.CTk):
     def _setup_install_failed(self, failures):
         from videokidnapper.ui.theme import button
         names = ", ".join(k for k, _ in failures)
+        # Say why. The reason used to be visible only inside the Setup
+        # dialog's console, which most people never opened.
+        reason = str(failures[0][1] or "").strip()
+        if len(reason) > 220:
+            reason = reason[:217] + "..."
         self._setup_icon.configure(text="⚠", text_color=T.WARN)
         self._setup_title.configure(text="Couldn't finish setup")
         self._setup_msg.configure(
             text=f"Automatic install failed for: {names}.\n"
-                 "Open Setup to see the details and try the advanced options, "
-                 "or retry.",
+                 + (f"{reason}\n" if reason else "")
+                 + "Open Setup for the full log and other options, or retry.",
             text_color=T.TEXT_MUTED,
         )
         for w in self._setup_btnrow.winfo_children():
