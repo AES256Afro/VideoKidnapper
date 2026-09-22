@@ -158,6 +158,11 @@ def main():
     Any CLI argument (including ``--help`` / ``-h`` / ``--version``)
     routes through argparse; a bare launch opens the GUI.
     """
+    # Before anything can reach the network: a python.org Python on
+    # macOS has no certificate store, see utils.certs.
+    from videokidnapper.utils.certs import ensure_ca_bundle
+    ensure_ca_bundle()
+
     argv = sys.argv[1:]
     if argv:
         args = _parse_args(argv)
