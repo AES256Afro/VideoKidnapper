@@ -77,6 +77,16 @@ class VideoPlayer(ctk.CTkFrame):
         self._crop_change_cb = None
         self._last_frame_rect = None  # (cx, cy, dw, dh, fw, fh) for mapping canvas↔source
 
+        # Layout space: the exported frame before the final downscale,
+        # where captions and stickers live (see core.frame_geometry). In
+        # the context view the displayed image is the whole source and
+        # the layout frame is a window onto it at ``_layout_offset``; in
+        # the output view the displayed image IS the layout frame.
+        self._export_options_provider = None
+        self._geometry = None
+        self._layout_offset = (0, 0)
+        self._layout_size = (0, 0)
+
         # Text-layer drag state. `_text_bboxes` is rebuilt on each overlay
         # render so hit-testing uses the exact rendered position.
         self._text_bboxes = []        # [(index, src_x1, src_y1, src_x2, src_y2)]
@@ -152,11 +162,51 @@ class VideoPlayer(ctk.CTkFrame):
     def get_text_source_bbox(self, index):
         """Source-pixel ``(x1, y1, x2, y2)`` of a text layer as last
         rendered, or None. Feeds auto-tracking: the tracked region is
-        the patch of video currently under the caption."""
+        the patch of video currently under the caption. The caption is
+        rendered in layout space, so the box is mapped back through the
+        export geometry to the source video the tracker reads."""
         for idx, x1, y1, x2, y2 in self._text_bboxes:
             if idx == index:
-                return (x1, y1, x2, y2)
+                return tuple(int(round(v)) for v in
+                             self.layout_rect_to_source(x1, y1, x2, y2))
         return None
+
+    def set_export_options_provider(self, provider):
+        """``provider() -> dict`` of export options (aspect, rotate, crop).
+
+        With it, the preview shows the frame the export will produce, so
+        captions and stickers are placed, sized and wrapped exactly as
+        they will come out.
+        """
+        self._export_options_provider = provider
+
+    def _current_geometry(self, frame_size):
+        from videokidnapper.core.frame_geometry import export_geometry
+
+        options = {}
+        if self._export_options_provider:
+            try:
+                options = dict(self._export_options_provider() or {})
+            except Exception:
+                options = {}
+        # The live crop rect: settings only learn it on mouse release.
+        options["crop"] = self._crop_rect if self._crop_mode else None
+        if self._crop_mode:
+            # The crop tool is drawn on the unrotated source, so show that.
+            options["rotate"] = 0
+        w, h = frame_size
+        return export_geometry({"width": w, "height": h}, options)
+
+    def layout_rect_to_source(self, x1, y1, x2, y2):
+        """Map a layout-space rectangle to source pixels (for tracking)."""
+        if self._geometry is None:
+            return x1, y1, x2, y2
+        return self._geometry.layout_rect_to_source(x1, y1, x2, y2)
+
+    def source_rect_to_layout(self, x1, y1, x2, y2):
+        if self._geometry is None:
+            return x1, y1, x2, y2
+        return self._geometry.source_rect_to_layout(x1, y1, x2, y2)
 
     def refresh_overlay(self):
         """Re-render the current frame with latest text + image overlays."""
@@ -335,20 +385,41 @@ class VideoPlayer(ctk.CTkFrame):
         if cw < 10 or ch < 10:
             return
 
-        fw, fh = frame.size
+        # Draw text + image overlays onto the LAYOUT frame (the export's
+        # frame before its final downscale), then resize the composite
+        # for display. That is what ffmpeg does at export time, so the
+        # preview matches the export regardless of aspect preset, crop,
+        # blur fill, rotation or quality preset. Ordering matters —
+        # overlays run AFTER drawtext at export time, so images sit on
+        # top. We mirror that order here.
+        geom = self._current_geometry(frame.size)
+        self._geometry = geom
+        if geom.is_subrect:
+            # Context view: show the whole source, compose the kept
+            # window in place, and dim what the export throws away.
+            region = geom.crop_source(frame)
+            region = self._apply_text_overlay(region, timestamp)
+            region = self._apply_image_overlay(region, timestamp)
+            if region.size == frame.size:
+                composited = region
+            else:
+                composited = frame.convert("RGB")
+                composited.paste(region, geom.offset)
+            self._layout_offset = geom.offset
+            self._layout_size = region.size
+        else:
+            # Output view: rotation or blur fill reshapes the frame, so
+            # show the exported frame itself.
+            composited = geom.render(frame.convert("RGB"))
+            composited = self._apply_text_overlay(composited, timestamp)
+            composited = self._apply_image_overlay(composited, timestamp)
+            self._layout_offset = (0, 0)
+            self._layout_size = composited.size
+
+        fw, fh = composited.size
         scale = min(cw / fw, ch / fh)
         new_w = max(1, int(fw * scale))
         new_h = max(1, int(fh * scale))
-
-        # Draw text + image overlays onto the SOURCE-sized frame, then
-        # resize the whole composite. This is what ffmpeg does at export
-        # time, so the preview matches the export proportionally
-        # regardless of source resolution or preset scaling. Ordering
-        # matters — at export time filter_complex runs image overlays
-        # AFTER drawtext (see ffmpeg_backend.trim_to_video), so images
-        # sit on top. We mirror that order here.
-        composited = self._apply_text_overlay(frame, timestamp)
-        composited = self._apply_image_overlay(composited, timestamp)
         rendered = composited.resize((new_w, new_h), Image.LANCZOS)
 
         self._photo = ImageTk.PhotoImage(rendered)
@@ -359,7 +430,37 @@ class VideoPlayer(ctk.CTkFrame):
         self._last_frame_rect = (
             cw // 2 - new_w // 2, ch // 2 - new_h // 2, new_w, new_h, fw, fh,
         )
+        self._draw_layout_dim()
         self._draw_crop_overlay()
+
+    def _draw_layout_dim(self):
+        """Dim the parts of the source an aspect-preset crop discards."""
+        self.canvas.delete("layoutdim")
+        if self._crop_mode or not self._last_frame_rect:
+            return  # the crop tool draws its own dimming
+        _ox, _oy, _dw, _dh, fw, fh = self._last_frame_rect
+        lx, ly = self._layout_offset
+        lw, lh = self._layout_size
+        if (lx, ly, lw, lh) == (0, 0, fw, fh):
+            return
+        x1, y1 = self._source_to_canvas(lx, ly)
+        x2, y2 = self._source_to_canvas(lx + lw, ly + lh)
+        ox, oy, dw, dh, _, _ = self._last_frame_rect
+        for rect in (
+            (ox, oy, ox + dw, y1),
+            (ox, y2, ox + dw, oy + dh),
+            (ox, y1, x1, y2),
+            (x2, y1, ox + dw, y2),
+        ):
+            if rect[2] > rect[0] and rect[3] > rect[1]:
+                self.canvas.create_rectangle(
+                    *rect, fill=T.BG_BASE, outline="",
+                    stipple="gray50", tags="layoutdim",
+                )
+        self.canvas.create_rectangle(
+            x1, y1, x2, y2, outline=T.ACCENT, width=1, dash=(4, 3),
+            tags="layoutdim",
+        )
 
     def _apply_text_overlay(self, image, timestamp):
         """Render drawtext layers onto ``image`` at its native resolution.
@@ -413,6 +514,11 @@ class VideoPlayer(ctk.CTkFrame):
             except Exception:
                 font = ImageFont.load_default()
 
+            # Wrap to the layout frame exactly as the export does
+            # (utils.text_wrap is shared with the drawtext builder).
+            from videokidnapper.utils.text_wrap import wrap_layer_text
+            text = wrap_layer_text(layer, text, font, w)
+
             # `ink_dx/dy` is why the preview used to sit a few pixels
             # below the export, by an amount that grew with font size.
             # textbbox measures the INK, but multiline_text draws with
@@ -428,6 +534,17 @@ class VideoPlayer(ctk.CTkFrame):
                 ink_dx, ink_dy = bbox[0], bbox[1]
             except AttributeError:
                 tw, th = measure.textsize(text, font=font)
+
+            # Multi-line captions follow drawtext's line model instead of
+            # Pillow's: every line is one "max glyph height" tall (the
+            # ink from the tallest ascender to the deepest descender in
+            # the whole caption), and th is that times the line count.
+            # Pillow spaces lines tighter, so wrapped captions previewed
+            # up to ~20 px lower than they exported.
+            lines = text.split("\n")
+            vmetrics = _drawtext_vmetrics(font, text) if len(lines) > 1 else None
+            if vmetrics:
+                th = vmetrics[2] * len(lines)
 
             keyframes = layer.get("keyframes") or []
             if keyframes:
@@ -467,26 +584,30 @@ class VideoPlayer(ctk.CTkFrame):
             except (TypeError, ValueError):
                 sx = sy = borderw = 0
 
+            def paint(dx, dy, fill, **kw):
+                if vmetrics:
+                    y_max, _y_min, line_h = vmetrics
+                    for i, line in enumerate(lines):
+                        draw.text(
+                            (x + dx - ink_dx, y + dy + y_max + i * line_h),
+                            line, fill=fill, font=font, anchor="ls", **kw,
+                        )
+                else:
+                    draw.multiline_text(
+                        (x + dx - ink_dx, y + dy - ink_dy), text,
+                        fill=fill, font=font, spacing=0, **kw,
+                    )
+
             if sx or sy:
-                shadow_rgba = _parse_color_rgba(
-                    layer.get("shadowcolor", "black@0.7"))
-                draw.multiline_text(
-                    (x + sx - ink_dx, y + sy - ink_dy), text,
-                    fill=shadow_rgba, font=font, spacing=0,
-                )
+                paint(sx, sy, _parse_color_rgba(
+                    layer.get("shadowcolor", "black@0.7")))
 
             if borderw:
-                stroke_fill = _parse_color_rgba(
-                    layer.get("bordercolor", "black"))
-                draw.multiline_text(
-                    (x - ink_dx, y - ink_dy), text, fill=color, font=font,
-                    spacing=0, stroke_width=borderw, stroke_fill=stroke_fill,
-                )
+                paint(0, 0, color, stroke_width=borderw,
+                      stroke_fill=_parse_color_rgba(
+                          layer.get("bordercolor", "black")))
             else:
-                draw.multiline_text(
-                    (x - ink_dx, y - ink_dy), text, fill=color, font=font,
-                    spacing=0,
-                )
+                paint(0, 0, color)
 
             overlay = Image.alpha_composite(overlay, scratch)
 
@@ -779,7 +900,7 @@ class VideoPlayer(ctk.CTkFrame):
         """
         if not self._text_bboxes:
             return None
-        src = self._canvas_to_source(canvas_x, canvas_y)
+        src = self._canvas_to_layout(canvas_x, canvas_y)
         if not src:
             return None
         sx, sy = src
@@ -789,7 +910,7 @@ class VideoPlayer(ctk.CTkFrame):
         return None
 
     def _begin_text_drag(self, idx, event):
-        src = self._canvas_to_source(event.x, event.y)
+        src = self._canvas_to_layout(event.x, event.y)
         if not src:
             return
         bbox = next((b for b in self._text_bboxes if b[0] == idx), None)
@@ -802,7 +923,7 @@ class VideoPlayer(ctk.CTkFrame):
         self.canvas.configure(cursor="fleur")
 
     def _on_text_drag(self, event):
-        src = self._canvas_to_source(event.x, event.y)
+        src = self._canvas_to_layout(event.x, event.y)
         if not src:
             return
         dx, dy = self._text_drag_offset
@@ -846,7 +967,7 @@ class VideoPlayer(ctk.CTkFrame):
         """
         if not self._image_bboxes:
             return None
-        src = self._canvas_to_source(canvas_x, canvas_y)
+        src = self._canvas_to_layout(canvas_x, canvas_y)
         if not src:
             return None
         sx, sy = src
@@ -856,7 +977,7 @@ class VideoPlayer(ctk.CTkFrame):
         return None
 
     def _begin_image_drag(self, idx, event):
-        src = self._canvas_to_source(event.x, event.y)
+        src = self._canvas_to_layout(event.x, event.y)
         if not src:
             return
         bbox = next((b for b in self._image_bboxes if b[0] == idx), None)
@@ -871,7 +992,7 @@ class VideoPlayer(ctk.CTkFrame):
         self.canvas.configure(cursor="fleur")
 
     def _on_image_drag(self, event):
-        src = self._canvas_to_source(event.x, event.y)
+        src = self._canvas_to_layout(event.x, event.y)
         if not src:
             return
         dx, dy = self._image_drag_offset
@@ -899,7 +1020,9 @@ class VideoPlayer(ctk.CTkFrame):
         """
         if not self._last_frame_rect:
             return new_x, new_y, []
-        _ox, _oy, _dw, _dh, fw, fh = self._last_frame_rect
+        fw, fh = self._layout_size
+        if fw <= 0 or fh <= 0:
+            return new_x, new_y, []
         dragged_idx = self._dragging_text_index
 
         # Size of the dragged layer's bbox (source-pixel space). Take
@@ -921,20 +1044,23 @@ class VideoPlayer(ctk.CTkFrame):
         self.canvas.delete("snap")
         if not hits or not self._last_frame_rect:
             return
-        ox, oy, dw, dh, fw, fh = self._last_frame_rect
+        lx, ly = self._layout_offset
+        lw, lh = self._layout_size
+        x_top, y_top = self._source_to_canvas(lx, ly)
+        x_bot, y_bot = self._source_to_canvas(lx + lw, ly + lh)
         for hit in hits:
             if hit.axis == "x":
-                # Source-pixel x → canvas x via the same linear map used
-                # for clicks. Draw a vertical line across the frame.
-                cx = ox + hit.position * dw / fw
+                # Layout x → canvas x via the same linear map used for
+                # clicks. Draw a vertical line across the layout frame.
+                cx, _ = self._source_to_canvas(lx + hit.position, ly)
                 self.canvas.create_line(
-                    cx, oy, cx, oy + dh,
+                    cx, y_top, cx, y_bot,
                     fill=T.ACCENT, width=1, dash=(4, 3), tags="snap",
                 )
             else:
-                cy = oy + hit.position * dh / fh
+                _, cy = self._source_to_canvas(lx, ly + hit.position)
                 self.canvas.create_line(
-                    ox, cy, ox + dw, cy,
+                    x_top, cy, x_bot, cy,
                     fill=T.ACCENT, width=1, dash=(4, 3), tags="snap",
                 )
 
@@ -945,6 +1071,9 @@ class VideoPlayer(ctk.CTkFrame):
         self._crop_mode = bool(enabled)
         self._crop_change_cb = on_change
         self.canvas.configure(cursor="tcross" if enabled else "crosshair")
+        # Re-render: crop mode switches between the output and context
+        # views and changes the layout frame captions are placed in.
+        self.refresh_overlay()
         self._draw_crop_overlay()
 
     def set_crop(self, crop_rect):
@@ -966,6 +1095,17 @@ class VideoPlayer(ctk.CTkFrame):
         rx = min(max(cx - ox, 0), dw)
         ry = min(max(cy - oy, 0), dh)
         return int(rx * fw / dw), int(ry * fh / dh)
+
+    def _canvas_to_layout(self, cx, cy):
+        """Map a canvas coordinate to layout-frame pixels (captions, stickers)."""
+        disp = self._canvas_to_source(cx, cy)
+        if not disp:
+            return None
+        lx, ly = self._layout_offset
+        lw, lh = self._layout_size
+        x = min(max(disp[0] - lx, 0), max(0, lw))
+        y = min(max(disp[1] - ly, 0), max(0, lh))
+        return int(x), int(y)
 
     def _source_to_canvas(self, sx, sy):
         if not self._last_frame_rect:
@@ -1003,6 +1143,8 @@ class VideoPlayer(ctk.CTkFrame):
                 self._crop_change_cb(self._crop_rect)
             except Exception:
                 pass
+        # Captions re-flow into the new crop window.
+        self.refresh_overlay()
 
     def _draw_crop_overlay(self):
         self.canvas.delete("crop")
@@ -1033,6 +1175,25 @@ class VideoPlayer(ctk.CTkFrame):
 # ---------------------------------------------------------------------------
 # Helpers for the preview overlay
 # ---------------------------------------------------------------------------
+
+def _drawtext_vmetrics(font, text):
+    """``(y_max, y_min, line_h)`` the way ffmpeg's drawtext measures them.
+
+    drawtext takes the highest glyph top and the lowest glyph bottom over
+    the whole caption (y up, baseline 0), and advances every line by the
+    difference. Newlines are not glyphs. ``None`` if Pillow can't measure.
+    """
+    y_max = y_min = 0
+    try:
+        for ch in set(text) - {"\n"}:
+            _l, top, _r, bottom = font.getbbox(ch, anchor="ls")
+            y_max = max(y_max, -top)
+            y_min = min(y_min, -bottom)
+    except Exception:
+        return None
+    line_h = y_max - y_min
+    return (y_max, y_min, line_h) if line_h > 0 else None
+
 
 def _font_path_for_preview(font_name, bold=False, italic=False):
     from videokidnapper.ui.text_layers import _find_font_path
