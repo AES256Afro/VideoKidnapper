@@ -177,6 +177,13 @@ class TrimTab(ctk.CTkFrame):
         # Click-drag on the preview moves the active layer. The panel owns
         # the widget state, so we forward via its set_layer_position entry.
         self.player.set_text_position_callback(self._on_text_dragged)
+        # The preview renders the export's frame (aspect preset, crop,
+        # blur fill, rotation), so it needs the live export options. The
+        # panel is built further down, hence the late lookup.
+        self.player.set_export_options_provider(
+            lambda: self.export_options.get_options()
+            if hasattr(self, "export_options") else {},
+        )
         # Image overlays get the same treatment so users can drag a
         # logo / sticker / GIF anywhere on the frame — same set-position
         # flow as text, same live preview.
@@ -459,6 +466,8 @@ class TrimTab(ctk.CTkFrame):
     def _on_export_options_changed(self):
         self._update_size_estimate()
         self._mark_project_dirty()
+        # Aspect / fill / rotation change the frame captions sit in.
+        self.player.refresh_overlay()
 
     def _on_range_changed(self):
         self._update_export_enabled()
@@ -585,8 +594,16 @@ class TrimTab(ctk.CTkFrame):
                     "Tracker lost the target immediately — try a more "
                     "distinct spot", "warn")
                 return
-            # Region top-left → caption top-left offset (identity here,
-            # since the tracked region IS the caption's bbox).
+            # The tracker works in source pixels; captions live in the
+            # export's layout frame. Map each tracked box back (it is
+            # the caption's own box, so its top-left is the caption's).
+            bw, bh = region[2], region[3]
+            mapped = []
+            for kf in kfs:
+                lx1, ly1, _lx2, _ly2 = self.player.source_rect_to_layout(
+                    kf["x"], kf["y"], kf["x"] + bw, kf["y"] + bh)
+                mapped.append(dict(kf, x=int(round(lx1)), y=int(round(ly1))))
+            kfs = mapped
             self.text_layers.set_layer_keyframes(index, kfs)
             self.player.refresh_overlay()
             self._notify(
