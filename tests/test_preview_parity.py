@@ -155,3 +155,81 @@ def test_wrapped_caption_lands_on_the_same_pixels(player, tmp_path, position):
         return xs.min(), ys.min(), xs.max(), ys.max()
 
     assert ink_box(np.asarray(preview.convert("L"))) == ink_box(exported)
+
+
+# ---------------------------------------------------------------------------
+# Captions never fall off the frame, and the preview agrees on where
+# ---------------------------------------------------------------------------
+
+def _export_ink(tmp_path, layer, t=0.5):
+    import subprocess
+
+    import numpy as np
+
+    from videokidnapper.core.ffmpeg.encode import trim_to_video
+
+    src = tmp_path / "black.mp4"
+    if not src.exists():
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                        "color=black:s=1920x1080:r=24:d=1.2", "-c:v", "libx264",
+                        "-pix_fmt", "yuv420p", str(src)], check=True)
+    out = trim_to_video(str(src), 0, 1.0, "Ultra", str(tmp_path / "o.mp4"),
+                        text_layers=[layer], options={"hw_encoder": "off"})
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(t), "-i", str(out),
+                          "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                         capture_output=True, check=True).stdout
+    return _ink(np.frombuffer(raw, np.uint8).reshape(1080, 1920))
+
+
+def _ink(a):
+    import numpy as np
+    m = np.asarray(a) > 100
+    ys, xs = m.any(1).nonzero()[0], m.any(0).nonzero()[0]
+    return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
+
+
+def _inside(box, w=1920, h=1080):
+    """Ink touches no edge. Text clipped by an edge reaches row/column 0
+    or the last one, so a caption that fell off fails this."""
+    x1, y1, x2, y2 = box
+    return x1 > 0 and y1 > 0 and x2 < w - 1 and y2 < h - 1
+
+
+need_ffmpeg = pytest.mark.skipif(
+    __import__("shutil").which("ffmpeg") is None, reason="ffmpeg not on PATH")
+
+
+@need_ffmpeg
+@pytest.mark.parametrize("position", ["1850:1040", "1500:-300", "-400:500"])
+def test_dragged_caption_is_kept_on_screen(player, tmp_path, position):
+    layer = {"text": "edge case", "fontsize": 90, "fontcolor": "white",
+             "borderw": 4, "bordercolor": "black",
+             "position": position, "start": 0, "end": 99}
+    exported = _export_ink(tmp_path, layer)
+    assert _inside(exported), exported
+    player.layers.append(layer)
+    preview = player._apply_text_overlay(Image.new("RGB", (1920, 1080)), 0.5)
+    px = _ink(preview.convert("L"))
+    assert all(abs(a - b) <= 2 for a, b in zip(px, exported)), (px, exported)
+
+
+@need_ffmpeg
+def test_too_tall_caption_shrinks_to_fit(player, tmp_path):
+    words = " ".join(["caption"] * 40)
+    layer = {"text": words, "fontsize": 220, "fontcolor": "white",
+             "position": "(w-tw)/2:h-th-20", "start": 0, "end": 99}
+    exported = _export_ink(tmp_path, layer)
+    assert _inside(exported), exported
+    player.layers.append(layer)
+    preview = player._apply_text_overlay(Image.new("RGB", (1920, 1080)), 0.5)
+    assert _ink(preview.convert("L")) == exported
+
+
+@need_ffmpeg
+def test_motion_path_cannot_leave_the_frame(player, tmp_path):
+    layer = {"text": "tracked", "fontsize": 80, "fontcolor": "white",
+             "keyframes": [{"t": 0.0, "x": 100, "y": 500},
+                           {"t": 1.0, "x": 4000, "y": 2500}],
+             "start": 0, "end": 99}
+    exported = _export_ink(tmp_path, layer, t=0.75)
+    assert _inside(exported), exported

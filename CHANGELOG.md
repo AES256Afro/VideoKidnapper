@@ -8,7 +8,7 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Added
 
-- **Captions wrap to fit the frame.** A caption wider than the exported frame now wraps onto more lines instead of running off both edges. Wrapping follows the export's real width, so switching to a 9:16 preset re-wraps automatically, and the preview breaks the lines in the same places as the export. The text you typed is never changed.
+- **Captions always stay on screen.** A caption wider than the exported frame now wraps onto more lines instead of running off both edges. One still too tall for the frame, from many lines or a big font on a small frame, steps its font size down until it fits. No position can push a caption off either: one dragged past an edge, or a motion path that leaves the frame, stops at the edge with its outline intact. All of this follows the export's real frame, so switching to a 9:16 preset re-fits automatically, and the preview lands on the same pixels as the export. The text you typed is never changed, and wrapping can be switched off per caption.
 
 ### Fixed
 

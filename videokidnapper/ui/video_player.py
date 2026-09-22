@@ -26,6 +26,8 @@ import tkinter as tk
 import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 
+from videokidnapper.utils.text_wrap import drawtext_vmetrics
+
 from videokidnapper.utils.coerce import coerce_float, coerce_int
 from videokidnapper.core import playback
 from videokidnapper.core.preview import get_frame_at
@@ -504,20 +506,23 @@ class VideoPlayer(ctk.CTkFrame):
             text = text.replace("\r\n", "\n").replace("\r", "\n")
 
             fontsize = max(6, coerce_int(layer.get("fontsize", 24), 24))
+            from videokidnapper.utils.text_wrap import clamp_margin, fit_layer_text
             try:
                 font_path = _font_path_for_preview(
                     layer.get("font", "Arial"),
                     bold=bool(layer.get("bold")),
                     italic=bool(layer.get("italic")),
                 )
-                font = ImageFont.truetype(font_path, fontsize)
+                # Keep the caption on screen exactly as the export does:
+                # wrap to the layout width, shrink if still too tall.
+                # utils.text_wrap is shared with the drawtext builder.
+                text, font, _size = fit_layer_text(
+                    layer, text,
+                    lambda size, fp=font_path: ImageFont.truetype(fp, size),
+                    fontsize, w, h,
+                )
             except Exception:
                 font = ImageFont.load_default()
-
-            # Wrap to the layout frame exactly as the export does
-            # (utils.text_wrap is shared with the drawtext builder).
-            from videokidnapper.utils.text_wrap import wrap_layer_text
-            text = wrap_layer_text(layer, text, font, w)
 
             # `ink_dx/dy` is why the preview used to sit a few pixels
             # below the export, by an amount that grew with font size.
@@ -542,7 +547,7 @@ class VideoPlayer(ctk.CTkFrame):
             # Pillow spaces lines tighter, so wrapped captions previewed
             # up to ~20 px lower than they exported.
             lines = text.split("\n")
-            vmetrics = _drawtext_vmetrics(font, text) if len(lines) > 1 else None
+            vmetrics = drawtext_vmetrics(font, text) if len(lines) > 1 else None
             if vmetrics:
                 th = vmetrics[2] * len(lines)
 
@@ -557,6 +562,11 @@ class VideoPlayer(ctk.CTkFrame):
                 x, y = _resolve_position(
                     layer.get("position", ""), w, h, tw, th, pad=20,
                 )
+            # Same clamp as the export: no position (a drag near an edge,
+            # a motion path) can push the caption or its outline off.
+            m = clamp_margin(layer)
+            x = min(max(x, m), max(m, w - tw - m))
+            y = min(max(y, m), max(m, h - th - m))
 
             # Each layer renders on its own transparent scratch image that
             # is alpha-composited onto the frame. Drawing translucent fills
@@ -1175,25 +1185,6 @@ class VideoPlayer(ctk.CTkFrame):
 # ---------------------------------------------------------------------------
 # Helpers for the preview overlay
 # ---------------------------------------------------------------------------
-
-def _drawtext_vmetrics(font, text):
-    """``(y_max, y_min, line_h)`` the way ffmpeg's drawtext measures them.
-
-    drawtext takes the highest glyph top and the lowest glyph bottom over
-    the whole caption (y up, baseline 0), and advances every line by the
-    difference. Newlines are not glyphs. ``None`` if Pillow can't measure.
-    """
-    y_max = y_min = 0
-    try:
-        for ch in set(text) - {"\n"}:
-            _l, top, _r, bottom = font.getbbox(ch, anchor="ls")
-            y_max = max(y_max, -top)
-            y_min = min(y_min, -bottom)
-    except Exception:
-        return None
-    line_h = y_max - y_min
-    return (y_max, y_min, line_h) if line_h > 0 else None
-
 
 def _font_path_for_preview(font_name, bold=False, italic=False):
     from videokidnapper.ui.text_layers import _find_font_path
