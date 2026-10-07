@@ -32,6 +32,14 @@ CONTRAST_RULES = [
     ("TEXT_ON_ACCENT", "ACCENT",     3.0),
     ("ACCENT",         "BG_SURFACE", 3.0),
     ("DANGER",         "BG_SURFACE", 3.0),
+    # Studio tokens: labels on selected rows, panel headers and the
+    # timeline's caption and overlay clips.
+    ("TEXT",             "PANEL_HEADER",     4.5),
+    ("ACCENT_SOFT_TEXT", "ACCENT_SOFT",      4.5),
+    ("TEXT",             "SELECTION",        4.5),
+    ("TRACK_TEXT_INK",   "TRACK_TEXT_FILL",  4.5),
+    ("TRACK_IMAGE_INK",  "TRACK_IMAGE_FILL", 4.5),
+    ("PLAYHEAD",         "BG_SURFACE",       3.0),
 ]
 
 
@@ -87,7 +95,7 @@ def test_every_palette_has_a_label():
 
 def test_default_is_a_real_theme():
     assert theme.DEFAULT_THEME in theme.PALETTES
-    assert theme.DEFAULT_THEME == "cream"
+    assert theme.DEFAULT_THEME == "light"
 
 
 def test_settings_default_matches_theme_default():

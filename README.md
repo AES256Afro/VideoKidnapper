@@ -18,35 +18,37 @@ Grab a video from the web, cut the part you want, caption it, and export a clean
 - **Download from the web.** YouTube, Instagram, X, Reddit, Bluesky, Facebook, and 1,000+ other sites yt-dlp supports. Paste a link, press `Ctrl+V` from anywhere, or queue a batch. Reads browser cookies for private and age-gated videos.
 - **Trim to the exact moment.** Frame-accurate timeline with a waveform and thumbnail strip. Queue several cuts from one video, then export them separately or stitched with transitions.
 - **Captions that look right.** Text with outline, shadow, bold, italic, and multiple lines, and the preview matches the exported frame exactly. Auto-caption speech with Whisper, or import an `.srt` or `.vtt`.
-- **Captions that follow the action.** Pin a caption to a moving subject and it tracks them across the frame, the way the "click for more" memes do. Drag to set the path by hand, or hit **⚡ Auto-track** and let it follow the subject for you. Preview and export stay in sync.
+- **Captions that follow the action.** Pin a caption to a moving subject and it tracks them across the frame, the way the "click for more" memes do. Drag to set the path by hand, or choose **Follow an object from here** and let it follow the subject for you. Preview and export stay in sync.
 - **Overlays.** Logos, watermarks, and sticker or GIF overlays dragged anywhere on the frame, each with its own size, opacity, and timing. Paste an image straight from the clipboard.
 - **Export for the platform.** Tune GIFs (dither, palette, loop) or export hardware-encoded MP4s. Reframe 16:9 to 9:16 for Shorts, Reels, and TikTok with a blurred-background fill. Speed, rotate, mute, audio-only, and colour adjustment are built in.
 - **Record your screen** straight into the editor.
 - **Save real projects.** `.vidkid` project files preserve the source link, trim ranges, crop, captions, overlays, and export choices. Autosave recovery protects work after an interrupted session, and recent projects stay one click away.
-- **Update through the right channel.** The app detects Store, winget, pip, APT, AppImage, macOS, portable, and source installs, then offers the safest update route for that install.
+- **Updates that fit the install.** Store installs update through the Microsoft Store; Setup, winget and portable installs open the GitHub release; pip, APT, AppImage, macOS and source installs each get the route that fits them.
 - **Runs fully offline.** No upload, no account, no watermark. Open source, FFmpeg included.
 
-One tab does it all: open a file, record the screen, or paste a link, then trim, caption, and export in the same place. A fixed tool dock keeps every section one click away, even when a project has many caption lines. VideoKidnapper also has undo and redo, project save and recovery, a Batch Export tab, an export History tab, keyboard shortcuts (`Ctrl+S` project, `Space` play, `J`/`L` step, `I`/`O` in-out, `Ctrl+E` export), a CLI mode, and a [plugin API](docs/PLUGINS.md). See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what is next.
+The app is three steps across the top of the window: **Import** brings a clip in (a file, a screen recording, or a link), **Edit** is where you trim, caption, crop and color it, and **Export** makes the MP4, GIF or MP3. Edit fits on one screen with no scrolling. VideoKidnapper also has undo and redo, project save and recovery, batch export, an export history, keyboard shortcuts (`Ctrl+S` project, `Space` play, `J`/`L` step, `I`/`O` in-out, `Q` save range, `Ctrl+E` export; `⌘` on a Mac), five themes, a CLI mode, and a [plugin API](docs/PLUGINS.md). See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what is next.
 
 ---
 
-## Tabs & features
+## Workspaces & features
 
-### Kidnap & Trim
+### Edit
 
-One tab for the whole job. Load a video three ways (**Open Video File**, **Record Screen**, or paste a link), then trim, caption, and export in the same place.
+![The Edit workspace with a video loaded, a caption, and two saved ranges](assets/screenshots/studio_loaded.png)
 
-![Kidnap & Trim with a video loaded, a caption, and a queued range](assets/screenshots/studio_loaded.png)
+The media panel sits on the left (collapse it to a thin rail for a bigger preview), the preview with play controls in the middle, the **Inspector** on the right, and a **timeline** underneath. The timeline stacks saved ranges, caption clips, image-overlay clips, a filmstrip, and the waveform under one playhead: click to seek, drag the blue in/out edges to pick the part, drag a caption or overlay to move it, drag its edge to retime it, and `Ctrl`+wheel to zoom. Press `Q` to save the selection as a range; each range exports as its own clip, or they join into one video with a cut, crossfade, or fade.
 
-With a video loaded you get a thumbnail strip, a waveform, a dual-handle range slider, and queued ranges (each exports as its own clip, or they concatenate with transitions when "Concat queued ranges" is on). Captions expose per-layer controls: multiline text, bold, italic, outline, and shadow, and the caption renders on the preview exactly as it will export. **Import SRT** and **🗣 Auto-captions** (Whisper) both feed the same text-layer panel.
+The Inspector edits one thing at a time. **Clip** has the in/out times, speed, rotate, frame shape (center-crop or blurred fill), hand crop, and mute. **Text** edits the selected caption: multiline text, style preset, font, size, bold, italic, color, outline, shadow, box, position, timing, and fade. **Image** edits the selected overlay. **Color** has brightness, contrast, saturation, and gamma, and the preview shows the change so what you see is what you export. Captions render on the preview exactly as they will export. **Captions ▸ Import SRT or VTT** and **Captions from speech** (Whisper) both add caption clips to the timeline.
 
-Turn on **🎯 Motion track** and a caption follows a moving subject across the frame, like the "click for more" memes. Drag the caption at a few points in the clip to set its path by hand, or drop the caption on your subject and hit **⚡ Auto-track** to have it follow them automatically (OpenCV object tracking, bundled in the Store, Windows, macOS, and Linux AppImage builds). The same interpolation drives the preview and the export, so what you see is what renders.
+Turn on **Record a motion path** and a caption follows a moving subject across the frame, like the "click for more" memes. Drag the caption at a few points in the clip to set its path by hand, or drop the caption on your subject and choose **Follow an object from here** to have it follow them automatically (OpenCV object tracking, bundled in the Store, Windows, macOS, and Linux AppImage builds). The same interpolation drives the preview and the export, so what you see is what renders.
 
 ![One caption tracked across three moments of a clip](assets/screenshots/motion_track.png)
 
-![The download bar and batch queue](assets/screenshots/studio_link.png)
+### Import
 
-The **Kidnap from** bar detects the platform as you paste (or press `Ctrl+V` to drop a link in from anywhere in the app). Supported with brand chips:
+![The Import workspace with a pasted link and the batch download list](assets/screenshots/studio_link.png)
+
+Import is where a clip comes in: paste a link, open a file, record the screen, or reopen a recent project. Whatever loads lands in Edit. The **Kidnap from** bar detects the platform as you paste (or press `Ctrl+V` to drop a link in from anywhere in the app). Supported with brand chips:
 
 | Platform | Host patterns |
 |---|---|
@@ -57,13 +59,21 @@ The **Kidnap from** bar detects the platform as you paste (or press `Ctrl+V` to 
 | **Reddit** | `reddit.com`, `redd.it`, `v.redd.it` (gallery-wrapped + video+audio auto-merged) |
 | **Facebook** | `facebook.com`, `fb.watch`, `fb.com`, `m.facebook.com` |
 
-…plus the 1,000+ other sites yt-dlp supports. **Cookies from** reads login cookies from Chrome / Firefox / Edge / Brave / Opera, or a `cookies.txt` export, for private/age-gated videos. (Windows Chrome encrypts its cookie DB, so close Chrome fully, use Firefox, or a cookies file; the in-app error explains it.) Downloads retry transient failures with resume, and **⟳ Update yt-dlp** keeps the extractor current. **Batch Download** takes a list of links, grabs them in order, and loads any finished one into the editor with **Use**.
+…plus the 1,000+ other sites yt-dlp supports. **Cookies from** reads login cookies from Chrome / Firefox / Edge / Brave / Opera, or a `cookies.txt` export, for private/age-gated videos. (Windows Chrome encrypts its cookie DB, so close Chrome fully, use Firefox, or a cookies file; the in-app error explains it.) Downloads retry transient failures with resume, and **Update compatibility** keeps the extractor current. **Batch Download** takes a list of links, grabs them in order, and loads any finished one into the editor with **Use**.
+
+### Export
+
+![The Export workspace with platform presets, format, and quality](assets/screenshots/studio_export.png)
+
+**This project** puts every export decision on one page: what to export (the selection plus saved ranges, optionally joined), what it's made for (YouTube, Shorts, Reels, TikTok, X, Bluesky, Discord size limits, Slack GIF, and more), format, quality, and where it's saved. **Quick export** in the header (`Ctrl+E`) exports with these settings from anywhere.
+
+**Batch files** exports whole local files with one set of settings: a queue where each row can target a different platform, with quality, MP4 or MP3, and the save folder on the side. Speed, rotate, frame shape, and color come from Edit, so there's one place to change them.
 
 ### History
 
-![History tab](assets/screenshots/history.png)
+![Export history with thumbnails](assets/screenshots/history.png)
 
-Every successful export is persisted to `~/.videokidnapper_settings.json` — the 25 most recent show here with format, quality preset, timestamp, and file size. **Open** launches the file in the default system player; **Reveal** opens its folder in Explorer / Finder. Missing files (moved or deleted) are dimmed and their buttons disabled.
+Every successful export, from Edit or Batch, is persisted to `~/.videokidnapper_settings.json`. The 25 most recent show under **Export ▸ History**, grouped by day, with a thumbnail, format, quality preset, time, and file size. **Play** opens the file in the default player; **Show in folder** opens its folder in Explorer / Finder. Missing files (moved or deleted) are dimmed and their buttons disabled.
 
 ### Projects and recovery
 
@@ -75,11 +85,13 @@ Press `Ctrl+S` to save a `.vidkid` project, `Ctrl+Shift+S` to save a copy, or `C
 
 ![Install-aware update prompt](assets/screenshots/updates.png)
 
-When a release is available, the header opens an update prompt tailored to the current install. Store and native package-manager installs use their signed or verified update route. Portable, AppImage, macOS, and source installs open the matching verified release instead of replacing a running executable in place.
+When a release is available, an **Update** chip appears in the header (or use **Check for updates** in the settings menu). Microsoft Store installs update through the Store. Setup and winget installs open the GitHub release, whose Setup installer updates them in place and keeps your settings. pip and APT installs use their package manager. Portable, AppImage, macOS, and source installs open the matching release instead of replacing a running executable in place.
 
-### Debug
+### Debug log
 
-![Debug tab with color-coded levels](assets/screenshots/debug.png)
+![Debug log with color-coded levels](assets/screenshots/debug.png)
+
+Open it from **Debug log** in the settings (gear) menu.
 
 Captures `stdout` + `stderr` with level-colored tags: `INFO` accent-blue, `WARN` amber, `ERROR` red. Uncaught exceptions from Tk callbacks and normal Python code both land here via a global exception hook, so a crash leaves a traceback instead of killing the app. Useful when yt-dlp reports a protected video or ffmpeg rejects a filter chain — the actual error text is here instead of the generic "failed" toast.
 
@@ -91,7 +103,7 @@ New installs start with a short three-step welcome and direct actions for openin
 
 ![Setup dialog](assets/screenshots/setup.png)
 
-Opened from the **⚙ Setup** button in the header. When FFmpeg is missing on first run, a setup screen explains the source, destination, and integrity check before asking permission to install. Each row describes a prerequisite and the feature it unlocks; required items are pre-checked, optional ones wait for opt-in. **Select all missing** toggles every installable row.
+Opened from **Setup and components…** in the settings (gear) menu. When FFmpeg is missing on first run, a setup screen explains the source, destination, and integrity check before asking permission to install. Each row describes a prerequisite and the feature it unlocks; required items are pre-checked, optional ones wait for opt-in. **Select all missing** toggles every installable row.
 
 - **Install Selected** runs in a background thread: FFmpeg is pulled as a portable build (gyan.dev on Windows, checked against the publisher's SHA-256 digest; on macOS the same static build the Mac app bundles, checked against digests pinned in the source), staged, and then placed in `assets/ffmpeg/bin/` (the app's fallback lookup path). Python packages use `python -m pip install --user`; no admin access is needed.
 - **Open Admin Terminal** launches an elevated shell pre-populated with the right commands for your OS: `winget install Gyan.FFmpeg` on Windows (via PowerShell `Start-Process -Verb RunAs`), `brew install ffmpeg` on macOS (via Terminal + `osascript`), `sudo apt-get install ffmpeg` on Linux. If no terminal is available, commands are copied to the clipboard as a fallback.
@@ -109,20 +121,19 @@ After a successful export, the Export dialog reveals a share panel with a captio
 
 ## Text layers
 
-![Multiline text tools with the persistent feature dock](assets/screenshots/studio_text.png)
+![A multiline caption selected, with the Text inspector open](assets/screenshots/studio_text.png)
 
-The editor exposes a collapsible **Text Layers** panel with per-layer controls:
+Each caption is a clip on the timeline's Text track. Select one on the timeline (or with the arrows in the Inspector) and the **Text** tab edits it:
 
 - **Style presets** — Subtitle (white-on-black box), Caption (white with black outline, the social-standard look), Title (large centered), Watermark (small corner), Custom
-- Per-layer font (all system fonts), size, color (8 presets + **Custom…** color picker), position (7 anchors)
+- Font (system fonts), size, color (8 presets + **Custom…** color picker), position (7 anchors, or drag it in the preview)
 - **Bold / italic** toggles, resolved to real font-variant files (`arialbd.ttf`, `ariali.ttf`, ...) with graceful fallback when a variant is missing
-- **Outline** and **Shadow** toggles, compiled to drawtext `borderw` / `shadowx` and mirrored exactly in the preview
+- **Outline**, **Shadow** and **Box** toggles, compiled to drawtext `borderw` / `shadowx` / `box` and mirrored exactly in the preview
 - **Multiline captions:** the text box wraps, and embedded newlines export as real line breaks
-- Per-layer timing slider — exactly when each text appears and disappears
-- **🎯 Motion track** — keyframe a caption's position so it follows a moving subject; drag to set the path or **⚡ Auto-track** it with OpenCV, then compiled to a drawtext time expression that preview and export share
-- Background box toggle
-- ▲ / ▼ reorder, ⧉ duplicate, ✕ remove
-- **Text fade** (0.25s / 0.5s / 1s, set in Export Options) — symmetric fade-in/fade-out via a drawtext `alpha=` expression
+- Timing — type exact times, or drag the clip and its edges on the timeline
+- **Record a motion path** — keyframe a caption's position so it follows a moving subject; drag to set the path or **Follow an object from here** with OpenCV, then compiled to a drawtext time expression that preview and export share
+- Add, duplicate, and delete from the Inspector header
+- **Fade** (0.25s / 0.5s / 1s, for all captions) — symmetric fade-in/fade-out via a drawtext `alpha=` expression
 - Live PIL-rendered overlay on the preview canvas — font size, position, and box padding all match ffmpeg's export output
 
 ---
@@ -145,15 +156,16 @@ When a hardware encoder is available, CRF maps to the right flag per encoder (`-
 | Key | Action |
 |---|---|
 | **Space** / **K** | Play / Pause |
-| **J** | Seek −1s |
-| **L** | Seek +1s |
-| **I** | Set in-point at current frame |
-| **O** | Set out-point at current frame |
-| **Ctrl+Z** | Undo (text-layer edits, crop, trim range, queued ranges) |
+| **J** | Move the playhead back 1s |
+| **L** | Move the playhead forward 1s |
+| **I** | Set the in point at the playhead |
+| **O** | Set the out point at the playhead |
+| **Q** | Save the selection as a range |
+| **Ctrl+Z** | Undo (captions, overlays, crop, selection, saved ranges) |
 | **Ctrl+Y** / **Ctrl+Shift+Z** | Redo |
-| **Ctrl+E** | Export |
+| **Ctrl+E** | Export with the current settings |
 | **Ctrl+O** | Open video file |
-| **Ctrl+V** | Paste — a video/GIF link opens the Kidnap downloader from any tab; a clipboard image becomes an overlay on Trim |
+| **Ctrl+V** | Paste — a video/GIF link opens Import from anywhere; a clipboard image becomes an overlay in Edit |
 
 Entry fields swallow shortcuts so typing into them doesn't scrub the video.
 
@@ -212,7 +224,7 @@ videokidnapper                        # launches the GUI
 videokidnapper --help                 # CLI mode
 ```
 
-You still need FFmpeg on `PATH`, or let the in-app **⚙ Setup** screen install a verified portable copy (Windows and macOS). On Linux use your package manager.
+You still need FFmpeg on `PATH`, or use **Setup and components…** in the app's settings menu to install a verified portable copy (Windows and macOS). On Linux use your package manager.
 
 ### Option E — Clone and install (contributors / latest `main`)
 
@@ -232,7 +244,7 @@ pip install -r requirements.txt
 
 Three options — the Setup dialog handles all of them:
 
-- **Auto-install (Windows and macOS)**: open **⚙ Setup** → check FFmpeg → **Install Selected**. Pulls a verified build into `assets/ffmpeg/bin/`: gyan.dev essentials on Windows, the static build the Mac app bundles on macOS.
+- **Auto-install (Windows and macOS)**: open **Setup and components…** from the settings menu → check FFmpeg → **Install Selected**. Pulls a verified build into `assets/ffmpeg/bin/`: gyan.dev essentials on Windows, the static build the Mac app bundles on macOS.
 - **Manual portable**: drop `ffmpeg.exe` and `ffprobe.exe` into `assets/ffmpeg/bin/` yourself.
 - **System install**: `winget install Gyan.FFmpeg` (Windows) / `brew install ffmpeg` (macOS) / `sudo apt install ffmpeg` (Linux).
 
@@ -263,17 +275,24 @@ Passing any flag (or `--help`) skips the GUI and runs headless.
 
 ## Export naming
 
-Files are saved as `VidKid_{mode}_{YYYYMMDD}_{HHMMSS}.{ext}` in the configured output folder (set via **Export Options → Output folder**).
+Exports are named after the video: the title a download reported, or the file name of a local video. **Export ▸ File names** picks the style and shows what the next file will be called:
 
-Example: `VidKid_trim_20260417_221530.mp4`
+| Style | Example |
+|---|---|
+| Video title (default) | `Cat Video Take 2.mp4` |
+| Video title + date | `Cat Video Take 2_20261006.mp4` |
+| Video title + date & time | `Cat Video Take 2_20261006_143022.mp4` |
+| VidKid + timestamp | `VidKid_trim_20261006_143022.mp4` |
 
-When "Concat queued ranges" is enabled, the final merged output uses `_concat` in the mode slot and the intermediate per-range files are cleaned up.
+Titles are cleaned up for the file system (path separators, Windows-illegal characters and device names like `CON` are removed; accents, CJK and emoji are kept), and a second export of the same clip gets `_1`, `_2` rather than overwriting. Files go to the folder set in **Export ▸ Save to**.
+
+When "Join everything into one video" is on, the intermediate per-range files are cleaned up and only the joined file is kept.
 
 ---
 
 ## Tech stack
 
-- **CustomTkinter** — modern Tk widget toolkit
+- **CustomTkinter** — GUI framework (five themes: Studio, Graphite, Cream retro tech, Fallout, Retro)
 - **Pillow** — frame preview + live text-layer overlay
 - **yt-dlp** — multi-platform video downloading
 - **FFmpeg** — video/GIF encoding with drawtext overlays

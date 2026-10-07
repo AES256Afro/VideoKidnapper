@@ -59,13 +59,21 @@ def test_source_checkout_detected(tmp_path):
     ) == "source"
 
 
-def test_update_plans_use_native_routes():
-    winget = build_update_plan("winget", "https://example.test/release")
+def test_store_install_updates_through_the_store():
     store = build_update_plan("store", "https://example.test/release")
-    portable = build_update_plan("portable", "https://example.test/release")
-    assert winget.command[:4] == (
-        "winget", "upgrade", "--id", "AES256Afro.VideoKidnapper",
-    )
     assert store.action == "store"
-    assert portable.action == "release"
-    assert portable.copy_text == "https://example.test/release"
+    assert store.copy_text.startswith("ms-windows-store://pdp/?ProductId=")
+
+
+def test_windows_installs_update_from_github_release():
+    for channel in ("winget", "setup", "portable"):
+        plan = build_update_plan(channel, "https://example.test/release")
+        assert plan.action == "release", channel
+        assert plan.copy_text == "https://example.test/release", channel
+        assert not plan.command, channel
+
+
+def test_pip_still_uses_package_manager():
+    plan = build_update_plan("pip", "https://example.test/release")
+    assert plan.action == "run"
+    assert plan.command[1:4] == ("-m", "pip", "install")

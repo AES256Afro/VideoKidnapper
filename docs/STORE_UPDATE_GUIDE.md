@@ -29,15 +29,16 @@ Still in **Store listings → English → Screenshots**.
 
 1. Remove the existing screenshots.
 2. Upload the files from `assets/store/` (each is exactly 1920×1080, the size the Store requires):
-   - `01-studio-1920x1080.png` — the editor with a clip, caption, and queued cuts
-   - `02-download-1920x1080.png` — the download bar + batch queue
-   - `03-start-1920x1080.png` — the empty/start state
-   - `04-history-1920x1080.png` — export history
-   - `05-setup-1920x1080.png` — the setup screen
-3. Order them 01 → 05 (drag to reorder). The first is the hero shot.
+   - `01-edit-1920x1080.png` — Edit: preview, Inspector and track timeline with ranges and a caption
+   - `02-export-1920x1080.png` — Export: what to export, platform presets, format, quality, file names
+   - `03-captions-1920x1080.png` — the Text inspector styling a caption
+   - `04-import-1920x1080.png` — Import: link, file, screen recording and recent projects
+   - `05-history-1920x1080.png` — export history with thumbnails
+   - `06-setup-1920x1080.png` — the setup screen
+3. Order them 01 → 06 (drag to reorder). The first is the hero shot.
 
 To regenerate these after a UI change, run the **Screenshots** workflow
-(Actions → Screenshots → Run workflow, theme `cream`). It captures on a
+(Actions → Screenshots → Run workflow, theme `light`). It captures on a
 Windows runner — real Segoe UI, and an interactive desktop so the grab
 works — and uploads `assets/screenshots/*.png` plus the 1920×1080
 `assets/store/*.png` as an artifact. Locally: `python

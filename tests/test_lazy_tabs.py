@@ -88,7 +88,8 @@ def test_tabs_build_on_first_view_and_are_cached(app):
 
     for name in (module.TAB_BATCH, module.TAB_HISTORY):
         assert name not in instance._built_tabs
-        instance.tabview.set(name)
+        # Batch files and History are sub-pages of the Export workspace.
+        instance.export_workspace.show(name)
         instance._on_tab_changed()
         instance.update_idletasks()
         assert name in instance._built_tabs, f"selecting {name!r} did not build it"
@@ -108,6 +109,8 @@ def test_a_failing_factory_does_not_wedge_tab_switching(app, monkeypatch):
         raise RuntimeError("simulated failure")
 
     monkeypatch.setitem(instance._lazy_tabs, module.TAB_BATCH, boom)
-    instance.tabview.set(module.TAB_BATCH)
-    instance._on_tab_changed()  # must not raise
+    instance.export_workspace.show(module.TAB_BATCH)  # must not raise
+    instance._on_tab_changed()  # nor this
     assert module.TAB_BATCH not in instance._built_tabs
+    # The failed page is not shown; the workspace stays where it was.
+    assert instance.export_workspace.current == "project"

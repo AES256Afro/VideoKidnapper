@@ -93,7 +93,7 @@ class DownloadBar(ctk.CTkFrame):
         ).pack(side="left", padx=(0, 6))
 
         self.download_btn = button(
-            input_row, "  ⬇  Download", variant="primary",
+            input_row, "Download", variant="primary",
             width=140, height=34, command=self._download,
         )
         self.download_btn.pack(side="left")
@@ -120,7 +120,7 @@ class DownloadBar(ctk.CTkFrame):
         ).pack(side="left")
 
         self.update_ytdlp_btn = button(
-            cookie_row, "⟳ Update yt-dlp", variant="ghost",
+            cookie_row, "Update yt-dlp", variant="ghost",
             width=120, height=26, command=self._update_ytdlp,
         )
         self.update_ytdlp_btn.pack(side="right")
@@ -253,7 +253,7 @@ class DownloadBar(ctk.CTkFrame):
             self.status_label.configure(text=text, text_color=T.TEXT_MUTED)
 
     def _on_download_complete(self, result):
-        self.download_btn.configure(state="normal", text="  ⬇  Download")
+        self.download_btn.configure(state="normal", text="Download")
         self.url_entry.configure(state="normal")
 
         if result.get("error"):
@@ -270,7 +270,7 @@ class DownloadBar(ctk.CTkFrame):
                 error_text = f"Error: {result['error'][:160]}"
                 from videokidnapper.utils import ytdlp_update
                 if ytdlp_update.looks_like_extractor_failure(result["error"]):
-                    error_text += "  — yt-dlp may be outdated; try ⟳ Update yt-dlp"
+                    error_text += "  — yt-dlp may be outdated; try Update yt-dlp"
                 self.status_label.configure(text=error_text, text_color=T.DANGER)
                 self._notify(f"Download failed: {result['error'][:60]}", "error")
             self.download_progress.set(0)
@@ -301,7 +301,7 @@ class DownloadBar(ctk.CTkFrame):
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_ytdlp_updated(self, ok, msg):
-        self.update_ytdlp_btn.configure(state="normal", text="⟳ Update yt-dlp")
+        self.update_ytdlp_btn.configure(state="normal", text="Update yt-dlp")
         self.status_label.configure(
             text=msg[:100], text_color=T.TEXT_MUTED if ok else T.DANGER)
         self._notify(msg[:100], "info" if ok else "error")
