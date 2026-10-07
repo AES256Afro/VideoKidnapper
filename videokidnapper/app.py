@@ -115,7 +115,7 @@ class App(ctk.CTk):
 
     # ------------------------------------------------------------------
     def _set_window_icon(self):
-        """Apply the packaged robber-head icon to the window / taskbar.
+        """Apply the packaged badge icon to the window / taskbar.
 
         Never fatal: headless test environments, exotic Tk builds, or a
         stripped install simply keep the default icon. On Windows the
@@ -140,6 +140,22 @@ class App(ctk.CTk):
         except Exception:
             pass
 
+    @staticmethod
+    def _load_brand_mark(size):
+        """The small logo mark as a CTkImage, or None if it can't load.
+
+        A stripped install without the PNG keeps the old ▶ tile rather
+        than failing to start.
+        """
+        path = Path(__file__).resolve().parent / "assets" / "mark.png"
+        try:
+            from PIL import Image
+            image = Image.open(path)
+            image.load()
+            return ctk.CTkImage(light_image=image, dark_image=image, size=(size, size))
+        except Exception:
+            return None
+
     # ------------------------------------------------------------------
     def _build_ui(self):
         self._build_header()
@@ -161,10 +177,15 @@ class App(ctk.CTk):
 
         brand = ctk.CTkFrame(header, fg_color="transparent")
         brand.pack(side="left", padx=(16, 18))
-        ctk.CTkLabel(
-            brand, text="▶", width=26, height=26, corner_radius=6,
-            fg_color=T.TEXT, text_color=T.BG_SURFACE, font=T.font(T.SIZE_SM, "bold"),
-        ).pack(side="left", padx=(0, 10))
+        self._brand_mark = self._load_brand_mark(30)
+        if self._brand_mark is not None:
+            ctk.CTkLabel(brand, text="", image=self._brand_mark,
+                         width=30, height=30).pack(side="left", padx=(0, 10))
+        else:
+            ctk.CTkLabel(
+                brand, text="▶", width=26, height=26, corner_radius=6,
+                fg_color=T.TEXT, text_color=T.BG_SURFACE, font=T.font(T.SIZE_SM, "bold"),
+            ).pack(side="left", padx=(0, 10))
         ctk.CTkLabel(brand, text=APP_NAME, font=T.font(T.SIZE_LG, "bold"),
                      text_color=T.TEXT).pack(side="left")
 

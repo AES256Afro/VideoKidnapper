@@ -35,6 +35,7 @@ pil_datas = collect_data_files("PIL")
 
 datas = ctk_datas + dnd_datas + cv2_datas + pil_datas + [
     ("../videokidnapper/assets/icon.png", "videokidnapper/assets"),
+    ("../videokidnapper/assets/mark.png", "videokidnapper/assets"),
 ]
 binaries = ctk_binaries + dnd_binaries + cv2_binaries
 hiddenimports = (ctk_hiddenimports + dnd_hiddenimports + cv2_hiddenimports
