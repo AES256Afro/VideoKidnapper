@@ -19,11 +19,14 @@ Paste in the body of the Store listing's Description field:
 ```
 VideoKidnapper pulls videos off the web, cuts them down, and exports clean GIFs or MP4s. Everything happens on your own machine. Nothing uploads, nothing is watermarked, and there is no account to create.
 
+Three clear steps
+Import brings a clip in, Edit is where you trim, caption, crop and colour it, and Export makes the file. Edit fits on one screen with no scrolling: your media, the preview, an Inspector for whatever you selected, and a track timeline underneath.
+
 Get the video
 Paste a link from YouTube, Instagram, X, Reddit, Bluesky, or Facebook, plus 1,000+ other sites yt-dlp supports. Press Ctrl+V from anywhere in the app to start. Queue a list of links and grab them in one batch. VideoKidnapper can read your browser cookies when a private or age-gated video needs a login.
 
 Trim to the exact moment
-Work on a frame-accurate timeline with a waveform and a thumbnail strip. Queue several cuts from one video and export them separately or stitch them together with transitions.
+Work on a frame-accurate track timeline with a filmstrip and a waveform. Save several cuts from one video and export them separately or stitch them together with transitions. Drag a caption or overlay on the timeline to move it in time, or drag its edge to retime it.
 
 Add captions that look right
 Style text with an outline, a shadow, bold or italic, and multiple lines. The preview matches the exported frame exactly, so there is no guesswork. Auto-caption speech with Whisper, or import an .srt or .vtt file for time-synced captions.
@@ -35,25 +38,26 @@ Add overlays
 Drop logos, watermarks, and sticker or GIF overlays anywhere on the frame, each with its own size, opacity, and timing. Paste an image straight from the clipboard.
 
 Export for the platform
-Tune GIFs the way you want with dither, palette, and loop controls, or export MP4s with hardware encoding when your GPU supports it. Reframe 16:9 into 9:16 for Shorts, Reels, and TikTok with a blurred-background fill instead of black bars. Speed, rotate, mute, audio-only, and colour adjustments are all built in.
+Every export setting is on one page: platform presets, format, quality, the save folder, file names, and joining cuts, with a summary of exactly what you will get. Tune GIFs with dither, palette, and loop controls, or export MP4s with hardware encoding when your GPU supports it. Reframe 16:9 into 9:16 for Shorts, Reels, and TikTok with a blurred-background fill instead of black bars. Speed, rotate, mute, audio-only, and colour adjustments are all built in, and the preview shows the colour you will export.
 
 More
-Record your screen straight into the editor. Free and open source. FFmpeg is included.
+Record your screen straight into the editor. Choose from five looks, from a clean light Studio theme to Graphite dark. Free and open source. FFmpeg is included.
 ```
 
 ### What's new in this version (Store field: "What's new in this version")
 
 User-facing changes only, no repo/doc housekeeping. Update this each
-release. For 1.8.2:
+release. For 1.9.0, which follows 1.8.3 on the Store (so it also
+carries the 1.8.4 fixes):
 
 ```
-- Animated stickers: overlay an animated GIF, APNG, or WebP on a video or a GIF export. It loops for as long as it is on screen.
-- Five looks to choose from: Cream retro tech (the new default), Dark, Light, Fallout, and Retro.
-- Exports are named after the video instead of a timestamp, with a choice of naming styles in Export Options.
-- Exports show how much time is left, not just a percentage.
-- Reorder queued cuts with the arrow buttons on each one. The order is the order they are joined in.
-- Faster startup: the window opens in about half the time.
-- Fixed: adding a GIF overlay used to stop the export. Fixed: a GIF export with an overlay could hang.
+- A new layout in three steps: Import, Edit, Export. Edit fits on one screen with no scrolling: your media, the preview, an Inspector for the selected caption or overlay, and a track timeline.
+- Track timeline: saved cuts, captions, overlays, a filmstrip and the waveform share one playhead. Drag a caption to move it in time, or drag its edge to retime it.
+- Every export setting on one page: platform presets, format, quality, folder, file names, and joining cuts, with a summary of exactly what you will get.
+- Colour adjustments now show in the preview, so a forgotten slider can no longer fade an export.
+- Studio, a clean light look, is the new default. Graphite (dark), Cream retro tech, Fallout and Retro are in Settings.
+- Export history shows a thumbnail of each export, grouped by day.
+- Exports match the video you started with: phone footage no longer comes out darker and faded, captions stay on screen in vertical and cropped exports, and stickers keep the size they have in the preview.
 ```
 
 ### Product features (Store field: "Product features", one per line)
@@ -66,22 +70,22 @@ one.
 Download from YouTube, Instagram, X, Reddit, Bluesky, Facebook, and 1,000+ more sites
 Paste a link or press Ctrl+V from anywhere to start, or batch a whole list of links
 Reads browser cookies for private and age-gated videos
-Frame-accurate trimming with a waveform and thumbnail strip
-Queue multiple cuts, reorder them, and export separately or stitched together
+Three clear steps, Import, Edit, Export, with all of editing on one screen
+Frame-accurate track timeline with a filmstrip and waveform
+Save multiple cuts, reorder them, and export separately or stitched together
 Captions with outline, shadow, bold, italic, and multiple lines
-Preview matches the exported frame exactly
+Preview matches the exported frame exactly, colour included
 Motion-tracked captions that follow a moving subject across the frame
 One-click Auto-track, or set the caption's motion path by hand
 Whisper auto-captions and .srt / .vtt import
-Logo, watermark, and sticker overlays placed anywhere on the frame
+Logo, watermark, and sticker overlays placed anywhere, or pasted from the clipboard
 Animated GIF, APNG, and WebP stickers that loop on the video
-Paste an image from the clipboard as an overlay
 GIF tuning with dither, palette, and loop controls
 Hardware-encoded MP4 export with time remaining shown while it runs
 Reframe 16:9 to 9:16 for Shorts, Reels, and TikTok with a blurred-background fill
 Speed, rotate, mute, audio-only, and colour adjustment
 Exports named after the video, with a choice of naming styles
-Five looks: Cream retro tech, Dark, Light, Fallout, and Retro
+Five looks: Studio, Graphite, Cream retro tech, Fallout, and Retro
 Runs fully offline, free and open source, no account, no watermark, FFmpeg included
 ```
 
@@ -96,8 +100,9 @@ Grab a video from the web, cut the part you want, caption it, and export a GIF o
 ### Feature bullets
 
 ```
+Three steps, Import, Edit, Export, with all of editing on one screen and no scrolling.
 Download from YouTube, Instagram, X, Reddit, Bluesky, Facebook, and 1,000+ sites. Paste a link or Ctrl+V from anywhere.
-Frame-accurate trimming. Queue multiple cuts and export them separately or stitched.
+Frame-accurate track timeline. Save multiple cuts and export them separately or stitched.
 Captions with outline, shadow, bold, and multiple lines. The preview matches the export exactly.
 Motion-tracked captions that follow a moving subject. Drag the path or one-click Auto-track.
 Whisper auto-captions and .srt / .vtt import.
