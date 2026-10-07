@@ -9,7 +9,7 @@ is centred on a 1920x1080 canvas filled with the active theme's base
 colour rather than stretched — a scaled-up Tk window looks blurry, and
 a letterbox in the theme colour reads as intentional.
 
-Usage:  python scripts/store_screenshots.py [--theme cream]
+Usage:  python scripts/store_screenshots.py [--theme light]
 Reads assets/screenshots/*.png, writes assets/store/NN-name-1920x1080.png.
 """
 
@@ -26,11 +26,12 @@ SIZE = (1920, 1080)
 
 #: Store order (first is the hero shot) -> source capture.
 SEQUENCE = [
-    ("01-studio",   "studio_loaded.png"),
-    ("02-download", "studio_link.png"),
-    ("03-start",    "studio_empty.png"),
-    ("04-history",  "history.png"),
-    ("05-setup",    "setup.png"),
+    ("01-edit",     "studio_loaded.png"),
+    ("02-export",   "studio_export.png"),
+    ("03-captions", "studio_text.png"),
+    ("04-import",   "studio_link.png"),
+    ("05-history",  "history.png"),
+    ("06-setup",    "setup.png"),
 ]
 
 
@@ -40,11 +41,17 @@ def main():
     from videokidnapper.ui.theme import PALETTES
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--theme", default="cream", choices=sorted(PALETTES))
+    ap.add_argument("--theme", default="light", choices=sorted(PALETTES))
     args = ap.parse_args()
     bg = PALETTES[args.theme]["BG_BASE"]
 
     OUT.mkdir(parents=True, exist_ok=True)
+    # The sequence is the whole set: drop images from an older one so a
+    # renamed shot can't linger and get uploaded twice.
+    keep = {f"{stem}-1920x1080.png" for stem, _source in SEQUENCE}
+    for old in OUT.glob("*-1920x1080.png"):
+        if old.name not in keep:
+            old.unlink()
     written = 0
     for stem, source in SEQUENCE:
         src = SRC / source

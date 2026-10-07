@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
 import sys
+import tkinter as tk
 import traceback
 from pathlib import Path
 
@@ -8,6 +9,9 @@ import customtkinter as ctk
 
 from videokidnapper.config import APP_NAME, APP_VERSION, WINDOW_SIZE, MIN_WINDOW_SIZE
 from videokidnapper.ui import theme as T
+from videokidnapper.ui.studio.chrome import WorkspaceHost, WorkspaceSwitcher
+from videokidnapper.ui.studio.icons import icon_button
+from videokidnapper.ui.theme import button
 from videokidnapper.ui.widgets import Toast
 from videokidnapper.utils import project_files, settings
 from videokidnapper.utils.dnd import enable_dnd_for
@@ -15,14 +19,20 @@ from videokidnapper.utils.ffmpeg_check import check_ffmpeg
 from videokidnapper.utils.github_update import check_async
 from videokidnapper.utils.urltools import looks_like_media_url
 
-# Tab titles in one place — position in _build_tabs decides order, and
-# CTkTabview selects the first tab added. One studio tab does it all:
-# open a file, record the screen, or kidnap from a link — same trim /
-# caption / export pipeline either way.
-TAB_STUDIO  = "  ⬇  Kidnap & Trim  "
-TAB_BATCH   = "  ⎆  Batch Export  "
-TAB_HISTORY = "  ⌛  History  "
-TAB_DEBUG   = "  ⚙  Debug  "
+# The three main workspaces, in the order the header shows them. Each
+# one is a step in the app's flow: bring a clip in, edit it, export it.
+WORKSPACES = (("import", "1  Import"), ("edit", "2  Edit"), ("export", "3  Export"))
+# Keys of the editor, the deferred Export sub-pages and the debug log.
+# Batch files and History are built on first view (see _ensure_tab).
+TAB_STUDIO = "edit"
+TAB_BATCH = "batch"
+TAB_HISTORY = "history"
+TAB_DEBUG = "log"
+# Shortcuts that only make sense while looking at the editor.
+_EDIT_ONLY = {
+    "keyboard_play_pause", "keyboard_nudge", "keyboard_mark_in",
+    "keyboard_mark_out", "keyboard_save_range", "keyboard_paste_url",
+}
 
 
 class App(ctk.CTk):
@@ -32,7 +42,7 @@ class App(ctk.CTk):
         T.configure_global()
 
         self.title(f"{APP_NAME} v{APP_VERSION}")
-        self.geometry(WINDOW_SIZE)
+        self.geometry(self._initial_geometry())
         self.minsize(*MIN_WINDOW_SIZE)
         self.configure(fg_color=T.BG_BASE)
         self._set_window_icon()
@@ -90,6 +100,19 @@ class App(ctk.CTk):
 
         self.after(350, show)
 
+    def _initial_geometry(self):
+        """Studio wants room: up to 1440x900, centered, within the screen."""
+        try:
+            want_w, want_h = (int(v) for v in WINDOW_SIZE.split("x"))
+            sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+            w = max(MIN_WINDOW_SIZE[0], min(want_w, sw - 60))
+            h = max(MIN_WINDOW_SIZE[1], min(want_h, sh - 90))
+            x = max(0, (sw - w) // 2)
+            y = max(0, (sh - h) // 2 - 20)
+            return f"{w}x{h}+{x}+{y}"
+        except Exception:
+            return WINDOW_SIZE
+
     # ------------------------------------------------------------------
     def _set_window_icon(self):
         """Apply the packaged robber-head icon to the window / taskbar.
@@ -120,8 +143,8 @@ class App(ctk.CTk):
     # ------------------------------------------------------------------
     def _build_ui(self):
         self._build_header()
-        self._build_tabs()
         self._build_statusbar()
+        self._build_workspaces()
 
         # Only the eagerly-built tabs. Deferred tabs receive the toast
         # in their own constructor — reaching for them here would build
@@ -131,172 +154,149 @@ class App(ctk.CTk):
 
     # ------------------------------------------------------------------
     def _build_header(self):
-        header = ctk.CTkFrame(
-            self, height=60, corner_radius=0, fg_color=T.BG_SURFACE,
-        )
+        header = ctk.CTkFrame(self, height=54, corner_radius=0, fg_color=T.BG_SURFACE)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
+        self.header = header
 
-        accent = ctk.CTkFrame(header, width=4, fg_color=T.ACCENT, corner_radius=0)
-        accent.pack(side="left", fill="y")
+        brand = ctk.CTkFrame(header, fg_color="transparent")
+        brand.pack(side="left", padx=(16, 18))
+        ctk.CTkLabel(
+            brand, text="▶", width=26, height=26, corner_radius=6,
+            fg_color=T.TEXT, text_color=T.BG_SURFACE, font=T.font(T.SIZE_SM, "bold"),
+        ).pack(side="left", padx=(0, 10))
+        ctk.CTkLabel(brand, text=APP_NAME, font=T.font(T.SIZE_LG, "bold"),
+                     text_color=T.TEXT).pack(side="left")
 
-        inner = ctk.CTkFrame(header, fg_color="transparent")
-        inner.pack(side="left", fill="both", expand=True, padx=16, pady=6)
+        self.switcher = WorkspaceSwitcher(header, WORKSPACES, command=self.show_workspace)
+        self.switcher.pack(side="left", pady=11)
 
-        title_row = ctk.CTkFrame(inner, fg_color="transparent")
-        title_row.pack(anchor="w")
-
-        logo = ctk.CTkLabel(
-            title_row, text="▶",
-            font=T.font(T.SIZE_HERO, "bold"),
-            text_color=T.ACCENT,
+        right = ctk.CTkFrame(header, fg_color="transparent")
+        right.pack(side="right", padx=(0, 12))
+        self.quick_export_btn = button(
+            right, "Quick export", variant="primary", height=36, width=150,
+            font=T.font(T.SIZE_MD, "bold"),
+            command=lambda: self.trim_tab.keyboard_export(),
         )
-        logo.pack(side="left", padx=(0, 8))
-
-        title = ctk.CTkLabel(
-            title_row, text=APP_NAME,
-            font=T.font(T.SIZE_HERO, "bold"),
-            text_color=T.TEXT,
-        )
-        title.pack(side="left")
-
-        version_chip = ctk.CTkLabel(
-            title_row, text=f" v{APP_VERSION} ",
-            font=T.font(T.SIZE_XS, "bold"),
-            text_color=T.TEXT_MUTED,
-            fg_color=T.BG_RAISED,
-            corner_radius=10,
-            padx=6,
-        )
-        version_chip.pack(side="left", padx=(10, 0), pady=(6, 0))
-
-        subtitle = ctk.CTkLabel(
-            inner,
-            text="Grab a video from the web, cut the part you want, caption it, export a GIF or MP4.",
-            font=T.font(T.SIZE_MD),
-            text_color=T.TEXT_MUTED,
-        )
-        subtitle.pack(anchor="w", pady=(2, 0))
-
-        # Setup button — prereqs checklist
-        self.project_btn = ctk.CTkButton(
-            header, text="Project",
-            fg_color=T.BG_RAISED, hover_color=T.BG_HOVER,
-            text_color=T.TEXT, font=T.font(T.SIZE_SM, "bold"),
-            corner_radius=14, width=84, height=28,
+        self.quick_export_btn.pack(side="right", padx=(8, 0))
+        self.settings_btn = icon_button(right, "settings", command=self._open_settings_menu)
+        self.settings_btn.pack(side="right", padx=1)
+        icon_button(right, "help", command=self._open_shortcuts_dialog).pack(side="right", padx=1)
+        icon_button(right, "redo",
+                    command=lambda: self.trim_tab.keyboard_redo()).pack(side="right", padx=1)
+        icon_button(right, "undo",
+                    command=lambda: self.trim_tab.keyboard_undo()).pack(side="right", padx=1)
+        self.project_btn = button(
+            right, "Untitled project", variant="ghost", height=32,
+            font=T.font(T.SIZE_MD, "bold"), text_color=T.TEXT,
             command=lambda: self.trim_tab.open_project_hub(),
         )
-        self.project_btn.place(relx=1.0, rely=0, anchor="ne", x=-244, y=16)
-
-        self.setup_btn = ctk.CTkButton(
-            header, text="⚙ Setup",
-            fg_color=T.BG_RAISED, hover_color=T.BG_HOVER,
-            text_color=T.TEXT, font=T.font(T.SIZE_SM, "bold"),
-            corner_radius=14, width=82, height=28,
-            command=self._open_setup_dialog,
-        )
-        self.setup_btn.place(relx=1.0, rely=0, anchor="ne", x=-150, y=16)
-
-        # Keyboard shortcuts overlay — discoverable at a glance instead
-        # of buried in the status-bar hint that scrolls away after 4s.
-        self.shortcuts_btn = ctk.CTkButton(
-            header, text="⌨",
-            fg_color=T.BG_RAISED, hover_color=T.BG_HOVER,
-            text_color=T.TEXT, font=T.font(T.SIZE_LG, "bold"),
-            corner_radius=14, width=36, height=28,
-            command=self._open_shortcuts_dialog,
-        )
-        self.shortcuts_btn.place(relx=1.0, rely=0, anchor="ne", x=-104, y=16)
-
-        # Theme picker (takes effect on restart). A popup menu rather
-        # than an inline dropdown so the header layout — everything here
-        # is placed by absolute x offset — does not have to move.
-        self.theme_btn = ctk.CTkButton(
-            header, text="◐",
-            fg_color=T.BG_RAISED, hover_color=T.BG_HOVER,
-            text_color=T.TEXT, font=T.font(T.SIZE_LG, "bold"),
-            corner_radius=14, width=36, height=28,
-            command=self._open_theme_menu,
-        )
-        self.theme_btn.place(relx=1.0, rely=0, anchor="ne", x=-56, y=16)
+        self.project_btn.pack(side="right", padx=(0, 8))
 
         # Update-available chip (hidden until check_async fires)
         self.update_chip = ctk.CTkButton(
-            header, text="", fg_color=T.SUCCESS, hover_color="#2EA043",
-            text_color=T.TEXT_ON_ACCENT,
-            font=T.font(T.SIZE_SM, "bold"),
-            corner_radius=12, height=28, width=0,
+            right, text="", fg_color=T.ACCENT_SOFT, hover_color=T.BG_HOVER,
+            text_color=T.ACCENT_SOFT_TEXT, font=T.font(T.SIZE_SM, "bold"),
+            corner_radius=14, height=28, width=0,
             command=self._open_update_link,
         )
         # not packed until there is something to show
 
-        divider = ctk.CTkFrame(self, height=1, fg_color=T.BORDER, corner_radius=0)
-        divider.pack(fill="x", side="top")
-
-    # ------------------------------------------------------------------
-    def _build_tabs(self):
-        self.tabview = ctk.CTkTabview(
-            self,
-            corner_radius=T.RADIUS_LG,
-            fg_color=T.BG_SURFACE,
-            border_width=1,
-            border_color=T.BORDER,
-            segmented_button_fg_color=T.BG_RAISED,
-            segmented_button_selected_color=T.ACCENT,
-            segmented_button_selected_hover_color=T.ACCENT_HOVER,
-            segmented_button_unselected_color=T.BG_RAISED,
-            segmented_button_unselected_hover_color=T.BG_HOVER,
-            text_color=T.TEXT,
-        )
-        self.tabview.pack(fill="both", expand=True, padx=12, pady=(8, 0))
-
-        self.tabview._segmented_button.configure(
-            font=T.font(T.SIZE_MD, "bold"), height=32,
+        self._settings_menu = tk.Menu(
+            self, tearoff=0, bg=T.BG_SURFACE, fg=T.TEXT,
+            activebackground=T.ACCENT_SOFT, activeforeground=T.TEXT,
+            font=(T.FONT_FAMILY, 10), bd=1, relief="solid",
         )
 
-        self.tabview.add(TAB_STUDIO)   # first added = leftmost + default
-        self.tabview.add(TAB_BATCH)
-        self.tabview.add(TAB_HISTORY)
-        self.tabview.add(TAB_DEBUG)
+        ctk.CTkFrame(self, height=1, fg_color=T.BORDER, corner_radius=0).pack(
+            fill="x", side="top")
 
+    def _build_workspaces(self):
         from videokidnapper.ui.debug_tab import DebugTab
+        from videokidnapper.ui.studio.export_workspace import ExportWorkspace
+        from videokidnapper.ui.studio.import_workspace import ImportWorkspace
         from videokidnapper.ui.trim_tab import TrimTab
 
-        # Debug stays eager: it receives log lines from the global
-        # exception handler and the ffmpeg failure logger, and those can
-        # fire before the user ever opens the tab. Buffering them to
-        # defer 57 ms is not a trade worth making.
-        self.debug_tab = DebugTab(self.tabview.tab(TAB_DEBUG), self)
-        self.debug_tab.pack(fill="both", expand=True)
+        self.workspaces = WorkspaceHost(self, on_switch=self._on_workspace_switched)
+        self.workspaces.pack(fill="both", expand=True)
+        # Plugins and scripts reach the host through the old attribute.
+        self.tabview = self.workspaces
 
-        self.trim_tab = TrimTab(self.tabview.tab(TAB_STUDIO), self)
+        # The debug log starts first so it captures everything after it.
+        log = self.workspaces.add("log")
+        log_bar = ctk.CTkFrame(log, fg_color=T.BG_SURFACE, corner_radius=0, height=44)
+        log_bar.pack(fill="x")
+        log_bar.pack_propagate(False)
+        button(log_bar, "‹  Back to editing", variant="ghost", height=30,
+               font=T.font(T.SIZE_SM, "bold"),
+               command=lambda: self.show_workspace("edit")).pack(side="left", padx=10)
+        self.debug_tab = DebugTab(log, self)
+        self.debug_tab.pack(fill="both", expand=True, padx=12, pady=12)
+
+        self.trim_tab = TrimTab(self.workspaces.add("edit"), self)
         self.trim_tab.pack(fill="both", expand=True)
 
-        # Batch and History are built the first time they are shown.
-        # Measured in situ on this tree, constructing every tab up front
-        # cost 968 ms, of which Batch was 365 ms and History 93 ms — 47%
-        # of the window build spent on two tabs most sessions never
-        # open. The frames still exist (the segmented button needs
-        # them); only their contents are deferred.
+        self.import_workspace = ImportWorkspace(self.workspaces.add("import"), self, self.trim_tab)
+        self.import_workspace.pack(fill="both", expand=True)
+
+        # Batch files and History are built the first time they are shown.
+        # Constructing them up front cost about half the window build
+        # (Batch 365 ms, History 93 ms, measured in situ), for two pages
+        # most sessions never open. The Export workspace asks for them
+        # through _ensure_tab when one of its sub-tabs is picked.
         self._lazy_tabs = {
             TAB_BATCH: self._construct_batch_tab,
             TAB_HISTORY: self._construct_history_tab,
         }
         self._built_tabs = {}
-        self.tabview.configure(command=self._on_tab_changed)
+        self.export_workspace = ExportWorkspace(self.workspaces.add("export"), self, self.trim_tab)
+        self.export_workspace.pack(fill="both", expand=True)
 
-    # -- lazy tab construction ----------------------------------------
-    def _on_tab_changed(self):
-        """Build a deferred tab the first time it is selected."""
+        self.trim_tab.add_state_listener(self._refresh_quick_export)
+        self.trim_tab.options.add_listener(self._refresh_quick_export)
+        self._refresh_quick_export()
+        self.show_workspace("edit" if self.trim_tab.video_path else "import")
+
+    def show_workspace(self, key):
+        self.workspaces.set(key)
+
+    def _on_workspace_switched(self, key):
+        self.switcher.select(key)
+        if key == "import":
+            self.import_workspace.refresh()
+        elif key == "export":
+            self.export_workspace.refresh()
+
+    def _refresh_quick_export(self):
+        editor = self.trim_tab
+        fmt = "MP3" if editor.options.audio_only_var.get() else editor.format_var.get()
+        self.quick_export_btn.configure(
+            text=f"Quick export  ·  {fmt} {editor.quality_var.get()}",
+            state="normal" if editor.video_path else "disabled",
+            width=0,
+        )
+
+    # -- lazy page construction ---------------------------------------
+    def _on_tab_changed(self, name=None):
+        """Build a deferred page the first time it is selected.
+
+        ``name`` defaults to the Export workspace's current sub-page.
+        Returns the page, or None when there is none or it failed to
+        build: a page that fails must not wedge switching, so the error
+        goes to the debug log instead of propagating.
+        """
         try:
-            self._ensure_tab(self.tabview.get())
+            return self._ensure_tab(name or self.export_workspace.current)
         except Exception:
-            # A tab that fails to build must not wedge tab switching;
-            # the global handler will have surfaced it already.
-            pass
+            try:
+                self.debug_tab.add_log(
+                    f"Could not open {name!r}:\n{traceback.format_exc()}", "ERROR")
+            except Exception:
+                pass
+            return None
 
     def _ensure_tab(self, name):
-        """Return a lazily-built tab, constructing it on first use."""
+        """Return a lazily-built page, constructing it on first use."""
         if name in self._built_tabs:
             return self._built_tabs[name]
         factory = self._lazy_tabs.get(name)
@@ -307,9 +307,9 @@ class App(ctk.CTk):
         return widget
 
     def _tab_if_built(self, name):
-        """The tab, or None when it has not been constructed yet.
+        """The page, or None when it has not been constructed yet.
 
-        For callers that want to poke an already-open tab but have no
+        For callers that want to poke an already-open page but have no
         reason to pay for building it — refreshing History after an
         export, for instance. History reads its data when it is built,
         so a refresh it never receives is not a refresh it needed.
@@ -319,8 +319,7 @@ class App(ctk.CTk):
     def _construct_batch_tab(self):
         from videokidnapper.ui.batch_export_tab import BatchExportTab
 
-        tab = BatchExportTab(self.tabview.tab(TAB_BATCH), self)
-        tab.pack(fill="both", expand=True)
+        tab = BatchExportTab(self.export_workspace.page_host, self)
         if hasattr(tab, "set_toast") and hasattr(self, "status_bar"):
             tab.set_toast(self.status_bar)
         return tab
@@ -328,8 +327,7 @@ class App(ctk.CTk):
     def _construct_history_tab(self):
         from videokidnapper.ui.history_tab import HistoryTab
 
-        tab = HistoryTab(self.tabview.tab(TAB_HISTORY), self)
-        tab.pack(fill="both", expand=True)
+        tab = HistoryTab(self.export_workspace.page_host, self)
         if hasattr(tab, "set_toast") and hasattr(self, "status_bar"):
             tab.set_toast(self.status_bar)
         return tab
@@ -344,36 +342,72 @@ class App(ctk.CTk):
 
     # ------------------------------------------------------------------
     def _build_statusbar(self):
-        divider = ctk.CTkFrame(self, height=1, fg_color=T.BORDER, corner_radius=0)
-        divider.pack(fill="x", side="bottom", pady=(6, 0))
-
         self.status_bar = Toast(self)
         self.status_bar.pack(fill="x", side="bottom")
+        ctk.CTkFrame(self, height=1, fg_color=T.BORDER, corner_radius=0).pack(
+            fill="x", side="bottom")
         self.status_bar.show(
-            "Ready · Space play · J/L step · I/O set in-out · "
-            "Ctrl+S project · Ctrl+Z/Y undo/redo · Ctrl+E export · ? shortcuts",
+            "Ready · Space play · J/L step · I/O mark in/out · Q save range · "
+            "Ctrl+E export · ? shortcuts",
             "success",
         )
 
     def set_project_status(self, name, dirty):
         if not hasattr(self, "project_btn"):
             return
-        label = name if name and name != "Untitled" else "Project"
-        if len(label) > 14:
-            label = f"{label[:11]}..."
-        if dirty:
-            label = f"{label} *"
-        self.project_btn.configure(text=label)
+        untitled = not name or name == "Untitled"
+        label = "Untitled project" if untitled else name
+        if len(label) > 26:
+            label = f"{label[:23]}…"
+        editor = getattr(self, "trim_tab", None)
+        has_video = bool(editor is not None and editor.video_path)
+        # "Saved" only means something once the project has a file.
+        state = "Edited" if dirty else ("" if untitled else "Saved")
+        self.project_btn.configure(
+            text=f"{label}  ·  {state}" if has_video and state else label,
+        )
+
+    # ------------------------------------------------------------------
+    # Settings menu (gear)
+    # ------------------------------------------------------------------
+    def _open_settings_menu(self):
+        menu = self._settings_menu
+        menu.delete(0, "end")
+        menu.add_command(label="Setup and components…", command=self._open_setup_dialog)
+        menu.add_command(label="Check for updates", command=self._check_updates_now)
+        menu.add_separator()
+        menu.add_cascade(label="Theme", menu=self._build_theme_menu(menu))
+        menu.add_separator()
+        menu.add_command(label="Keyboard shortcuts", command=self._open_shortcuts_dialog)
+        menu.add_command(label="Export history", command=self._show_history)
+        menu.add_command(label="Debug log", command=lambda: self.show_workspace("log"))
+        btn = self.settings_btn
+        try:
+            menu.tk_popup(btn.winfo_rootx() - 160, btn.winfo_rooty() + btn.winfo_height())
+        finally:
+            menu.grab_release()
+
+    def _show_history(self):
+        self.show_workspace("export")
+        self.export_workspace.show("history")
+
+    def _check_updates_now(self):
+        self.status_bar.show("Checking GitHub for a newer version…", "info")
+
+        def on_update(tag, link):
+            if self.winfo_exists():
+                self.after(0, self._show_update_chip, tag, link)
+
+        def report_if_current():
+            if not getattr(self, "_update_tag", None):
+                self.status_bar.show(f"You're up to date (v{APP_VERSION})", "success")
+
+        check_async(APP_VERSION, on_update)
+        self.after(5000, report_if_current)
 
     # ------------------------------------------------------------------
     # Keyboard shortcuts
     # ------------------------------------------------------------------
-    def _active_tab(self):
-        name = self.tabview.get()
-        if "Trim" in name:
-            return self.trim_tab
-        return None
-
     def _bind_accel(self, body, handler, both_cases=True):
         """Bind one app accelerator under every platform's modifier key.
 
@@ -419,15 +453,17 @@ class App(ctk.CTk):
         self.bind_all("<Key-I>",   lambda e: self._shortcut(e, "keyboard_mark_in"))
         self.bind_all("<Key-o>",   lambda e: self._shortcut(e, "keyboard_mark_out"))
         self.bind_all("<Key-O>",   lambda e: self._shortcut(e, "keyboard_mark_out"))
+        self.bind_all("<Key-q>",   lambda e: self._shortcut(e, "keyboard_save_range"))
+        self.bind_all("<Key-Q>",   lambda e: self._shortcut(e, "keyboard_save_range"))
         self._bind_accel("e", lambda e: self._shortcut(e, "keyboard_export"))
         self._bind_accel("o", lambda e: self._shortcut(e, "keyboard_open"))
         self._bind_accel("s", self._save_project_shortcut)
         self._bind_accel("Shift-s", self._save_project_as_shortcut)
         self._bind_accel("Shift-o", self._open_project_shortcut)
         # Ctrl+V routes by what's on the clipboard: a web link opens the
-        # Kidnap downloader from ANY tab; anything else falls through to
-        # the active tab's own paste (clipboard image → overlay on Trim).
-        # Entries keep native paste because _editing_in_entry short-circuits.
+        # downloader from any workspace; an image becomes an overlay in
+        # Edit. Entries keep native paste because _editing_in_entry
+        # short-circuits.
         self._bind_accel("v", self._paste_shortcut)
         # Undo / redo. `<Control-Z>` fires on Ctrl+Shift+Z; pair with
         # `<Control-y>` so users coming from any editor convention work.
@@ -441,33 +477,40 @@ class App(ctk.CTk):
         self._bind_accel("Shift-z", lambda e: self._shortcut(e, "keyboard_redo"))
         self._bind_accel("y", lambda e: self._shortcut(e, "keyboard_redo"))
         # `?` opens the shortcuts overlay. Not routed through _shortcut()
-        # because the target is the app itself, not the active tab.
+        # because the target is the app itself, not the editor.
         self.bind_all("<Key-question>", self._shortcut_shortcuts_overlay)
 
     def _editing_in_entry(self, event):
         widget = event.widget
         if not widget:
             return False
-        cls = widget.winfo_class()
+        try:
+            cls = widget.winfo_class()
+        except Exception:
+            return False
         return cls in ("Entry", "Text", "TEntry", "TCombobox")
 
     def _shortcut(self, event, method, *args):
         if self._editing_in_entry(event):
-            return
-        tab = self._active_tab()
-        if tab is None:
-            return
-        fn = getattr(tab, method, None)
+            return None
+        editor = getattr(self, "trim_tab", None)
+        if editor is None:
+            return None
+        if method in _EDIT_ONLY and self.workspaces.get() != "edit":
+            return None
+        fn = getattr(editor, method, None)
         if callable(fn):
             fn(*args)
+            # Space would otherwise also "click" whatever button has focus.
+            return "break"
+        return None
 
     def _paste_shortcut(self, event):
         """Ctrl+V, clipboard-aware: a pasted link kidnaps from anywhere.
 
-        A single http(s)/www link switches to the downloader tab with the
-        URL filled in, regardless of which tab is active. Everything else
-        (images, plain text) defers to the active tab's own
-        keyboard_paste_url handler.
+        A single http(s)/www link opens Import with the URL filled in,
+        regardless of the current workspace. Everything else (images,
+        plain text) defers to the editor's own paste handler.
         """
         if self._editing_in_entry(event):
             return
@@ -476,7 +519,6 @@ class App(ctk.CTk):
         except Exception:
             data = ""
         if looks_like_media_url(data or ""):
-            self.tabview.set(TAB_STUDIO)
             self.trim_tab.receive_url(data.strip())
             return
         self._shortcut(event, "keyboard_paste_url")
@@ -521,13 +563,8 @@ class App(ctk.CTk):
     def _show_update_chip(self, tag, link):
         self._update_tag = tag
         self._update_link = link
-        self.update_chip.configure(text=f"  ↑ Update {tag}  ", width=140)
-        self.update_chip.place(relx=1.0, rely=0, anchor="ne", x=-16, y=16)
-        # Make room for the update action instead of covering Setup.
-        self.setup_btn.place_configure(x=-292)
-        self.shortcuts_btn.place_configure(x=-246)
-        self.theme_btn.place_configure(x=-198)
-        self.project_btn.place_configure(x=-386)
+        self.update_chip.configure(text=f"  Update to {tag}  ")
+        self.update_chip.pack(side="right", padx=(0, 10), before=self.project_btn)
         if self.status_bar:
             self.status_bar.show(f"Update available: {tag}", "success")
 
@@ -543,13 +580,13 @@ class App(ctk.CTk):
     # Plugin API
     # ------------------------------------------------------------------
     def register_tab(self, display_name, factory, glyph="◆"):
-        """Append a tab contributed by a plugin.
+        """Add a workspace contributed by a plugin.
 
         Parameters
         ----------
         display_name : str
-            Shown on the tab's segmented button. Kept short — CTkTabview
-            centers the label and long strings wrap awkwardly.
+            Shown on the header's workspace switcher after Import, Edit
+            and Export. Keep it short so the header doesn't crowd.
         factory : callable
             ``factory(parent_frame) -> widget``. The widget is packed
             fill="both", expand=True inside the tab's frame.
@@ -560,10 +597,10 @@ class App(ctk.CTk):
         Returns the widget produced by ``factory``, or ``None`` if the
         factory raised (the failure is logged to the Debug tab).
         """
-        label = f"  {glyph}  {display_name}  "
+        key = f"plugin:{display_name}"
         try:
-            self.tabview.add(label)
-            parent = self.tabview.tab(label)
+            parent = self.workspaces.add(key)
+            self.switcher.add_item(key, f"{glyph}  {display_name}")
             widget = factory(parent)
             if widget is not None:
                 widget.pack(fill="both", expand=True)
@@ -656,25 +693,24 @@ class App(ctk.CTk):
     # button feel broken (issue from user feedback: "This button does
     # nothing"). Trade: confirm-to-restart, which makes the click
     # visibly do *something* every time.
-    def _open_theme_menu(self):
-        """Pop a menu of every theme beneath the theme button."""
-        import tkinter as tk
-
-        menu = tk.Menu(self, tearoff=0)
-        # Kept on self: a StringVar that gets collected while the menu is
-        # open loses the check mark on the current entry.
-        self._theme_menu_var = tk.StringVar(value=T.current_theme())
-        for key, label in T.THEME_LABELS.items():
-            menu.add_radiobutton(
-                label=label, value=key, variable=self._theme_menu_var,
-                command=lambda k=key: self._pick_theme(k),
+    def _build_theme_menu(self, parent):
+        """Submenu of every theme, the current one checked."""
+        if getattr(self, "_theme_menu", None) is None:
+            self._theme_menu = tk.Menu(
+                parent, tearoff=0, bg=T.BG_SURFACE, fg=T.TEXT,
+                activebackground=T.ACCENT_SOFT, activeforeground=T.TEXT,
+                selectcolor=T.ACCENT, font=(T.FONT_FAMILY, 10),
             )
-        x = self.theme_btn.winfo_rootx()
-        y = self.theme_btn.winfo_rooty() + self.theme_btn.winfo_height()
-        try:
-            menu.tk_popup(x, y)
-        finally:
-            menu.grab_release()
+            # Kept on self: a StringVar that gets collected while the menu
+            # is open loses the check mark on the current entry.
+            self._theme_menu_var = tk.StringVar(master=self)
+            for key, label in T.THEME_LABELS.items():
+                self._theme_menu.add_radiobutton(
+                    label=label, value=key, variable=self._theme_menu_var,
+                    command=lambda k=key: self._pick_theme(k),
+                )
+        self._theme_menu_var.set(T.current_theme())
+        return self._theme_menu
 
     def _pick_theme(self, key):
         if key == T.current_theme():
@@ -790,7 +826,7 @@ class App(ctk.CTk):
                 pass
             if self.status_bar:
                 self.status_bar.show(
-                    f"Error: {exc_type.__name__}: {exc_value} (see Debug tab)",
+                    f"Error: {exc_type.__name__}: {exc_value} (details: Settings › Debug log)",
                     "error",
                 )
 

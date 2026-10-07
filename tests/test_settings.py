@@ -116,6 +116,22 @@ def test_schema_v5_upgrades_to_current(fresh_settings):
     assert saved["aspect_fill_mode"] == "crop"
 
 
+@pytest.mark.parametrize("stored,expected", [
+    ("dark", "light"),      # the default before 1.8.2
+    ("cream", "light"),     # the default from 1.8.2
+    ("fallout", "fallout"),  # picked on purpose: kept
+    ("retro", "retro"),
+    ("light", "light"),
+])
+def test_schema_v8_moves_old_defaults_to_studio(fresh_settings, stored, expected):
+    import json
+    fresh_settings._SETTINGS_PATH.write_text(
+        json.dumps({"_version": 7, "theme": stored}),
+        encoding="utf-8",
+    )
+    assert fresh_settings.get("theme") == expected
+
+
 def test_batch_jobs_round_trip(fresh_settings):
     fresh_settings.set("batch_jobs", [
         {"input_path": "/a.mp4", "output_path": "/b.mp4", "status": "queued"},
