@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.9.0] — 2026-10-06
 
 > **A new layout: Import, Edit, Export.** The editor fits on one screen with no scrolling, every export setting lives on one page, and a light Studio look replaces the old default.
 
