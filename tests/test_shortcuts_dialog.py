@@ -103,6 +103,7 @@ _LABEL_TO_KEYSYM = {
     "L":             "Key-l",
     "I":             "Key-i",
     "O":             "Key-o",
+    "Q":             "Key-q",
     "Ctrl+Z":        "Control-z",
     "Ctrl+Y":        "Control-y",
     "Ctrl+Shift+Z":  "Control-Shift-Z",

@@ -16,7 +16,7 @@ from typing import Any
 
 
 _SETTINGS_PATH = Path.home() / ".videokidnapper_settings.json"
-_CURRENT_SCHEMA = 7
+_CURRENT_SCHEMA = 8
 
 # In-process lock for the read-modify-write cycle. Two export threads
 # finishing at the same moment both did `data = _read(); data[k] = v;
@@ -41,7 +41,7 @@ _DEFAULTS = {
     "speed":            1.0,
     "rotate":           0,
     "crop":             None,
-    "theme":            "cream",        # a key of ui.theme.PALETTES
+    "theme":            "light",        # a key of ui.theme.PALETTES
     "aspect_preset":    "Source",        # see ASPECT_PRESETS in config
     "concat_ranges":    False,
     "text_fade":        0.0,             # seconds
@@ -129,6 +129,13 @@ def _migrate(data):
         data.setdefault("onboarding_complete", False)
         data.setdefault("recent_projects", [])
         version = 7
+    if version < 8:
+        # Schema 8: the Studio redesign. Installs on either earlier
+        # default look (Dark before 1.8.2, Cream after) move to Studio
+        # once; a theme someone went out of their way to pick stays.
+        if data.get("theme") in ("dark", "cream"):
+            data["theme"] = "light"
+        version = 8
     data["_version"] = version
     return data
 
