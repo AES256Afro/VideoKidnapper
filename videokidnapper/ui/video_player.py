@@ -39,15 +39,13 @@ class VideoPlayer(ctk.CTkFrame):
     _PLAY_FPS = 8
     _PLAY_MS = int(1000 / _PLAY_FPS)
 
-    def __init__(self, master, on_empty_click=None, on_file_dropped=None, **kwargs):
-        super().__init__(
-            master,
-            fg_color=T.BG_SURFACE,
-            border_width=1,
-            border_color=T.BORDER,
-            corner_radius=T.RADIUS_LG,
-            **kwargs,
-        )
+    def __init__(self, master, on_empty_click=None, on_file_dropped=None,
+                 canvas_bg=None, inset=10, **kwargs):
+        kwargs.setdefault("fg_color", T.BG_SURFACE)
+        kwargs.setdefault("border_width", 1)
+        kwargs.setdefault("border_color", T.BORDER)
+        kwargs.setdefault("corner_radius", T.RADIUS_LG)
+        super().__init__(master, **kwargs)
         self.video_path = None
         self.duration = 0
         self.current_time = 0
@@ -65,6 +63,9 @@ class VideoPlayer(ctk.CTkFrame):
         # None once a path is known to be a still. Decoding every
         # frame is done once per file, not once per preview tick.
         self._image_anim_cache = {}
+        # Zero-arg callable → (brightness, contrast, saturation, gamma) so
+        # the preview shows the same color grade the export applies.
+        self._color_provider = None
         self._playing = False
         self._play_after_id = None
         self._play_end = None
@@ -107,11 +108,11 @@ class VideoPlayer(ctk.CTkFrame):
 
         self.canvas = tk.Canvas(
             self,
-            bg=T.BG_BASE,
+            bg=canvas_bg or T.BG_BASE,
             highlightthickness=0,
             cursor="hand2" if on_empty_click else "crosshair",
         )
-        self.canvas.pack(fill="both", expand=True, padx=10, pady=10)
+        self.canvas.pack(fill="both", expand=True, padx=inset, pady=inset)
 
         self.canvas.bind("<Configure>", self._on_resize)
 
@@ -160,6 +161,21 @@ class VideoPlayer(ctk.CTkFrame):
         overlays" case and produces no extra rendering work.
         """
         self._image_layers_provider = provider
+
+    def set_color_provider(self, provider):
+        """`provider` returns ``(brightness, contrast, saturation, gamma)``."""
+        self._color_provider = provider
+
+    def _apply_color(self, image):
+        """Grade the bare frame like the export's ``eq=`` pass (which runs
+        before drawtext and overlays, so captions keep their colors)."""
+        if not self._color_provider:
+            return image
+        try:
+            from videokidnapper.utils.color_preview import apply_grade
+            return apply_grade(image, *self._color_provider())
+        except Exception:
+            return image
 
     def get_text_source_bbox(self, index):
         """Source-pixel ``(x1, y1, x2, y2)`` of a text layer as last
@@ -284,7 +300,7 @@ class VideoPlayer(ctk.CTkFrame):
             )
         )
         hint = (
-            "Click here, drag a file, or use Open Video File"
+            "Drop a video here, or click to open one"
             if self._on_empty_click
             else "Load a video or download one from a URL"
         )
@@ -381,6 +397,7 @@ class VideoPlayer(ctk.CTkFrame):
         frame = get_frame_at(self.video_path, timestamp)
         if frame is None:
             return
+        frame = self._apply_color(frame)
 
         cw = self.canvas.winfo_width()
         ch = self.canvas.winfo_height()
@@ -848,7 +865,7 @@ class VideoPlayer(ctk.CTkFrame):
         new_h = max(1, int(fh * scale))
         # Match the scrub path: composite overlays onto the source-sized
         # frame, then resize. Keeps preview-matches-export alignment.
-        composited = self._apply_text_overlay(img, ts)
+        composited = self._apply_text_overlay(self._apply_color(img), ts)
         rendered = composited.resize((new_w, new_h), Image.LANCZOS)
         self._photo = ImageTk.PhotoImage(rendered)
         self.canvas.delete("frame")
@@ -868,8 +885,8 @@ class VideoPlayer(ctk.CTkFrame):
             self.current_time = self._av_player.current_time()
         except Exception:
             pass
-        # 200ms is fine for the external consumers (keyboard nudge, etc.)
-        self._av_time_after_id = self.after(200, self._av_poll_time)
+        # 80ms keeps the timeline playhead moving smoothly during playback.
+        self._av_time_after_id = self.after(80, self._av_poll_time)
 
     def _av_on_finished(self, reason):
         """Tear down when the A/V player reports end-of-clip or stop."""

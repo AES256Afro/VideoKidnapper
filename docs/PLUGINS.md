@@ -67,12 +67,12 @@ def _build(self, parent):
 
 | Attribute | Type | Purpose |
 |---|---|---|
-| `app.trim_tab` | `TrimTab` | The main editing tab |
-| `app.url_tab` | `UrlTab` | URL downloader |
-| `app.history_tab` | `HistoryTab` | Recent exports list |
+| `app.trim_tab` | `TrimTab` | The Edit workspace (editor) |
+| `app.history_tab` | `HistoryTab` | Recent exports list (Export → History) |
 | `app.debug_tab` | `DebugTab` | Log sink; `app.debug_tab.add_log(msg, level)` |
 | `app.status_bar` | `Toast` | Bottom status strip; `app.status_bar.show(msg, level)` |
-| `app.tabview` | `CTkTabview` | Raw tabview (for advanced integrations) |
+| `app.show_workspace(key)` | method | Switch to `"import"`, `"edit"`, `"export"` or a plugin's workspace |
+| `app.tabview` | `WorkspaceHost` | Workspace container; keeps the `add` / `tab` / `set` / `get` calls of the old tabview |
 | `app.ffmpeg_path` / `app.ffprobe_path` | `str` | Verified paths on disk |
 
 Treat everything not in this table as internal — names and shapes can change. Stick to `register_tab` + the documented attributes above and your plugin survives refactors.

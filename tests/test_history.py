@@ -40,7 +40,7 @@ def test_migration_adds_missing_keys(fresh_settings, tmp_path):
     (fresh_settings._SETTINGS_PATH).write_text(json.dumps({
         "_version": 1, "quality": "High",
     }))
-    assert fresh_settings.get("theme") == "dark"
+    assert fresh_settings.get("theme") == "light"
     assert fresh_settings.get("aspect_preset") == "Source"
     assert fresh_settings.get("history") == []
     assert fresh_settings.get("quality") == "High"  # preserved

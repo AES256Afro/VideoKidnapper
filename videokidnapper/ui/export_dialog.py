@@ -17,7 +17,7 @@ class ExportDialog(ctk.CTkToplevel):
 
     _W = 460
     _H = 260
-    _H_EXPANDED = 400  # taller once the share panel is shown
+    _H_EXPANDED = 480  # taller once the share panel is shown
 
     def __init__(self, master, title="Exporting...", **kwargs):
         super().__init__(master, **kwargs)
@@ -51,7 +51,7 @@ class ExportDialog(ctk.CTkToplevel):
         top.pack(fill="x", padx=18, pady=(18, 6))
 
         self.icon_label = ctk.CTkLabel(
-            top, text="⟳",
+            top, text="↑",
             font=T.font(T.SIZE_HERO, "bold"),
             text_color=T.ACCENT,
         )

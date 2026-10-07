@@ -63,7 +63,7 @@ class BatchPanel(ctk.CTkFrame):
         btn_row.pack(fill="x", padx=12, pady=(0, 8))
 
         self.start_btn = button(
-            btn_row, "  ⬇  Download All", variant="primary",
+            btn_row, "Download all", variant="primary",
             width=170, height=32, command=self._start,
         )
         self.start_btn.pack(side="left")

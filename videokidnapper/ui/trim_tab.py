@@ -1,9 +1,32 @@
 # SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
+"""The Studio Edit workspace.
+
+Layout, with no page scrolling:
+
+    ┌ Media ───┬ Preview ──────────────────────┬ Inspector ─────┐
+    │ add/open │ canvas tools                  │ Clip Text      │
+    │ record   │ video                         │ Image Color    │
+    │ this clip│ timecode · transport · in/out │                │
+    ├──────────┴───────────────────────────────┴────────────────┤
+    │ Timeline: ruler, ranges, text, image, video, audio lanes   │
+    └────────────────────────────────────────────────────────────┘
+
+The class keeps its historical name and public API (``app.trim_tab``,
+``open_project``, ``receive_url``, keyboard handlers, ...) so dialogs,
+plugins and the CLI-adjacent code that call into it keep working.
+
+Captions and image overlays still live in ``TextLayersPanel`` /
+``ImageLayersPanel`` rows, which act as the data model; they're never
+shown. The Inspector edits one selected row at a time and the timeline
+draws them all as clips.
+"""
+
 import os
 import subprocess
 import threading
 import time
+import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox
@@ -18,17 +41,17 @@ from videokidnapper.core.ffmpeg_backend import (
 from videokidnapper.core.preview import clear_cache
 from videokidnapper.core.screen_capture import record_screen
 from videokidnapper.ui import theme as T
+from videokidnapper.ui.editor_options import EditorOptions
 from videokidnapper.ui.export_dialog import ExportDialog
-from videokidnapper.ui.export_options import ExportOptionsPanel
-from videokidnapper.ui.image_layers import ImageLayersPanel
-from videokidnapper.ui.multi_range import RangeQueue
+from videokidnapper.ui.image_layers import SUPPORTED_IMAGE_EXTS, ImageLayersPanel
 from videokidnapper.ui.platform_presets import PLATFORM_CHOICES, get_preset
+from videokidnapper.ui.studio import controls as C
+from videokidnapper.ui.studio.icons import glyph, icon_button, icon_font
+from videokidnapper.ui.studio.inspector import Inspector
+from videokidnapper.ui.studio.timeline import MAX_ZOOM, TimelineView
 from videokidnapper.ui.text_layers import TextLayersPanel
 from videokidnapper.ui.theme import button
-from videokidnapper.ui.thumbnail_strip import ThumbnailStrip
 from videokidnapper.ui.video_player import VideoPlayer
-from videokidnapper.ui.waveform import WaveformStrip
-from videokidnapper.ui.widgets import RangeSlider, TimestampEntry
 from videokidnapper.utils import project_files, settings
 from videokidnapper.utils.file_naming import generate_export_path
 from videokidnapper.utils.size_estimator import estimate_bytes, human_bytes
@@ -36,16 +59,79 @@ from videokidnapper.utils.srt_parser import parse_srt_file, srt_to_text_layers
 from videokidnapper.utils.time_format import seconds_to_hms, hms_to_seconds
 from videokidnapper.utils.undo import UndoStack
 
+MEDIA_W = 250
+MEDIA_RAIL_W = 44
+INSPECTOR_W = 340
+_FRAME_COALESCE_MS = 15
+_PREVIEW_REFRESH_MS = 40
+_PLAY_POLL_MS = 80
+
+
+def short_duration(seconds):
+    """Compact clip length for labels: ``0:42``, ``12:05``, ``1:02:03``."""
+    total = int(round(max(0.0, float(seconds or 0))))
+    minutes, secs = divmod(total, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+
+class RangeStore:
+    """Saved ranges: what the old ``RangeQueue`` held, minus its widget."""
+
+    MIN_LENGTH = 0.05
+
+    def __init__(self, on_change=None):
+        self._ranges = []
+        self._on_change = on_change
+
+    def _changed(self):
+        if self._on_change:
+            self._on_change()
+
+    def add_range(self, start, end):
+        if end - start < self.MIN_LENGTH:
+            return False
+        self._ranges.append((float(start), float(end)))
+        self._changed()
+        return True
+
+    def remove(self, index):
+        if 0 <= index < len(self._ranges):
+            del self._ranges[index]
+            self._changed()
+
+    def move(self, index, delta):
+        """Move one range earlier (-1) or later (+1); True if it moved.
+
+        Joined exports follow this order. An out-of-range move is a no-op
+        so a stale index from a redrawn list cannot raise.
+        """
+        target = index + delta
+        if not (0 <= index < len(self._ranges) and 0 <= target < len(self._ranges)):
+            return False
+        self._ranges[index], self._ranges[target] = (
+            self._ranges[target], self._ranges[index])
+        self._changed()
+        return True
+
+    def clear(self):
+        if self._ranges:
+            self._ranges.clear()
+            self._changed()
+
+    def set_ranges(self, ranges):
+        self._ranges = [(float(s), float(e)) for s, e in ranges]
+        self._changed()
+
+    def get_ranges(self):
+        return list(self._ranges)
+
 
 class TrimTab(ctk.CTkFrame):
-    """Editor with a fixed tool dock and a scrollable workspace."""
+    """Studio Edit workspace (historical name kept for compatibility)."""
 
     def __init__(self, master, app, **kwargs):
-        super().__init__(
-            master,
-            fg_color="transparent",
-            **kwargs,
-        )
+        super().__init__(master, fg_color=T.BORDER, corner_radius=0, **kwargs)
         self.app = app
         self.video_path = None
         # The name exports derive from. For a download this is the real
@@ -69,8 +155,23 @@ class TrimTab(ctk.CTkFrame):
         self.current_project_path = None
         self._project_dirty = False
 
+        self.playhead = 0.0
+        self.selected_text_index = None
+        self.selected_image_index = None
+        self.size_estimate_text = ""
+        self.download_bar = None          # set by the Import workspace
+        self._state_listeners = []
+        self._frame_after_id = None
+        self._pending_frame_t = None
+        self._preview_after_id = None
+        self._crop_on = False
+        self._media_thumb = None
+
         self._build_ui()
 
+    # ------------------------------------------------------------------
+    # Wiring for other workspaces
+    # ------------------------------------------------------------------
     def set_toast(self, toast):
         self._toast = toast
 
@@ -78,371 +179,318 @@ class TrimTab(ctk.CTkFrame):
         if self._toast:
             self._toast.show(message, level)
 
+    def add_state_listener(self, callback):
+        """``callback()`` runs whenever export-relevant state changes."""
+        self._state_listeners.append(callback)
+
+    def _emit_state(self):
+        for callback in list(self._state_listeners):
+            try:
+                callback()
+            except Exception:
+                pass
+
+    def _show_workspace(self, key):
+        show = getattr(self.app, "show_workspace", None)
+        if callable(show):
+            show(key)
+
+    # ------------------------------------------------------------------
+    # Layout
     # ------------------------------------------------------------------
     def _build_ui(self):
-        self._build_feature_dock()
-        self.body = ctk.CTkScrollableFrame(
-            self,
-            fg_color="transparent",
-            scrollbar_button_color=T.BG_HOVER,
-            scrollbar_button_hover_color=T.BG_ACTIVE,
-        )
-        self.body.pack(fill="both", expand=True)
-        body = self.body
+        self._build_models()
 
-        source_card = ctk.CTkFrame(
-            body, fg_color=T.BG_SURFACE,
-            border_width=1, border_color=T.BORDER,
-            corner_radius=T.RADIUS_LG,
-        )
-        source_card.pack(fill="x", padx=12, pady=(12, 6))
+        self.grid_columnconfigure(0, minsize=MEDIA_W, weight=0)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(2, minsize=INSPECTOR_W, weight=0)
+        self.grid_rowconfigure(0, weight=1)
 
-        src_inner = ctk.CTkFrame(source_card, fg_color="transparent")
-        src_inner.pack(fill="x", padx=14, pady=12)
+        self.media_panel = self._build_media_panel()
+        self.media_rail = self._build_media_rail()
+        self._set_media_collapsed(bool(settings.get("media_panel_collapsed", False)),
+                                  persist=False)
+        self._build_preview().grid(row=0, column=1, sticky="nsew")
+        self.inspector = Inspector(self, self, width=INSPECTOR_W)
+        self.inspector.pack_propagate(False)
+        self.inspector.grid(row=0, column=2, sticky="nsew", padx=(1, 0))
+        self._build_timeline().grid(row=1, column=0, columnspan=3, sticky="ew", pady=(1, 0))
 
-        self.open_btn = button(
-            src_inner, "  ⇪  Open Video File", variant="primary",
-            width=145, command=self._open_file,
-        )
-        self.open_btn.pack(side="left")
+        self._update_project_status()
+        self._update_timecode()
 
-        button(
-            src_inner, "  ⊞  Record Screen", variant="secondary",
-            width=135, height=34, command=self._record_screen,
-        ).pack(side="left", padx=(8, 0))
+    def _build_models(self):
+        self.options = EditorOptions(self)
+        # Historical name: export, projects and presets call through it.
+        self.export_options = self.options
+        self.options.add_listener(self._on_export_options_changed)
 
-        button(
-            src_inner, "  ⇪  Import SRT", variant="ghost",
-            width=110, height=34, command=self._import_srt,
-        ).pack(side="left", padx=(4, 0))
+        self.platform_var = ctk.StringVar(value=settings.get("platform_preset", "Custom"))
+        self.quality_var = ctk.StringVar(value=settings.get("quality", "Medium"))
+        self.format_var = ctk.StringVar(value=settings.get("format", "GIF"))
 
-        # Whisper auto-captions — only enabled once a video is loaded.
-        # Clicking kicks off a background transcription; result feeds
-        # into the same text-layers panel the SRT importer targets.
-        self.captions_btn = button(
-            src_inner, "  🗣  Auto-captions", variant="ghost",
-            width=130, height=34, command=self._auto_caption,
-        )
-        self.captions_btn.pack(side="left", padx=(4, 0))
-
-        self._download_expanded = False
-        self.web_btn = button(
-            src_inner, "Web link", variant="secondary",
-            width=95, height=34, command=self._toggle_download_bar,
-        )
-        self.web_btn.pack(side="left", padx=(4, 0))
-
-        self.file_label = ctk.CTkLabel(
-            source_card, text="No file loaded  ·  Ctrl+O or drop a file",
-            font=T.font(T.SIZE_SM),
-            text_color=T.TEXT_DIM, anchor="w",
-        )
-        self.file_label.pack(fill="x", padx=14, pady=(0, 8))
-
-        self.download_container = ctk.CTkFrame(
-            source_card, fg_color="transparent",
-        )
-
-        ctk.CTkFrame(
-            self.download_container, height=1,
-            fg_color=T.BORDER, corner_radius=0,
-        ).pack(fill="x", padx=14)
-
-        # Download-from-link strip: the whole old URL tab boiled down to
-        # this bar — a finished download flows into the same _load_path
-        # a local file uses, so there is exactly one editor.
-        from videokidnapper.ui.source_bar import DownloadBar
-        self.download_bar = DownloadBar(
-            self.download_container,
-            on_video_ready=self._on_downloaded_video,
-            notify=self._notify,
-        )
-        self.download_bar.pack(fill="x", padx=14, pady=(10, 12))
-
-        # Preview (clickable + DnD-aware). Fixed height inside a scrollable
-        # tab — the player letterboxes to preserve aspect ratio.
-        self.player = VideoPlayer(
-            body,
-            on_empty_click=self._open_file,
-            on_file_dropped=self._on_file_dropped,
-            height=320,
-        )
-        self.player.pack(fill="x", padx=12, pady=6)
-        self.player.pack_propagate(False)
-        self.player.set_text_layers_provider(self._current_text_layers)
-        # Image overlays share the same provider pattern as text layers —
-        # the player composites PNG files on top of the frame in source-
-        # resolution space so the preview matches the exported output.
-        self.player.set_image_layers_provider(self._current_image_layers)
-        # Click-drag on the preview moves the active layer. The panel owns
-        # the widget state, so we forward via its set_layer_position entry.
-        self.player.set_text_position_callback(self._on_text_dragged)
-        # The preview renders the export's frame (aspect preset, crop,
-        # blur fill, rotation), so it needs the live export options. The
-        # panel is built further down, hence the late lookup.
-        self.player.set_export_options_provider(
-            lambda: self.export_options.get_options()
-            if hasattr(self, "export_options") else {},
-        )
-        # Image overlays get the same treatment so users can drag a
-        # logo / sticker / GIF anywhere on the frame — same set-position
-        # flow as text, same live preview.
-        self.player.set_image_position_callback(
-            lambda i, x, y: self.image_layers.set_layer_position(i, x, y),
-        )
-
-        # Waveform + timeline card
-        timeline_card = ctk.CTkFrame(
-            body, fg_color=T.BG_SURFACE,
-            border_width=1, border_color=T.BORDER,
-            corner_radius=T.RADIUS_LG,
-        )
-        timeline_card.pack(fill="x", padx=12, pady=6)
-
-        # Thumbnail strip sits above the waveform — click to seek. It
-        # extracts in the background so it never blocks video load.
-        self.thumbnail_strip = ThumbnailStrip(
-            timeline_card, on_seek=self._seek_from_thumbnail,
-        )
-        self.thumbnail_strip.pack(fill="x", padx=14, pady=(10, 2))
-
-        self.waveform = WaveformStrip(timeline_card)
-        self.waveform.pack(fill="x", padx=14, pady=(2, 4))
-
-        self.range_slider = RangeSlider(
-            timeline_card, from_=0, to=100,
-            command=self._on_slider_change,
-        )
-        self.range_slider.pack(fill="x", padx=14, pady=(0, 6))
-
-        time_row = ctk.CTkFrame(timeline_card, fg_color="transparent")
-        time_row.pack(fill="x", padx=14, pady=(0, 10))
-
-        self.start_entry = TimestampEntry(
-            time_row, label="Start", default="00:00:00.000",
-            command=self._on_start_entry,
-        )
-        self.start_entry.pack(side="left", padx=(0, 20))
-
-        self.end_entry = TimestampEntry(
-            time_row, label="End", default="00:00:00.000",
-            command=self._on_end_entry,
-        )
-        self.end_entry.pack(side="left", padx=(0, 20))
-
-        self.duration_label = ctk.CTkLabel(
-            time_row, text="Duration  —",
-            font=T.font(T.SIZE_MD, "bold", mono=True),
-            text_color=T.TEXT_MUTED,
-        )
-        self.duration_label.pack(side="left")
-
-        self.play_btn = button(
-            time_row, "▶  Play", variant="secondary",
-            width=90, height=32, command=self._toggle_play,
-        )
-        self.play_btn.pack(side="right", padx=(4, 0))
-
-        button(
-            time_row, "◉  System", variant="ghost",
-            width=90, height=32, command=self._play_in_system,
-        ).pack(side="right", padx=(4, 0))
-
-        self.crop_btn = button(
-            time_row, "⬚  Crop", variant="secondary",
-            width=80, height=32, command=self._toggle_crop_mode,
-        )
-        self.crop_btn.pack(side="right", padx=(4, 0))
-
-        button(
-            time_row, "+ Queue", variant="secondary",
-            width=90, height=32, command=self._queue_range,
-        ).pack(side="right", padx=(4, 0))
-
-        # Multi-range queue
-        self.range_queue = RangeQueue(body, on_change=self._on_range_changed)
-        self.range_queue.pack(fill="x", padx=12, pady=6)
-
-        # Text layers
-        self.text_layers = TextLayersPanel(body, on_change=self._on_text_layers_changed)
-        self.text_layers.pack(fill="x", padx=12, pady=6)
-        # ⚡ Auto-track lives on each layer row but is driven from here.
+        # Never packed: the caption and overlay rows are the data model.
+        self._model_host = ctk.CTkFrame(self)
+        self.text_layers = TextLayersPanel(
+            self._model_host, on_change=self._on_text_layers_changed)
+        # Auto-track lives on each caption but is driven from here.
         self.text_layers.set_autotrack_handler(self._auto_track)
-
-        # Image overlays — same collapsible card pattern as text layers.
-        # Each row carries a PNG path + anchor + scale + opacity + timing.
-        # The export path passes the list through to trim_to_video, which
-        # switches to -filter_complex when any are present. The on_change
-        # callback triggers a preview refresh so slider drags show live.
         self.image_layers = ImageLayersPanel(
-            body,
+            self._model_host,
             on_change=self._on_image_layers_changed,
             on_notify=self._notify,
         )
-        self.image_layers.pack(fill="x", padx=12, pady=6)
+        self.range_queue = RangeStore(on_change=self._on_ranges_changed)
 
-        # Export options (size estimate updates when options change)
-        self.export_options = ExportOptionsPanel(
-            body, on_change=self._on_export_options_changed,
+    def _build_media_panel(self):
+        panel = ctk.CTkFrame(self, fg_color=T.BG_SURFACE, corner_radius=0, width=MEDIA_W)
+        panel.pack_propagate(False)
+        header, right = C.panel_header(panel, "Media")
+        header.pack(fill="x")
+        icon_button(right, "back", size=28, icon_size=11,
+                    command=lambda: self._set_media_collapsed(True)).pack()
+        C.divider(panel).pack(fill="x")
+
+        add = ctk.CTkFrame(panel, fg_color="transparent")
+        add.pack(fill="x", padx=14, pady=(12, 12))
+        C.section_label(add, "Add a video").pack(fill="x", pady=(0, 6))
+        link_row = ctk.CTkFrame(add, fg_color="transparent")
+        link_row.pack(fill="x")
+        self.media_link_entry = C.entry(link_row, width=150, placeholder_text="Paste a link")
+        self.media_link_entry.pack(side="left", fill="x", expand=True)
+        self.media_link_entry.bind("<Return>", lambda _e: self._media_get_link())
+        button(link_row, "Get", variant="secondary", width=48, height=30,
+               font=T.font(T.SIZE_SM, "bold"),
+               command=self._media_get_link).pack(side="left", padx=(6, 0))
+        btns = ctk.CTkFrame(add, fg_color="transparent")
+        btns.pack(fill="x", pady=(8, 0))
+        btns.grid_columnconfigure((0, 1), weight=1)
+        button(btns, "Open file", variant="secondary", height=30,
+               font=T.font(T.SIZE_SM, "bold"),
+               command=self._open_file).grid(row=0, column=0, sticky="ew", padx=(0, 3))
+        button(btns, "Record", variant="secondary", height=30,
+               font=T.font(T.SIZE_SM, "bold"),
+               command=self._record_screen).grid(row=0, column=1, sticky="ew", padx=(3, 0))
+        C.hint(add, "Or drop a file on the preview.", wrap=210).pack(anchor="w", pady=(8, 0))
+
+        C.divider(panel).pack(fill="x")
+        clip = ctk.CTkFrame(panel, fg_color="transparent")
+        clip.pack(fill="x", padx=14, pady=(12, 0))
+        C.section_label(clip, "In this project").pack(fill="x", pady=(0, 8))
+        card = ctk.CTkFrame(clip, fg_color=T.ACCENT_SOFT, corner_radius=T.RADIUS_MD)
+        self.media_card = card
+        self.media_thumb = ctk.CTkLabel(card, text="", width=64, height=36,
+                                        fg_color=T.MONITOR_BG, corner_radius=4)
+        self.media_thumb.pack(side="left", padx=(8, 10), pady=8)
+        text_col = ctk.CTkFrame(card, fg_color="transparent")
+        text_col.pack(side="left", fill="x", expand=True, pady=8)
+        self.file_label = ctk.CTkLabel(text_col, text="", font=T.font(T.SIZE_MD, "bold"),
+                                       text_color=T.TEXT, anchor="w")
+        self.file_label.pack(fill="x")
+        self.file_meta = ctk.CTkLabel(text_col, text="", font=T.font(T.SIZE_SM),
+                                      text_color=T.TEXT_MUTED, anchor="w")
+        self.file_meta.pack(fill="x")
+        self.media_empty = C.hint(clip, "Nothing here yet. Open a file, paste a "
+                                        "link, or record your screen.", wrap=210)
+        self.media_empty.pack(anchor="w")
+
+        spacer = ctk.CTkFrame(panel, fg_color="transparent")
+        spacer.pack(fill="both", expand=True)
+        button(panel, "Download several links…", variant="ghost", height=30,
+               text_color=T.ACCENT, font=T.font(T.SIZE_SM, "bold"),
+               command=lambda: self._show_workspace("import")).pack(
+            fill="x", padx=8, pady=(0, 10))
+        return panel
+
+    def _build_media_rail(self):
+        """Collapsed Media panel: a thin strip that keeps the quick actions."""
+        rail = ctk.CTkFrame(self, fg_color=T.BG_SURFACE, corner_radius=0, width=MEDIA_RAIL_W)
+        rail.pack_propagate(False)
+        icon_button(rail, "forward", size=32, icon_size=11,
+                    command=lambda: self._set_media_collapsed(False)).pack(pady=(6, 10))
+        C.divider(rail).pack(fill="x", padx=8, pady=(0, 8))
+        for name, cmd in (("folder", self._open_file),
+                          ("link", lambda: self._show_workspace("import")),
+                          ("screen", self._record_screen)):
+            icon_button(rail, name, size=32, icon_size=14, command=cmd).pack(pady=2)
+        return rail
+
+    def _set_media_collapsed(self, collapsed, persist=True):
+        """Swap the Media panel for its rail (or back) and keep the choice."""
+        self._media_collapsed = bool(collapsed)
+        show, hide = ((self.media_rail, self.media_panel) if collapsed
+                      else (self.media_panel, self.media_rail))
+        hide.grid_forget()
+        show.grid(row=0, column=0, sticky="nsew", padx=(0, 1))
+        self.grid_columnconfigure(0, minsize=MEDIA_RAIL_W if collapsed else MEDIA_W)
+        if persist:
+            settings.set("media_panel_collapsed", self._media_collapsed)
+
+    def _build_preview(self):
+        pv = ctk.CTkFrame(self, fg_color=T.BG_SURFACE, corner_radius=0)
+
+        head = ctk.CTkFrame(pv, fg_color=T.BG_SURFACE, corner_radius=0, height=40)
+        head.pack(fill="x")
+        head.pack_propagate(False)
+        ctk.CTkLabel(head, text="Preview", font=T.font(T.SIZE_MD, "bold"),
+                     text_color=T.TEXT).pack(side="left", padx=(14, 8))
+        self.preview_name = ctk.CTkLabel(head, text="", font=T.font(T.SIZE_SM),
+                                         text_color=T.TEXT_MUTED)
+        self.preview_name.pack(side="left")
+        tools = ctk.CTkFrame(head, fg_color=T.BG_RAISED, corner_radius=T.RADIUS_SM)
+        tools.pack(side="right", padx=(0, 10))
+        icon_button(tools, "open_new", command=self._play_in_system, size=28,
+                    icon_size=12).pack(side="right", padx=2, pady=2)
+        icon_button(tools, "image", command=self.add_image_layer, size=28,
+                    icon_size=13).pack(side="right", padx=2, pady=2)
+        icon_button(tools, "text", command=self.add_text_layer, size=28,
+                    icon_size=13).pack(side="right", padx=2, pady=2)
+        self.crop_btn = icon_button(tools, "crop", command=self._toggle_crop_mode,
+                                    size=28, icon_size=13)
+        self.crop_btn.pack(side="right", padx=2, pady=2)
+        C.divider(pv).pack(fill="x")
+
+        self.player = VideoPlayer(
+            pv,
+            on_empty_click=self._open_file,
+            on_file_dropped=self._on_file_dropped,
+            fg_color=T.MONITOR_BG, border_width=0, corner_radius=0,
+            canvas_bg=T.MONITOR_BG, inset=14,
         )
-        self.export_options.pack(fill="x", padx=12, pady=6)
+        self.player.pack(fill="both", expand=True)
+        self.player.set_text_layers_provider(self._current_text_layers)
+        # Image overlays share the same provider pattern as text layers —
+        # the player composites them in source-resolution space so the
+        # preview matches the exported output.
+        self.player.set_image_layers_provider(self._current_image_layers)
+        self.player.set_color_provider(self._color_values)
+        # The preview renders the export's frame (aspect preset, crop,
+        # blur fill, rotation), so it needs the live export options.
+        self.player.set_export_options_provider(self.options.get_options)
+        # Dragging in the preview moves a caption (or records a motion
+        # keyframe) and drags image overlays to an exact spot.
+        self.player.set_text_position_callback(self._on_text_dragged)
+        self.player.set_image_position_callback(self._on_image_dragged)
 
-        # Export card
-        export_card = ctk.CTkFrame(
-            body, fg_color=T.BG_SURFACE,
-            border_width=1, border_color=T.BORDER,
-            corner_radius=T.RADIUS_LG,
+        C.divider(pv).pack(fill="x")
+        transport = ctk.CTkFrame(pv, fg_color=T.BG_SURFACE, corner_radius=0, height=58)
+        transport.pack(fill="x")
+        transport.pack_propagate(False)
+        self.timecode_label = ctk.CTkLabel(
+            transport, text="", font=T.font(T.SIZE_LG, "bold", mono=True),
+            text_color=T.TEXT,
         )
-        export_card.pack(fill="x", padx=12, pady=(6, 12))
+        self.timecode_label.pack(side="left", padx=(14, 0))
 
-        exp_inner = ctk.CTkFrame(export_card, fg_color="transparent")
-        exp_inner.pack(fill="x", padx=14, pady=12)
+        marks = ctk.CTkFrame(transport, fg_color="transparent")
+        marks.pack(side="right", padx=(0, 12))
+        button(marks, "Mark in  I", variant="secondary", width=86, height=30,
+               font=T.font(T.SIZE_SM, "bold"),
+               command=self.keyboard_mark_in).pack(side="left", padx=(0, 6))
+        button(marks, "Mark out  O", variant="secondary", width=92, height=30,
+               font=T.font(T.SIZE_SM, "bold"),
+               command=self.keyboard_mark_out).pack(side="left")
 
-        # Platform preset — snaps Quality + Format + aspect in one shot.
-        # Any of those three can still be tweaked afterwards, which flips
-        # the dropdown back to "Custom" so the label doesn't lie.
-        ctk.CTkLabel(
-            exp_inner, text="Platform",
-            font=T.font(T.SIZE_MD), text_color=T.TEXT_MUTED,
-        ).pack(side="left", padx=(0, 6))
-        self.platform_var = ctk.StringVar(
-            value=settings.get("platform_preset", "Custom"),
+        play = ctk.CTkFrame(transport, fg_color="transparent")
+        play.place(relx=0.5, rely=0.5, anchor="center")
+        icon_button(play, "to_start", command=self._go_to_in, size=32).pack(side="left", padx=2)
+        icon_button(play, "back", command=lambda: self.keyboard_nudge(-1.0),
+                    size=32).pack(side="left", padx=2)
+        self.play_btn = ctk.CTkButton(
+            play, text=glyph("play"), width=42, height=42, corner_radius=21,
+            font=icon_font(16), fg_color=T.TEXT, hover_color=T.TEXT_MUTED,
+            text_color=T.BG_SURFACE, command=self._toggle_play,
         )
-        self.platform_menu = ctk.CTkOptionMenu(
-            exp_inner, variable=self.platform_var,
-            values=PLATFORM_CHOICES, width=150,
-            fg_color=T.BG_RAISED, button_color=T.BG_HOVER,
-            button_hover_color=T.BG_ACTIVE, text_color=T.TEXT,
-            dropdown_fg_color=T.BG_RAISED, dropdown_text_color=T.TEXT,
-            corner_radius=T.RADIUS_SM,
-            command=self._apply_platform_preset,
+        self.play_btn.pack(side="left", padx=6)
+        icon_button(play, "forward", command=lambda: self.keyboard_nudge(1.0),
+                    size=32).pack(side="left", padx=2)
+        icon_button(play, "to_end", command=self._go_to_out, size=32).pack(side="left", padx=2)
+        return pv
+
+    def _build_timeline(self):
+        tl = ctk.CTkFrame(self, fg_color=T.BG_SURFACE, corner_radius=0)
+        bar = ctk.CTkFrame(tl, fg_color=T.BG_SURFACE, corner_radius=0, height=42)
+        bar.pack(fill="x")
+        bar.pack_propagate(False)
+        ctk.CTkLabel(bar, text="Timeline", font=T.font(T.SIZE_MD, "bold"),
+                     text_color=T.TEXT).pack(side="left", padx=(14, 12))
+        small = dict(variant="secondary", height=28, font=T.font(T.SIZE_SM, "bold"))
+        button(bar, "+ Text", width=64, command=self.add_text_layer, **small).pack(
+            side="left", padx=(0, 6))
+        button(bar, "+ Image", width=70, command=self.add_image_layer, **small).pack(
+            side="left", padx=(0, 6))
+        self.captions_btn = button(bar, "Captions ▾", width=90,
+                                   command=self._open_captions_menu, **small)
+        self.captions_btn.pack(side="left", padx=(0, 6))
+        C.divider(bar, horizontal=False).pack(side="left", fill="y", pady=10, padx=6)
+        button(bar, "+ Save range  Q", width=118, command=self._queue_range,
+               **small).pack(side="left")
+
+        zoom = ctk.CTkFrame(bar, fg_color="transparent")
+        zoom.pack(side="right", padx=(0, 14))
+        ctk.CTkLabel(zoom, text="Zoom", font=T.font(T.SIZE_SM),
+                     text_color=T.TEXT_MUTED).pack(side="left", padx=(0, 8))
+        self.zoom_slider = C.slider(zoom, 1.0, MAX_ZOOM, width=120,
+                                    command=lambda v: self.timeline.set_zoom(v))
+        self.zoom_slider.set(1.0)
+        self.zoom_slider.pack(side="left")
+        C.divider(tl).pack(fill="x")
+
+        self.timeline = TimelineView(
+            tl,
+            on_seek=self._seek,
+            on_selection_change=self._on_timeline_selection,
+            on_clip_select=self.select_layer,
+            on_clip_change=self.set_layer_time,
+            on_range_click=self._load_range,
+            on_zoom_change=lambda z: self.zoom_slider.set(z),
         )
-        self.platform_menu.pack(side="left", padx=(0, 18))
+        self.timeline.pack(fill="x")
 
-        ctk.CTkLabel(
-            exp_inner, text="Quality",
-            font=T.font(T.SIZE_MD), text_color=T.TEXT_MUTED,
-        ).pack(side="left", padx=(0, 6))
-        self.quality_var = ctk.StringVar(value=settings.get("quality", "Medium"))
-        self.quality_menu = ctk.CTkOptionMenu(
-            exp_inner, variable=self.quality_var,
-            values=list(PRESETS.keys()), width=120,
-            fg_color=T.BG_RAISED, button_color=T.BG_HOVER,
-            button_hover_color=T.BG_ACTIVE, text_color=T.TEXT,
-            dropdown_fg_color=T.BG_RAISED, dropdown_text_color=T.TEXT,
-            corner_radius=T.RADIUS_SM,
-            command=self._on_quality_change,
+        self._captions_menu = tk.Menu(
+            self, tearoff=0, bg=T.BG_SURFACE, fg=T.TEXT,
+            activebackground=T.ACCENT_SOFT, activeforeground=T.TEXT,
+            font=(T.FONT_FAMILY, 10), bd=1, relief="solid",
         )
-        self.quality_menu.pack(side="left", padx=(0, 18))
+        self._captions_menu.add_command(label="Import SRT or VTT…", command=self._import_srt)
+        self._captions_menu.add_command(label="Captions from speech…", command=self._auto_caption)
+        return tl
 
-        ctk.CTkLabel(
-            exp_inner, text="Format",
-            font=T.font(T.SIZE_MD), text_color=T.TEXT_MUTED,
-        ).pack(side="left", padx=(0, 6))
-        self.format_var = ctk.StringVar(value=settings.get("format", "GIF"))
-        self.format_menu = ctk.CTkOptionMenu(
-            exp_inner, variable=self.format_var,
-            values=EXPORT_FORMATS, width=100,
-            fg_color=T.BG_RAISED, button_color=T.BG_HOVER,
-            button_hover_color=T.BG_ACTIVE, text_color=T.TEXT,
-            dropdown_fg_color=T.BG_RAISED, dropdown_text_color=T.TEXT,
-            corner_radius=T.RADIUS_SM,
-            command=self._on_format_change,
-        )
-        self.format_menu.pack(side="left")
+    def _open_captions_menu(self):
+        btn = self.captions_btn
+        try:
+            self._captions_menu.tk_popup(btn.winfo_rootx(), btn.winfo_rooty() + btn.winfo_height())
+        finally:
+            self._captions_menu.grab_release()
 
-        self.export_btn = button(
-            exp_inner, "  Export  ▸  (Ctrl+E)", variant="primary",
-            width=200, command=self._export,
-        )
-        self.export_btn.configure(state="disabled")
-        self.export_btn.pack(side="right")
-
-        self.size_label = ctk.CTkLabel(
-            exp_inner, text="",
-            font=T.font(T.SIZE_SM, mono=True),
-            text_color=T.TEXT_DIM,
-        )
-        self.size_label.pack(side="right", padx=(0, 12))
-
-        self._feature_targets = {
-            "Source": source_card,
-            "Preview": self.player,
-            "Timeline": timeline_card,
-            "Ranges": self.range_queue,
-            "Text": self.text_layers,
-            "Overlays": self.image_layers,
-            "Options": self.export_options,
-            "Export": export_card,
-        }
-        self._update_project_status()
-
-    def _build_feature_dock(self):
-        dock = ctk.CTkFrame(
-            self, fg_color=T.BG_RAISED, corner_radius=T.RADIUS_MD,
-            border_width=1, border_color=T.BORDER,
-        )
-        dock.pack(fill="x", padx=12, pady=(6, 2))
-        ctk.CTkLabel(
-            dock, text="TOOLS", font=T.font(T.SIZE_XS, "bold"),
-            text_color=T.TEXT_DIM,
-        ).pack(side="left", padx=(10, 4))
-        self._feature_buttons = {}
-        for name in (
-            "Source", "Preview", "Timeline", "Ranges",
-            "Text", "Overlays", "Options", "Export",
-        ):
-            feature_button = button(
-                dock, name, variant="ghost", width=70, height=28,
-                font=T.font(T.SIZE_SM, "bold"),
-                command=lambda selected=name: self._jump_to_feature(selected),
-            )
-            feature_button.pack(side="left", padx=1, pady=4)
-            self._feature_buttons[name] = feature_button
-
+    # ------------------------------------------------------------------
+    # Compatibility shims for callers of the old scrolling layout
+    # ------------------------------------------------------------------
     def _jump_to_feature(self, name):
-        target = getattr(self, "_feature_targets", {}).get(name)
-        if target is None:
-            return
-        if name in ("Ranges", "Text", "Overlays", "Options"):
-            if not getattr(target, "_expanded", False):
-                target._toggle()
-        for label, feature_button in self._feature_buttons.items():
-            feature_button.configure(
-                fg_color=T.ACCENT if label == name else "transparent",
-                text_color=T.TEXT_ON_ACCENT if label == name else T.TEXT_MUTED,
-            )
-        self.update_idletasks()
-        canvas = getattr(self.body, "_parent_canvas", None)
-        if canvas is None:
-            return
-        bounds = canvas.bbox("all")
-        if not bounds:
-            return
-        content_height = max(1, bounds[3] - bounds[1])
-        viewport_height = max(1, canvas.winfo_height())
-        max_offset = max(1, content_height - viewport_height)
-        fraction = target.winfo_y() / max_offset
-        canvas.yview_moveto(max(0.0, min(1.0, fraction)))
+        """Old TOOLS-dock names → where that feature lives now."""
+        if name == "Source":
+            self._show_workspace("import")
+        elif name in ("Ranges", "Export"):
+            self._show_workspace("export")
+        else:
+            self._show_workspace("edit")
+            tab = {"Text": "text", "Overlays": "image", "Options": "clip"}.get(name)
+            if tab:
+                self.inspector.show(tab)
 
     def _toggle_download_bar(self):
-        self._set_download_bar_expanded(not self._download_expanded)
+        self._show_workspace("import")
 
     def _set_download_bar_expanded(self, expanded):
-        self._download_expanded = bool(expanded)
-        if self._download_expanded:
-            self.download_container.pack(fill="x")
-            self.web_btn.configure(text="Hide web")
-        else:
-            self.download_container.pack_forget()
-            self.web_btn.configure(text="Web link")
+        if expanded:
+            self._show_workspace("import")
 
+    # ------------------------------------------------------------------
+    # Providers and change handlers
     # ------------------------------------------------------------------
     def _current_image_layers(self):
         # Only layers whose path is a real file — the ffmpeg export path
-        # applies the same filter, so the preview matches. Using
-        # include_empty=False skips half-configured rows where the user
-        # hasn't picked a file yet.
+        # applies the same filter, so the preview matches.
         return self.image_layers.get_all_layers()
 
     def _current_text_layers(self):
@@ -450,15 +498,42 @@ class TrimTab(ctk.CTkFrame):
         # the VideoPlayer's hit-test can call back with the right widget index.
         return self.text_layers.get_all_layers(include_empty=True)
 
+    def _color_values(self):
+        o = self.options
+        return (float(o.brightness_var.get()), float(o.contrast_var.get()),
+                float(o.saturation_var.get()), float(o.gamma_var.get()))
+
+    def _schedule_preview_refresh(self):
+        """Coalesce bursts of edits (slider drags, typing) into one repaint."""
+        if self._preview_after_id is not None:
+            return
+
+        def run():
+            self._preview_after_id = None
+            if self.video_path and not self.player._playing:
+                self.player.refresh_overlay()
+
+        self._preview_after_id = self.after(_PREVIEW_REFRESH_MS, run)
+
     def _on_text_layers_changed(self):
-        self.player.refresh_overlay()
+        self._schedule_preview_refresh()
+        self._sync_timeline_clips()
+        self._clamp_selection_indices()
+        page = getattr(self, "inspector", None)
+        if page is not None:
+            page.pages["text"].refresh_details()
         self._request_snapshot(immediate=False)
 
     def _on_image_layers_changed(self):
         # Drop the image cache so newly-picked files aren't shadowed by a
         # previous failure, and re-render the current frame.
         self.player._image_cache.clear()
-        self.player.refresh_overlay()
+        self._schedule_preview_refresh()
+        self._sync_timeline_clips()
+        self._clamp_selection_indices()
+        page = getattr(self, "inspector", None)
+        if page is not None:
+            page.pages["image"].refresh_details()
         # Debounce: typing into a text entry fires on every keystroke —
         # we only want one undo entry per "pause".
         self._request_snapshot(immediate=False)
@@ -466,21 +541,234 @@ class TrimTab(ctk.CTkFrame):
     def _on_export_options_changed(self):
         self._update_size_estimate()
         self._mark_project_dirty()
-        # Aspect / fill / rotation change the frame captions sit in.
-        self.player.refresh_overlay()
+        # Color, rotate and the like can change what the preview shows.
+        if hasattr(self, "player"):
+            self._schedule_preview_refresh()
 
-    def _on_range_changed(self):
-        self._update_export_enabled()
+    def _on_ranges_changed(self):
+        if hasattr(self, "timeline"):
+            self.timeline.set_ranges(self.range_queue.get_ranges())
+        self._update_size_estimate()
+
+    def _sync_timeline_clips(self):
+        if not hasattr(self, "timeline"):
+            return
+        text = []
+        for data in self.text_layers.get_all_layers(include_empty=True):
+            first_line = (data.get("text") or "").strip().splitlines()
+            text.append({"start": data["start"], "end": data["end"],
+                         "label": first_line[0] if first_line else "(empty caption)"})
+        images = []
+        for data in self.image_layers.get_all_layers(include_empty=True):
+            path = data.get("path") or ""
+            images.append({"start": data["start"], "end": data["end"],
+                           "label": os.path.basename(path) if path else "(no file)"})
+        self.timeline.set_clips(text=text, images=images)
+
+    def _clamp_selection_indices(self):
+        n_text = len(self.text_layers.layers)
+        if self.selected_text_index is not None and self.selected_text_index >= n_text:
+            self.selected_text_index = n_text - 1 if n_text else None
+        n_img = len(self.image_layers.layers)
+        if self.selected_image_index is not None and self.selected_image_index >= n_img:
+            self.selected_image_index = n_img - 1 if n_img else None
+
+    # ------------------------------------------------------------------
+    # Captions and overlays: selection, add, delete, retime
+    # ------------------------------------------------------------------
+    def select_layer(self, kind, index):
+        layers = (self.text_layers if kind == "text" else self.image_layers).layers
+        if not (0 <= index < len(layers)):
+            return
+        if kind == "text":
+            self.selected_text_index = index
+        else:
+            self.selected_image_index = index
+        self.timeline.set_selected(kind, index)
+        self.inspector.pages[kind].refresh()
+        self.inspector.show(kind)
+        # Jump into the clip so the preview actually shows it.
+        start, end = layers[index].time_slider.get_values()
+        if not (start <= self.playhead <= end):
+            self._seek(start)
+
+    def add_text_layer(self):
+        if not self.video_path:
+            self._notify("Open a video first", "warn")
+            return None
+        duration = self.video_info["duration"]
+        start = min(self.playhead, max(0.0, duration - 0.5))
+        end = min(duration, start + 3.0)
+        layer = self.text_layers._add_layer(preset_data={
+            "text": "Your text", "start": start, "end": end,
+        })
+        layer._on_style_change(layer.style_var.get())
+        index = len(self.text_layers.layers) - 1
+        self.select_layer("text", index)
+        page = self.inspector.pages["text"]
+        page.textbox.focus_set()
+        page.textbox.tag_add("sel", "1.0", "end-1c")
+        return layer
+
+    def duplicate_text_layer(self, index):
+        layers = self.text_layers.layers
+        if 0 <= index < len(layers):
+            self.text_layers._add_layer(preset_data=layers[index].get_layer_data())
+            self.select_layer("text", len(layers) - 1)
+
+    def add_image_layer(self):
+        if not self.video_path:
+            self._notify("Open a video first", "warn")
+            return None
+        exts = " ".join(f"*{e}" for e in SUPPORTED_IMAGE_EXTS)
+        path = filedialog.askopenfilename(
+            title="Pick an overlay image",
+            filetypes=[("Images", exts), ("All files", "*.*")],
+        )
+        if not path:
+            return None
+        layer = self.image_layers.add_layer_from_path(path)
+        self.select_layer("image", len(self.image_layers.layers) - 1)
+        return layer
+
+    def paste_image_layer(self):
+        if not self.video_path:
+            self._notify("Open a video first", "warn")
+            return
+        before = len(self.image_layers.layers)
+        self.image_layers._on_paste_clicked()
+        if len(self.image_layers.layers) > before:
+            self.select_layer("image", len(self.image_layers.layers) - 1)
+
+    def delete_layer(self, kind, index):
+        panel = self.text_layers if kind == "text" else self.image_layers
+        if not (0 <= index < len(panel.layers)):
+            return
+        panel._remove_layer(panel.layers[index])
+        remaining = len(panel.layers)
+        new_index = min(index, remaining - 1) if remaining else None
+        if kind == "text":
+            self.selected_text_index = new_index
+        else:
+            self.selected_image_index = new_index
+        self.timeline.set_selected(kind if new_index is not None else None,
+                                   new_index if new_index is not None else 0)
+        self.inspector.pages[kind].refresh()
         self._request_snapshot(immediate=True)
+
+    def set_layer_time(self, kind, index, start, end, final=True):
+        """Retime a caption/overlay from the timeline or the inspector."""
+        panel = self.text_layers if kind == "text" else self.image_layers
+        if not (0 <= index < len(panel.layers)) or not self.video_info:
+            return
+        duration = self.video_info["duration"]
+        start = max(0.0, min(float(start), duration - 0.1))
+        end = max(start + 0.1, min(float(end), duration))
+        layer = panel.layers[index]
+        layer.time_slider.set_values(start, end)
+        if final:
+            # The panel wraps _on_time_change to notify; that refreshes the
+            # preview, timeline and inspector and records an undo step.
+            layer._on_time_change(start, end)
+            self._request_snapshot(immediate=True)
+        else:
+            self._schedule_preview_refresh()
+            self.inspector.pages[kind].refresh_details()
+
+    def _on_text_dragged(self, index, source_x, source_y):
+        """Preview drag: motion-armed layers record a keyframe at the
+        playhead; everything else keeps the classic move-the-layer."""
+        t = self.player.current_time
+        if self.text_layers.maybe_record_keyframe(index, t, source_x, source_y):
+            self._notify(
+                f"Keyframe at {t:.2f}s — scrub and drag again to extend the path",
+                "success",
+            )
+        else:
+            self.text_layers.set_layer_position(index, source_x, source_y)
+        if self.selected_text_index != index:
+            self.select_layer("text", index)
+
+    def _on_image_dragged(self, index, source_x, source_y):
+        self.image_layers.set_layer_position(index, source_x, source_y)
+        if self.selected_image_index != index:
+            self.select_layer("image", index)
+
+    # ------------------------------------------------------------------
+    # Playhead, selection and transport
+    # ------------------------------------------------------------------
+    def _update_timecode(self):
+        duration = (self.video_info or {}).get("duration", 0.0)
+        self.timecode_label.configure(
+            text=f"{seconds_to_hms(self.playhead)}   /   {seconds_to_hms(duration)}"
+            if self.video_path else "--:--:--.---",
+        )
+
+    def _request_frame(self, t):
+        """Show the frame at ``t``, coalescing bursts from scrubbing."""
+        self._pending_frame_t = t
+        if self._frame_after_id is not None:
+            return
+
+        def run():
+            self._frame_after_id = None
+            if self._pending_frame_t is not None and self.video_path:
+                self.player.show_frame(self._pending_frame_t)
+
+        self._frame_after_id = self.after(_FRAME_COALESCE_MS, run)
+
+    def _seek(self, t):
+        if not self.video_path:
+            return
+        if self.player._playing:
+            self._stop_playback()
+        duration = self.video_info["duration"]
+        self.playhead = max(0.0, min(float(t), duration))
+        self.timeline.set_playhead(self.playhead)
+        self._request_frame(self.playhead)
+        self._update_timecode()
+
+    def _apply_selection(self, start, end, from_timeline=False):
+        """Single place that pushes a new in/out everywhere it's shown."""
+        self.start_entry.set_value(seconds_to_hms(start))
+        self.end_entry.set_value(seconds_to_hms(end))
+        self._update_duration_label(start, end)
+        if not from_timeline:
+            self.timeline.set_selection(start, end)
+        self._update_size_estimate()
+
+    def _on_timeline_selection(self, start, end):
+        """An in/out edge was dragged; the timeline moved the playhead to it."""
+        self._apply_selection(start, end, from_timeline=True)
+        self.playhead = self.timeline.playhead
+        self._request_frame(self.playhead)
+        self._update_timecode()
+        self._request_snapshot(immediate=False)
+
+    def _load_range(self, index):
+        ranges = self.range_queue.get_ranges()
+        if 0 <= index < len(ranges):
+            start, end = ranges[index]
+            self._apply_selection(start, end)
+            self._seek(start)
+            self._notify(f"Range {index + 1} loaded into the selection", "info")
+
+    def _go_to_in(self):
+        self._seek(self.timeline.get_values()[0])
+
+    def _go_to_out(self):
+        self._seek(self.timeline.get_values()[1])
 
     # ------------------------------------------------------------------
     # Platform preset wiring: selecting a platform snaps three fields;
     # editing any of those fields afterward reverts the label to Custom
-    # so the dropdown never claims a preset the user has deviated from.
+    # so the picker never claims a preset the user has deviated from.
     def _apply_platform_preset(self, name):
+        self.platform_var.set(name)
         settings.set("platform_preset", name)
         preset = get_preset(name)
         if preset is None:
+            self._emit_state()
             return
         self.quality_var.set(preset["quality"])
         settings.set("quality", preset["quality"])
@@ -493,12 +781,14 @@ class TrimTab(ctk.CTkFrame):
         self._notify(f"Applied preset: {name}", "info")
 
     def _on_quality_change(self, value):
+        self.quality_var.set(value)
         settings.set("quality", value)
         self._mark_platform_custom()
         self._update_size_estimate()
         self._mark_project_dirty()
 
     def _on_format_change(self, value):
+        self.format_var.set(value)
         settings.set("format", value)
         self._mark_platform_custom()
         self._update_export_enabled()
@@ -510,15 +800,8 @@ class TrimTab(ctk.CTkFrame):
             self.platform_var.set("Custom")
             settings.set("platform_preset", "Custom")
 
-    def _seek_from_thumbnail(self, timestamp):
-        """Click on the thumbnail strip → move the trim start to that time."""
-        if not self.video_path or not self.video_info:
-            return
-        end_val = self.range_slider.get_values()[1]
-        new_start = max(0.0, min(timestamp, end_val - 0.05))
-        self.range_slider.set_values(new_start, end_val)
-        self._on_slider_change(new_start, end_val)
-
+    # ------------------------------------------------------------------
+    # Loading media
     # ------------------------------------------------------------------
     def _open_file(self):
         exts = " ".join(f"*{e}" for e in SUPPORTED_VIDEO_EXTENSIONS)
@@ -538,9 +821,21 @@ class TrimTab(ctk.CTkFrame):
             return
         self._load_path(path)
 
+    def _media_get_link(self):
+        url = self.media_link_entry.get().strip()
+        if not url:
+            self._show_workspace("import")
+            return
+        if self.download_bar is None:
+            self._notify("The downloader isn't ready yet", "warn")
+            return
+        self.download_bar.receive_url(url)
+        self.download_bar._download()
+        self.media_link_entry.delete(0, "end")
+
     def _auto_track(self, index):
-        """⚡ Auto-track: follow the video patch under the caption from the
-        playhead to the end of the trim range, then install the tracked
+        """Auto-track: follow the video patch under the caption from the
+        playhead to the end of the selection, then install the tracked
         path as this layer's keyframes."""
         from videokidnapper.core import tracker as trk
 
@@ -560,7 +855,7 @@ class TrimTab(ctk.CTkFrame):
         x1, y1, x2, y2 = bbox
         region = (x1, y1, max(8, x2 - x1), max(8, y2 - y1))
         start_t = self.player.current_time
-        _, end_t = self.range_slider.get_values()
+        _, end_t = self.timeline.get_values()
         if end_t - start_t < 0.2:
             self._notify("Nothing after the playhead to track into", "warn")
             return
@@ -611,25 +906,13 @@ class TrimTab(ctk.CTkFrame):
                 f"{len(kfs)} keyframes. Scrub to check; drag to fix any spot.",
                 "success")
 
-        import threading
         threading.Thread(target=worker, daemon=True).start()
         self.after(250, poll)
 
-    def _on_text_dragged(self, index, source_x, source_y):
-        """Preview drag: motion-armed layers record a keyframe at the
-        playhead; everything else keeps the classic move-the-layer."""
-        t = self.player.current_time
-        if self.text_layers.maybe_record_keyframe(index, t, source_x, source_y):
-            self._notify(
-                f"Keyframe at {t:.2f}s — scrub and drag again to extend the path",
-                "success",
-            )
-        else:
-            self.text_layers.set_layer_position(index, source_x, source_y)
-
     def _on_downloaded_video(self, path, platform=None, title=None):
-        """A DownloadBar download (single or batch) lands in the editor."""
-        self._load_path(path)
+        """A download (single or batch) lands in the editor."""
+        if not self._load_path(path):
+            return
         # After _load_path, which seeds the title from the filename —
         # the reported title is better, being untruncated.
         if title:
@@ -638,10 +921,38 @@ class TrimTab(ctk.CTkFrame):
             self._notify(f"Kidnapped from {platform} — trim away", "success")
 
     def receive_url(self, url):
-        """App-level Ctrl+V router hands pasted links to the download bar."""
-        self._set_download_bar_expanded(True)
-        self._jump_to_feature("Source")
-        self.download_bar.receive_url(url)
+        """App-level Ctrl+V router hands pasted links to the downloader."""
+        self._show_workspace("import")
+        if self.download_bar is not None:
+            self.download_bar.receive_url(url)
+
+    def _set_media_card(self, path):
+        if not path:
+            self.media_card.pack_forget()
+            self.media_empty.pack(anchor="w")
+            return
+        self.media_empty.pack_forget()
+        self.media_card.pack(fill="x")
+        info = self.video_info or {}
+        fps = info.get("fps")
+        parts = [f"{info.get('width', 0)}×{info.get('height', 0)}",
+                 short_duration(info.get("duration", 0))]
+        if fps:
+            parts.append(f"{round(float(fps), 2):g} fps")
+        name = os.path.basename(path)
+        self.file_label.configure(text=name if len(name) <= 24 else name[:21] + "…")
+        self.file_meta.configure(text=" · ".join(parts))
+        try:
+            from videokidnapper.core.preview import get_frame_at
+            frame = get_frame_at(path, min(1.0, info.get("duration", 0) / 2))
+            if frame is not None:
+                frame = frame.copy()
+                frame.thumbnail((64, 36))
+                self._media_thumb = ctk.CTkImage(light_image=frame, dark_image=frame,
+                                                 size=frame.size)
+                self.media_thumb.configure(image=self._media_thumb)
+        except Exception:
+            pass
 
     def _load_path(self, path, preserve_project=False):
         if not preserve_project and not self._prepare_to_replace_project():
@@ -649,7 +960,6 @@ class TrimTab(ctk.CTkFrame):
         try:
             new_video_info = get_video_info(path)
         except Exception as e:
-            self.file_label.configure(text=f"Error: {e}", text_color=T.DANGER)
             self._notify(f"Could not read video: {e}", "error")
             return False
         # _restoring suppresses undo/redo recording during the flurry of
@@ -665,21 +975,16 @@ class TrimTab(ctk.CTkFrame):
             # coordinates.
             settings.set("crop", None)
             self.player.set_crop(None)
-            self._crop_on = False
-            if hasattr(self, "crop_btn"):
-                self.crop_btn.configure(
-                    text="⬚  Crop", fg_color=T.BG_RAISED, text_color=T.TEXT,
-                )
-            name = os.path.basename(path)
+            self._set_crop_ui(False)
             dur = self.video_info["duration"]
-            res = f"{self.video_info['width']}x{self.video_info['height']}"
-            self.file_label.configure(
-                text=f"{name}   ·   {res}   ·   {seconds_to_hms(dur)}",
-                text_color=T.TEXT,
-            )
+            name = os.path.basename(path)
 
             clear_cache()
-            self.range_slider.set_range(0, dur)
+            self.playhead = 0.0
+            self.selected_text_index = None
+            self.selected_image_index = None
+            self.timeline.load(path, dur)
+            self.zoom_slider.set(1.0)
             self.start_entry.set_value(seconds_to_hms(0))
             self.end_entry.set_value(seconds_to_hms(dur))
             self._update_duration_label(0, dur)
@@ -688,10 +993,14 @@ class TrimTab(ctk.CTkFrame):
             self.image_layers.clear_layers()
             self.image_layers.set_duration(dur)
             self.range_queue.clear()
+            self._sync_timeline_clips()
+            self.inspector.pages["text"].refresh()
+            self.inspector.pages["image"].refresh()
 
             self.player.load_video(path, dur)
-            self.waveform.load(path, dur)
-            self.thumbnail_strip.load(path, dur)
+            self.preview_name.configure(text=name)
+            self._set_media_card(path)
+            self._update_timecode()
             self._update_export_enabled()
             if not preserve_project:
                 self.current_project_path = None
@@ -703,54 +1012,43 @@ class TrimTab(ctk.CTkFrame):
             self._restoring = False
         # Baseline undo history against the freshly-loaded state.
         self._undo_stack.reset(self._snapshot())
+        self._show_workspace("edit")
         return True
-
-    def _on_slider_change(self, start_val, end_val):
-        self.start_entry.set_value(seconds_to_hms(start_val))
-        self.end_entry.set_value(seconds_to_hms(end_val))
-        self._update_duration_label(start_val, end_val)
-        self.player.show_frame(start_val)
-        self.waveform.set_range(start_val, end_val)
-        self.thumbnail_strip.set_range(start_val, end_val)
-        self._request_snapshot(immediate=False)
 
     def _on_start_entry(self, value):
         try:
             start_sec = hms_to_seconds(value)
-            _, end_val = self.range_slider.get_values()
-            self.range_slider.set_values(start_sec, end_val)
-            self._update_duration_label(start_sec, end_val)
-            self.player.show_frame(start_sec)
-            self.waveform.set_range(start_sec, end_val)
-            self.thumbnail_strip.set_range(start_sec, end_val)
-            self._request_snapshot(immediate=True)
         except ValueError:
-            pass
+            return
+        _, end_val = self.timeline.get_values()
+        start_sec = max(0.0, min(start_sec, end_val - 0.05))
+        self._apply_selection(start_sec, end_val)
+        self._seek(start_sec)
+        self._request_snapshot(immediate=True)
 
     def _on_end_entry(self, value):
         try:
             end_sec = hms_to_seconds(value)
-            start_val, _ = self.range_slider.get_values()
-            self.range_slider.set_values(start_val, end_sec)
-            self._update_duration_label(start_val, end_sec)
-            self.waveform.set_range(start_val, end_sec)
-            self.thumbnail_strip.set_range(start_val, end_sec)
-            self._request_snapshot(immediate=True)
         except ValueError:
-            pass
+            return
+        start_val, _ = self.timeline.get_values()
+        duration = (self.video_info or {}).get("duration", end_sec)
+        end_sec = min(duration, max(end_sec, start_val + 0.05))
+        self._apply_selection(start_val, end_sec)
+        self._seek(end_sec)
+        self._request_snapshot(immediate=True)
 
     def _update_duration_label(self, start, end):
         dur = max(0, end - start)
-        self.duration_label.configure(text=f"Duration  {seconds_to_hms(dur)}")
+        self.duration_label.configure(text=f"Length  {seconds_to_hms(dur)}")
 
     def _update_export_enabled(self):
-        enabled = self.video_path is not None
-        self.export_btn.configure(state="normal" if enabled else "disabled")
         self._update_size_estimate()
 
     def _update_size_estimate(self):
-        if not self.video_path or not self.video_info:
-            self.size_label.configure(text="")
+        if not self.video_path or not self.video_info or not hasattr(self, "timeline"):
+            self.size_estimate_text = ""
+            self._emit_state()
             return
         ranges = self._gather_ranges()
         duration = sum(max(0.0, e - s) for s, e in ranges)
@@ -763,16 +1061,27 @@ class TrimTab(ctk.CTkFrame):
             self.video_info.get("height", 0),
             audio_only=opts.get("audio_only"),
         )
-        self.size_label.configure(text=f"~{human_bytes(est)}")
+        self.size_estimate_text = f"about {human_bytes(est)}"
+        self._emit_state()
 
     # ------------------------------------------------------------------
     def _queue_range(self):
         if not self.video_path:
             return
-        start, end = self.range_slider.get_values()
+        start, end = self.timeline.get_values()
         if self.range_queue.add_range(start, end):
-            self._notify(f"Queued range {seconds_to_hms(start)} → {seconds_to_hms(end)}", "success")
-            self._update_size_estimate()
+            count = len(self.range_queue.get_ranges())
+            self._notify(
+                f"Saved range {count}: {seconds_to_hms(start)} → {seconds_to_hms(end)}",
+                "success")
+            self._request_snapshot(immediate=True)
+
+    def remove_range(self, index):
+        self.range_queue.remove(index)
+        self._request_snapshot(immediate=True)
+
+    def move_range(self, index, delta):
+        if self.range_queue.move(index, delta):
             self._request_snapshot(immediate=True)
 
     # ------------------------------------------------------------------
@@ -786,20 +1095,40 @@ class TrimTab(ctk.CTkFrame):
         else:
             subprocess.Popen(["xdg-open", self.video_path])
 
-    def _toggle_crop_mode(self):
-        is_on = not getattr(self, "_crop_on", False)
-        self._crop_on = is_on
-        self.player.enable_crop_mode(is_on, on_change=self._on_crop_changed)
+    def _set_crop_ui(self, on):
+        self._crop_on = bool(on)
         self.crop_btn.configure(
-            text="⬚  Crop" if not is_on else "■  Crop ON",
-            fg_color=T.BG_RAISED if not is_on else T.ACCENT,
-            text_color=T.TEXT if not is_on else T.TEXT_ON_ACCENT,
+            fg_color=T.ACCENT_SOFT if on else "transparent",
+            text_color=T.ACCENT if on else T.TEXT_MUTED,
         )
-        if not is_on:
-            # Clear any in-progress rect so the next export isn't cropped.
-            settings.set("crop", None)
-            self.player.set_crop(None)
-            self._notify("Crop cleared", "info")
+        page = getattr(self, "inspector", None)
+        if page is not None:
+            page.pages["clip"].crop_btn.configure(
+                text="Done cropping" if on else "Crop by hand…",
+            )
+
+    def _toggle_crop_mode(self):
+        if not self.video_path:
+            self._notify("Open a video first", "warn")
+            return
+        is_on = not self._crop_on
+        self.player.enable_crop_mode(is_on, on_change=self._on_crop_changed)
+        self._set_crop_ui(is_on)
+        if is_on:
+            self._notify("Drag a box on the preview to crop. Click Crop again when done.", "info")
+        else:
+            crop = self.player.get_crop()
+            self._notify("Crop kept" if crop else "No crop set", "info")
+
+    def clear_crop(self):
+        settings.set("crop", None)
+        self.player.set_crop(None)
+        if self._crop_on:
+            self.player.enable_crop_mode(False, on_change=self._on_crop_changed)
+            self._set_crop_ui(False)
+        self._update_size_estimate()
+        self._request_snapshot(immediate=True)
+        self._notify("Crop cleared", "info")
 
     def _on_crop_changed(self, rect):
         settings.set("crop", rect)
@@ -808,7 +1137,7 @@ class TrimTab(ctk.CTkFrame):
 
     # ------------------------------------------------------------------
     def _auto_caption(self):
-        """Run Whisper over the trim range and import the result as layers."""
+        """Run Whisper over the selection and import the result as captions."""
         if not self.video_path:
             self._notify("Load a video first", "warn")
             return
@@ -825,8 +1154,8 @@ class TrimTab(ctk.CTkFrame):
 
         # Small dialog: pick model size. Larger = slower + more accurate.
         dialog = ctk.CTkToplevel(self)
-        dialog.title("Auto-captions")
-        dialog.geometry("360x200")
+        dialog.title("Captions from speech")
+        dialog.geometry("380x220")
         dialog.resizable(False, False)
         dialog.configure(fg_color=T.BG_BASE)
         dialog.transient(self.winfo_toplevel())
@@ -840,7 +1169,7 @@ class TrimTab(ctk.CTkFrame):
         card.pack(fill="both", expand=True, padx=14, pady=14)
 
         ctk.CTkLabel(
-            card, text="Generate captions with Whisper",
+            card, text="Write captions from the speech",
             font=T.font(T.SIZE_LG, "bold"), text_color=T.TEXT,
         ).pack(pady=(16, 8))
 
@@ -848,24 +1177,19 @@ class TrimTab(ctk.CTkFrame):
         row = ctk.CTkFrame(card, fg_color="transparent")
         row.pack(pady=4)
         ctk.CTkLabel(
-            row, text="Model:", font=T.font(T.SIZE_MD),
+            row, text="Accuracy model", font=T.font(T.SIZE_MD),
             text_color=T.TEXT_MUTED,
-        ).pack(side="left", padx=(0, 6))
-        ctk.CTkOptionMenu(
-            row, variable=model_var,
-            values=list(whisper_captions.MODEL_SIZES),
-            width=100,
-            fg_color=T.BG_RAISED, button_color=T.BG_HOVER,
-            button_hover_color=T.BG_ACTIVE, text_color=T.TEXT,
-        ).pack(side="left")
+        ).pack(side="left", padx=(0, 8))
+        C.option_menu(row, list(whisper_captions.MODEL_SIZES),
+                      variable=model_var, width=110).pack(side="left")
 
         ctk.CTkLabel(
             card,
             text=(
-                "Transcribes the current trim range only.\n"
-                "First run downloads the model (~75 MB for base)."
+                "Transcribes the selection only.\n"
+                "The first run downloads the model (~75 MB for base)."
             ),
-            font=T.font(T.SIZE_XS), text_color=T.TEXT_DIM,
+            font=T.font(T.SIZE_SM), text_color=T.TEXT_MUTED,
             justify="center",
         ).pack(pady=(8, 4))
 
@@ -885,7 +1209,7 @@ class TrimTab(ctk.CTkFrame):
         """Worker thread: transcribe then marshal the result back to Tk."""
         from videokidnapper.core import whisper_captions
 
-        start, end = self.range_slider.get_values()
+        start, end = self.timeline.get_values()
         self._notify(f"Transcribing with Whisper ({model_size})…", "info")
         self.captions_btn.configure(state="disabled")
 
@@ -904,12 +1228,12 @@ class TrimTab(ctk.CTkFrame):
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_captions_done(self, entries):
-        from videokidnapper.utils.srt_parser import srt_to_text_layers
         self.captions_btn.configure(state="normal")
         if not entries:
             self._notify("Whisper produced no text (silent clip?)", "warn")
             return
         self.text_layers.import_srt_layers(srt_to_text_layers(entries))
+        self.select_layer("text", 0)
         self._notify(f"Imported {len(entries)} caption line(s)", "success")
 
     def _on_captions_failed(self, error):
@@ -917,6 +1241,9 @@ class TrimTab(ctk.CTkFrame):
         self._notify(f"Auto-captions failed: {error}", "error")
 
     def _import_srt(self):
+        if not self.video_path:
+            self._notify("Open a video first", "warn")
+            return
         path = filedialog.askopenfilename(
             title="Import SRT subtitles",
             filetypes=[("SRT / VTT", "*.srt *.vtt"), ("All files", "*.*")],
@@ -929,6 +1256,7 @@ class TrimTab(ctk.CTkFrame):
                 self._notify("No subtitle entries found", "warn")
                 return
             self.text_layers.import_srt_layers(srt_to_text_layers(entries))
+            self.select_layer("text", 0)
             self._notify(f"Imported {len(entries)} subtitle line(s)", "success")
         except Exception as e:
             self._notify(f"SRT import failed: {e}", "error")
@@ -936,7 +1264,7 @@ class TrimTab(ctk.CTkFrame):
     # ------------------------------------------------------------------
     def _record_screen(self):
         dialog = ctk.CTkToplevel(self)
-        dialog.title("Record Screen")
+        dialog.title("Record your screen")
         dialog.geometry("360x200")
         dialog.resizable(False, False)
         dialog.configure(fg_color=T.BG_BASE)
@@ -951,19 +1279,16 @@ class TrimTab(ctk.CTkFrame):
         card.pack(fill="both", expand=True, padx=14, pady=14)
 
         ctk.CTkLabel(
-            card, text="Record primary monitor",
+            card, text="Record the main monitor",
             font=T.font(T.SIZE_LG, "bold"), text_color=T.TEXT,
         ).pack(pady=(18, 8))
 
         dur_var = ctk.StringVar(value="10")
         row = ctk.CTkFrame(card, fg_color="transparent")
         row.pack(pady=4)
-        ctk.CTkLabel(row, text="Duration (sec):",
+        ctk.CTkLabel(row, text="Seconds (1–120)",
                      font=T.font(T.SIZE_MD), text_color=T.TEXT_MUTED).pack(side="left")
-        ctk.CTkEntry(row, textvariable=dur_var, width=80, height=28,
-                     font=T.font(T.SIZE_MD, mono=True),
-                     fg_color=T.BG_RAISED, text_color=T.TEXT,
-                     corner_radius=T.RADIUS_SM).pack(side="left", padx=6)
+        C.entry(row, textvariable=dur_var, width=70, mono=True).pack(side="left", padx=8)
 
         def start():
             try:
@@ -975,9 +1300,9 @@ class TrimTab(ctk.CTkFrame):
 
         btns = ctk.CTkFrame(card, fg_color="transparent")
         btns.pack(pady=14)
-        button(btns, "Start", variant="primary", width=120,
+        button(btns, "Start recording", variant="primary", width=130,
                command=start).pack(side="left", padx=4)
-        button(btns, "Cancel", variant="secondary", width=120,
+        button(btns, "Cancel", variant="secondary", width=100,
                command=dialog.destroy).pack(side="left", padx=4)
 
     def _run_screen_recording(self, duration_seconds):
@@ -1023,24 +1348,39 @@ class TrimTab(ctk.CTkFrame):
         self._notify(f"Recording failed: {error}", "error")
 
     # ------------------------------------------------------------------
+    # Playback
+    # ------------------------------------------------------------------
     def _toggle_play(self):
         if not self.video_path:
             return
         if self.player._playing:
-            self.player.stop()
-            self.play_btn.configure(text="▶  Play")
-        else:
-            start, end = self.range_slider.get_values()
-            self.player.play(start=start, end=end)
-            self.play_btn.configure(text="■  Stop")
-            # Poll to reset label when playback ends naturally
-            self.after(200, self._poll_play_state)
+            self._stop_playback()
+            return
+        start, end = self.timeline.get_values()
+        # Play from the playhead when it's inside the selection, otherwise
+        # from the in point.
+        begin = self.playhead if start <= self.playhead < end - 0.05 else start
+        self.player.play(start=begin, end=end)
+        self.play_btn.configure(text=glyph("pause"))
+        self.after(_PLAY_POLL_MS, self._poll_play_state)
+
+    def _stop_playback(self):
+        self.player.stop()
+        self.play_btn.configure(text=glyph("play"))
+        self.playhead = float(self.player.current_time)
+        self.timeline.set_playhead(self.playhead)
+        self._update_timecode()
 
     def _poll_play_state(self):
-        if not self.player._playing:
-            self.play_btn.configure(text="▶  Play")
+        if not self.winfo_exists():
             return
-        self.after(200, self._poll_play_state)
+        self.playhead = float(self.player.current_time)
+        self.timeline.set_playhead(self.playhead)
+        self._update_timecode()
+        if not self.player._playing:
+            self.play_btn.configure(text=glyph("play"))
+            return
+        self.after(_PLAY_POLL_MS, self._poll_play_state)
 
     # ------------------------------------------------------------------
     # Keyboard shortcuts bound by App
@@ -1049,28 +1389,33 @@ class TrimTab(ctk.CTkFrame):
         self._toggle_play()
 
     def keyboard_nudge(self, delta_seconds):
+        """J / L: step the playhead (the old build moved the in point)."""
         if not self.video_path:
             return
-        start, end = self.range_slider.get_values()
-        new_start = max(0, min(self.video_info["duration"], start + delta_seconds))
-        self.range_slider.set_values(new_start, end)
-        self._on_slider_change(new_start, end)
+        self._seek(self.playhead + delta_seconds)
 
     def keyboard_mark_in(self):
         if not self.video_path:
             return
-        self.range_slider.set_values(self.player.current_time,
-                                     self.range_slider.get_values()[1])
-        s, e = self.range_slider.get_values()
-        self._on_slider_change(s, e)
+        _, end = self.timeline.get_values()
+        start = self.playhead
+        if end <= start + 0.05:
+            end = self.video_info["duration"]
+        self._apply_selection(start, end)
+        self._request_snapshot(immediate=True)
 
     def keyboard_mark_out(self):
         if not self.video_path:
             return
-        self.range_slider.set_values(self.range_slider.get_values()[0],
-                                     self.player.current_time)
-        s, e = self.range_slider.get_values()
-        self._on_slider_change(s, e)
+        start, _ = self.timeline.get_values()
+        end = self.playhead
+        if end <= start + 0.05:
+            start = 0.0
+        self._apply_selection(start, end)
+        self._request_snapshot(immediate=True)
+
+    def keyboard_save_range(self):
+        self._queue_range()
 
     def keyboard_export(self):
         if self.video_path:
@@ -1089,11 +1434,8 @@ class TrimTab(ctk.CTkFrame):
         self.choose_and_open_project()
 
     def keyboard_paste_url(self):
-        """Ctrl+V on the Trim tab: paste an image from the clipboard as
-        a new image overlay. The URL tab binds the same method name to
-        paste URL text; the shortcut dispatcher routes to whichever tab
-        is active, so both behaviours coexist without conflict."""
-        self.image_layers._on_paste_clicked()
+        """Ctrl+V with an image on the clipboard adds an image overlay."""
+        self.paste_image_layer()
 
     def keyboard_undo(self):
         """Restore the last recorded snapshot (Ctrl+Z)."""
@@ -1129,7 +1471,7 @@ class TrimTab(ctk.CTkFrame):
         """
         crop = self.player.get_crop() if hasattr(self, "player") else None
         return {
-            "range":  tuple(self.range_slider.get_values()),
+            "range":  tuple(self.timeline.get_values()),
             "queued": list(self.range_queue.get_ranges()),
             "crop":   dict(crop) if crop else None,
             "layers": [
@@ -1182,30 +1524,17 @@ class TrimTab(ctk.CTkFrame):
             return
         self._restoring = True
         try:
-            # Trim range — update slider, both entries, waveform, thumbnails.
             start, end = snap.get(
                 "range", (0.0, float((self.video_info or {}).get("duration", 0.0))),
             )
-            self.range_slider.set_values(start, end)
-            self.start_entry.set_value(seconds_to_hms(start))
-            self.end_entry.set_value(seconds_to_hms(end))
-            self._update_duration_label(start, end)
-            self.waveform.set_range(start, end)
-            self.thumbnail_strip.set_range(start, end)
-
-            # Queued ranges — rebuild from scratch. Poke the queue's
-            # internal list directly so we don't re-notify on each add.
-            self.range_queue._ranges = [
-                (float(s), float(e)) for s, e in snap.get("queued", [])
-            ]
-            self.range_queue._redraw_chips()
-            self.range_queue._update_header()
+            self._apply_selection(start, end)
+            self.range_queue.set_ranges(snap.get("queued", []))
 
             # Crop rect.
             self.player.set_crop(snap.get("crop"))
             settings.set("crop", snap.get("crop"))
 
-            # Text layers — destroy existing widgets and rebuild from dicts.
+            # Captions and overlays — rebuild the model rows from dicts.
             self.text_layers.clear_layers()
             for data in snap.get("layers", []):
                 self.text_layers._add_layer(preset_data=data)
@@ -1214,8 +1543,14 @@ class TrimTab(ctk.CTkFrame):
             for data in snap.get("images", []):
                 self.image_layers._add_layer(preset_data=data)
 
-            # Show the frame at the new start and refresh the overlay.
-            self.player.show_frame(start)
+            self._clamp_selection_indices()
+            self._sync_timeline_clips()
+            for kind in ("text", "image"):
+                self.inspector.pages[kind].layer = None
+                self.inspector.pages[kind].refresh()
+
+            # Show the frame at the playhead and refresh the overlay.
+            self.player.show_frame(self.playhead)
             self._update_export_enabled()
         finally:
             self._restoring = False
@@ -1369,6 +1704,7 @@ class TrimTab(ctk.CTkFrame):
         self._undo_stack.reset(self._snapshot())
         self._update_project_status()
         self.player.refresh_overlay()
+        self._emit_state()
         self._notify(
             "Recovered autosaved project" if recovery else
             f"Opened project: {Path(path).name}",
@@ -1419,10 +1755,12 @@ class TrimTab(ctk.CTkFrame):
         return True
 
     # ------------------------------------------------------------------
+    # Export
+    # ------------------------------------------------------------------
     def _gather_ranges(self):
-        """Queued ranges + current slider range = ranges to export."""
+        """Saved ranges + current selection = ranges to export."""
         ranges = list(self.range_queue.get_ranges())
-        start, end = self.range_slider.get_values()
+        start, end = self.timeline.get_values()
         ranges.append((start, end))
         return ranges
 
@@ -1444,7 +1782,7 @@ class TrimTab(ctk.CTkFrame):
         concat = options.get("concat") and len(ranges) > 1 and fmt != "GIF" \
                  and not options.get("audio_only")
 
-        title_suffix = " (concat)" if concat else ""
+        title_suffix = " (joined)" if concat else ""
         dialog = ExportDialog(
             self,
             title=f"Exporting {len(ranges)} clip{'s' if len(ranges) != 1 else ''}{title_suffix}...",
@@ -1509,9 +1847,9 @@ class TrimTab(ctk.CTkFrame):
                     "trim_concat", ext, base_dir=output_dir,
                     source_name=self.source_title,
                 ))
-                # Pick transition from Export Options. "cut" stays on the
-                # fast lossless concat demuxer path; anything else re-
-                # encodes via filter_complex xfade + acrossfade.
+                # Pick transition from the export options. "cut" stays on
+                # the fast lossless concat demuxer path; anything else
+                # re-encodes via filter_complex xfade + acrossfade.
                 transition = options.get("concat_transition", "cut")
                 trans_dur = options.get("concat_transition_duration", 0.5)
                 merged = concat_clips_with_transition(
