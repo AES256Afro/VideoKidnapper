@@ -152,6 +152,53 @@ def total_height():
 
 
 # ---------------------------------------------------------------------------
+# Transport (the row under the preview)
+# ---------------------------------------------------------------------------
+
+def _clock(seconds, hours):
+    # Split whole milliseconds, so 2.8 reads 02.800 (not 02.799) and
+    # 2.9996 rounds up to 03.000 instead of wrapping to 02.000.
+    total_ms = int(round(max(0.0, float(seconds)) * 1000))
+    rem, ms = divmod(total_ms, 1000)
+    h, rem = divmod(rem, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}" if hours else f"{m:02d}:{s:02d}.{ms:03d}"
+
+
+def transport_timecode(playhead, duration, compact=False):
+    """``playhead / duration`` for the transport row.
+
+    Compact drops the hours (unless the clip is an hour or longer) and the
+    wide spacing, for a preview panel too narrow for the full readout.
+    ``None`` for either value draws dashes in the same shape, so the label
+    keeps its width before a video is loaded.
+    """
+    hours = not compact or (duration or 0) >= 3600
+    sep = " / " if compact else "   /   "
+    if playhead is None or duration is None:
+        dash = "--:--:--.---" if hours else "--:--.---"
+        return f"{dash}{sep}{dash}"
+    return f"{_clock(playhead, hours)}{sep}{_clock(duration, hours)}"
+
+
+def transport_play_x(width, left, play, right, gap=12):
+    """Where to centre the play controls in a transport row ``width`` wide.
+
+    ``left`` and ``right`` are the space the timecode and the in/out
+    buttons take at either end. The controls sit at the true centre when
+    that clears both by ``gap``, otherwise in the middle of the free space
+    between them. ``None`` means they don't fit even there.
+    """
+    centre = width / 2
+    if centre - play / 2 >= left + gap and centre + play / 2 <= width - right - gap:
+        return centre
+    lo, hi = left + gap, width - right - gap
+    if hi - lo >= play:
+        return (lo + hi) / 2
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Widget
 # ---------------------------------------------------------------------------
 
