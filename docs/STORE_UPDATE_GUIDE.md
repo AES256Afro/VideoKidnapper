@@ -17,6 +17,11 @@ until you click **Submit for certification** at the end.
 
 Open **Store listings → English (United States)**.
 
+There are two English listings: **English (United States)**, from the
+package, and an additional **English**, which customers in other
+English-speaking markets see. Do every step in this section and the next
+on **both**, or the second one quietly keeps old copy and screenshots.
+
 - **Description** field: paste the block under *"Description (Store field)"* in `docs/STORE_LISTING.md`.
 - **Product features** field: paste the lines under *"Product features"* in `docs/STORE_LISTING.md`, one feature per line (Partner Center shows them as a bulleted list). Up to 20 lines.
 - **Short description** (if present): the one-liner under *"Short description"* in the same doc.
@@ -25,7 +30,7 @@ These are already written feature-first with no em dashes. Copy verbatim.
 
 ## 2. Screenshots
 
-Still in **Store listings → English → Screenshots**.
+Still in each English listing, under **Screenshots**.
 
 1. Remove the existing screenshots.
 2. Upload the files from `assets/store/` (each is exactly 1920×1080, the size the Store requires):
@@ -91,13 +96,13 @@ VideoKidnapper's download feature fetches video from online services such as You
 
 When offline, attempting a download immediately shows: "No internet connection. Connect to the internet to download videos. You can still open a local file to trim, caption, and export." The app does not retry, hang, or show a technical DNS error.
 
-All editing works offline. Use Open Video File, drag in a local file, or use Record Screen. Then trim, add captions or overlays, and export a GIF or MP4 while disconnected.
+All editing works offline. Version 1.9.0 organizes the app as three steps across the top: Import, Edit, Export. In Import, use Browse files (Ctrl+O) to open a local video, or Set up recording to record the screen; a file can also be dropped on the Edit preview. Then trim and add captions or overlays in Edit, and make a GIF or MP4 in Export, all while disconnected.
 
 To verify the previous policy 10.1.2.10 issue is resolved:
 1. Launch VideoKidnapper and disconnect LAN or Wi-Fi.
-2. Try a URL download and confirm the clear offline message appears immediately.
-3. Open a local video, trim it, add a caption, and export it.
-4. Confirm local editing and export complete without a network connection.
+2. In Import, paste a URL into Paste a link, click Download, and confirm the clear offline message appears immediately.
+3. Click Browse files and open a local video. In Edit, add a caption with + Text.
+4. In Export, click Export and confirm it completes without a network connection.
 
 The only feature that requires a connection is downloading media from an online URL.
 ```
