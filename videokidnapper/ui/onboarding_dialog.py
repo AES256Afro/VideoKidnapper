@@ -33,8 +33,8 @@ class OnboardingDialog(ctk.CTkToplevel):
         ).pack(anchor="w", padx=24, pady=(22, 4))
         ctk.CTkLabel(
             card,
-            text="Open a video or paste a link. Every editing tool stays in the "
-                 "TOOLS dock, even when a project has many captions or overlays.",
+            text="The three steps across the top of the window are the whole app: "
+                 "bring a clip in, edit it, export it.",
             font=T.font(T.SIZE_MD), text_color=T.TEXT_MUTED,
             justify="left", wraplength=560,
         ).pack(anchor="w", padx=24)
@@ -42,9 +42,9 @@ class OnboardingDialog(ctk.CTkToplevel):
         steps = ctk.CTkFrame(card, fg_color="transparent")
         steps.pack(fill="x", padx=24, pady=(22, 18))
         for number, title, detail in (
-            ("1", "Choose a source", "Open a local file, record, or download a link."),
-            ("2", "Choose the moment", "Set in and out points on the timeline."),
-            ("3", "Export", "Pick a platform preset and create a GIF or MP4."),
+            ("1", "Import", "Open a file, record your screen, or paste a link."),
+            ("2", "Edit", "Pick the part on the timeline; add captions and images."),
+            ("3", "Export", "Choose where it's going and make an MP4, GIF or MP3."),
         ):
             row = ctk.CTkFrame(steps, fg_color=T.BG_RAISED, corner_radius=T.RADIUS_MD)
             row.pack(fill="x", pady=3)
@@ -106,9 +106,9 @@ class OnboardingDialog(ctk.CTkToplevel):
     def _open_web(self):
         self._remember()
         self.destroy()
-        self.editor._set_download_bar_expanded(True)
-        self.editor._jump_to_feature("Source")
-        self.editor.download_bar.url_entry.focus_set()
+        self.editor._show_workspace("import")
+        if self.editor.download_bar is not None:
+            self.editor.download_bar.url_entry.focus_set()
 
     def _finish(self):
         self._remember()

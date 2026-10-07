@@ -124,15 +124,14 @@ def build_update_plan(channel=None, release_url=None):
             copy_text=f"ms-windows-store://pdp/?ProductId={STORE_PRODUCT_ID}",
         )
     if channel in ("winget", "setup"):
+        # The Setup .exe on the GitHub release shares the Inno AppId that
+        # _windows_installer_channel looks up, so it upgrades winget and
+        # Setup installs in place.
         return UpdatePlan(
-            channel,
-            "Windows Package Manager" if channel == "winget" else "Windows installer",
-            "Windows Package Manager verifies the installer and handles the upgrade.",
-            "run", "Update with winget",
-            command=(
-                "winget", "upgrade", "--id", WINGET_PACKAGE_ID, "--exact",
-                "--accept-source-agreements", "--accept-package-agreements",
-            ),
+            channel, "GitHub release",
+            "Download the Windows installer from the GitHub release and run it. "
+            "It updates this install in place and keeps your settings.",
+            "release", "Open GitHub release", copy_text=release_url,
         )
     if channel == "pip":
         return UpdatePlan(

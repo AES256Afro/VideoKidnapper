@@ -18,7 +18,7 @@ on:
       theme:
         description: "Theme to capture in (a key of ui.theme.PALETTES)"
         required: false
-        default: "cream"
+        default: "light"
 
 permissions:
   contents: read

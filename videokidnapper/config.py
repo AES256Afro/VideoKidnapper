@@ -49,8 +49,10 @@ APP_NAME = "VideoKidnapper"
 # (dynamic version) and the runtime agree. Do not hard-code it here.
 from videokidnapper import __version__  # noqa: E402
 APP_VERSION = __version__
-WINDOW_SIZE = "1000x700"
-MIN_WINDOW_SIZE = (680, 480)
+# The Studio layout (media · preview · inspector over a timeline) wants
+# room; App shrinks this to fit smaller screens.
+WINDOW_SIZE = "1440x900"
+MIN_WINDOW_SIZE = (1024, 640)
 
 TEMP_DIR = Path.home() / ".videokidnapper_temp"
 

@@ -38,6 +38,7 @@ SHORTCUTS: dict[str, list[Shortcut]] = {
     "Trim": [
         Shortcut("I",               "Set in-point to current playhead"),
         Shortcut("O",               "Set out-point to current playhead"),
+        Shortcut("Q",               "Save the selection as a range"),
     ],
     "Edit": [
         Shortcut("Ctrl+Z",          "Undo"),
@@ -50,7 +51,7 @@ SHORTCUTS: dict[str, list[Shortcut]] = {
         Shortcut("Ctrl+S",          "Save project"),
         Shortcut("Ctrl+Shift+S",    "Save project as"),
         Shortcut("Ctrl+E",          "Export current trim"),
-        Shortcut("Ctrl+V",          "Paste — a video/GIF link opens the Kidnap downloader from any tab; a clipboard image becomes an overlay on Trim"),
+        Shortcut("Ctrl+V",          "Paste — a video/GIF link opens Import from anywhere; a clipboard image becomes an overlay in Edit"),
     ],
     "Help": [
         Shortcut("?",               "Show this overlay"),
