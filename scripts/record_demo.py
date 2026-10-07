@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
-"""Record an animated demo GIF of the app for the README banner.
+"""Record the animated tour at the top of the README and the website.
 
-Drives the app through a short tour — loads the demo video, scrubs, queues
-ranges, toggles crop, flips to the URL tab, shows the platform chips — while
-``mss`` captures the window at ~10fps. The frame sequence is then encoded
-into a ~5-second GIF with ffmpeg.
+Walks the Studio layout through the app's core loop: paste a link in
+Import, mark a range on the Edit timeline, type a caption, reframe for
+9:16 with a blurred fill, and land on the Export page. Each step holds for
+a fixed number of frames, and every frame is grabbed straight from the
+window, so the GIF's timing is exact no matter how fast the machine is.
 
-Intended for local use. Not imported at runtime.
+Runs with a throwaway settings file like capture_screenshots.py, so real
+settings, autosave and recent projects are never touched.
 
-Usage:
-    # 1. Create a demo clip if you don't have one already:
-    ffmpeg -y -f lavfi -i "testsrc=duration=6:size=1280x720:rate=24" \\
-           -f lavfi -i "sine=frequency=440:duration=6" \\
-           -c:v libx264 -c:a aac -pix_fmt yuv420p /tmp/vkshots/demo.mp4
+Local use only (Windows renders the real fonts). Set VK_DEMO_VIDEO to a
+clip; otherwise capture_screenshots.py's Mandelbrot demo is synthesized.
 
-    # 2. Run the recorder:
-    VK_DEMO_VIDEO=/tmp/vkshots/demo.mp4 python scripts/record_demo.py
+    python scripts/record_demo.py
 """
 
 import os
@@ -25,167 +23,187 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from capture_screenshots import (  # noqa: E402
+    DEMO_VIDEO, _DISPLAY_FOLDER, _window_bounds, ensure_demo,
+    wait_for_editor_assets,
+)
 
 OUTPUT = ROOT / "assets" / "screenshots" / "demo.gif"
-DEMO_VIDEO = Path(os.environ.get(
-    "VK_DEMO_VIDEO", Path(tempfile.gettempdir()) / "vkshots" / "demo.mp4",
-))
-
+WINDOW = "1280x800+40+40"
 FPS = 10
-DURATION_S = 8
-FRAME_COUNT = FPS * DURATION_S
+GIF_WIDTH = 960
 
 
-def capture_window_frames(app, out_dir):
-    """Capture `FRAME_COUNT` frames of the app window into `out_dir`."""
-    import mss
-    import mss.tools
+class Recorder:
+    """Grab one frame per tick; steps decide how many ticks they hold."""
 
-    with mss.mss() as sct:
-        interval = 1.0 / FPS
-        start = time.time()
-        for i in range(FRAME_COUNT):
-            bbox = {
-                "left":   app.winfo_rootx(),
-                "top":    app.winfo_rooty(),
-                "width":  app.winfo_width(),
-                "height": app.winfo_height(),
-            }
-            shot = sct.grab(bbox)
-            mss.tools.to_png(
-                shot.rgb, shot.size,
-                output=str(out_dir / f"frame_{i:04d}.png"),
-            )
-            # Sleep to hit the target frame pace.
-            target = start + (i + 1) * interval
-            remaining = target - time.time()
-            if remaining > 0:
-                time.sleep(remaining)
+    def __init__(self, app, frame_dir):
+        self.app = app
+        self.frame_dir = frame_dir
+        self.count = 0
+        self.bbox = None
+
+    def frame(self):
+        from PIL import ImageGrab
+        self.app.update()
+        if self.bbox is None:
+            self.bbox = _window_bounds(self.app)
+        ImageGrab.grab(bbox=self.bbox, all_screens=True).save(
+            self.frame_dir / f"frame_{self.count:04d}.png")
+        self.count += 1
+
+    def hold(self, frames):
+        for _ in range(frames):
+            self.frame()
+
+    def animate(self, frames, fn):
+        """Call ``fn(progress)`` with progress 0→1, one frame each."""
+        for i in range(1, frames + 1):
+            fn(i / frames)
+            self.frame()
 
 
-def drive_app(app):
-    """Script the app through a short tour in lockstep with capture."""
-    time.sleep(0.4)  # let the first frames capture the empty Trim tab
+def tour(app, rec):
+    editor = app.trim_tab
 
-    trim = app.trim_tab
-    trim._load_path(str(DEMO_VIDEO))
-    time.sleep(0.6)
+    # 1. Import: a link goes in and the platform chip lights up.
+    app.show_workspace("import")
+    rec.hold(8)
+    bar = editor.download_bar
+    url = "https://youtu.be/dQw4w9WgXcQ"
+    bar.url_entry.focus_set()
 
-    # Scrub to the middle
-    trim.range_slider.set_values(2.0, 4.5)
-    trim._on_slider_change(2.0, 4.5)
-    time.sleep(0.6)
+    def type_url(p):
+        bar.url_entry.delete(0, "end")
+        bar.url_entry.insert(0, url[:max(1, round(len(url) * p))])
+        bar._on_url_typed()
+    rec.animate(8, type_url)
+    rec.hold(8)
 
-    # Queue the range
-    trim._queue_range()
-    time.sleep(0.5)
+    # 2. The clip lands in Edit.
+    editor._load_path(str(DEMO_VIDEO))
+    wait_for_editor_assets(app, editor)
+    editor.inspector.show("clip")
+    rec.hold(8)
 
-    # Add a text layer with sample text
-    trim.text_layers._add_layer()
-    if trim.text_layers.layers:
-        trim.text_layers.layers[0].text_var.set("Demo clip")
-        trim.player.refresh_overlay()
-    time.sleep(0.8)
+    # 3. Sweep the playhead and mark a range (I at 1.2 s, O at 4.5 s),
+    #    save it with Q, then mark a second part to export alongside it.
+    rec.animate(8, lambda p: editor._seek(1.2 * p))
+    editor.keyboard_mark_in()
+    rec.hold(3)
+    rec.animate(12, lambda p: editor._seek(1.2 + 3.3 * p))
+    editor.keyboard_mark_out()
+    rec.hold(4)
+    editor.keyboard_save_range()
+    rec.hold(5)
+    rec.animate(3, lambda p: editor._seek(4.5 + 0.3 * p))
+    editor.keyboard_mark_in()
+    rec.animate(6, lambda p: editor._seek(4.8 + 1.0 * p))
+    editor.keyboard_mark_out()
+    rec.hold(4)
 
-    # Flip to URL Download tab
-    app.tabview.set("  ↓  URL Download  ")
-    time.sleep(0.6)
-    url = app.url_tab
-    url.url_entry.delete(0, "end")
-    url.url_entry.insert(0, "https://youtu.be/dQw4w9WgXcQ")
-    url._on_url_typed()
-    time.sleep(0.8)
+    # 4. A caption, typed into the Text inspector.
+    editor._seek(2.0)
+    editor.add_text_layer()
+    page = editor.inspector.pages["text"]
+    caption = "POV: you found the\nperfect clip"
 
-    # History tab
-    app.tabview.set("  ⌛  History  ")
-    time.sleep(0.6)
+    def type_caption(p):
+        page.textbox.delete("1.0", "end")
+        page.textbox.insert("1.0", caption[:max(1, round(len(caption) * p))])
+        page._text_changed()
+    rec.animate(14, type_caption)
+    rec.animate(6, lambda p: editor._seek(2.0 + 0.8 * p))
+    rec.hold(6)
+
+    # 5. A touch of color: the preview shows exactly what exports.
+    editor.inspector.show("color")
+    rec.hold(3)
+    rec.animate(8, lambda p: editor.options.saturation_var.set(round(1.0 + 0.35 * p, 3)))
+    rec.hold(6)
+
+    # 6. Reframe for Shorts: 9:16 with a blurred fill.
+    editor.inspector.show("clip")
+    rec.hold(4)
+    editor.options.set_aspect("9:16")
+    rec.hold(6)
+    editor.options.aspect_fill_var.set("Blur fill")
+    rec.hold(12)
+
+    # 7. Export: every setting on one page, a summary, one button.
+    app.show_workspace("export")
+    rec.hold(10)
+    editor._apply_platform_preset("TikTok")
+    rec.hold(18)
 
 
 def encode_gif(frame_dir, output, ffmpeg):
-    """Convert the PNG sequence to a palette-optimised GIF."""
+    """PNG sequence → palette-optimised looping GIF."""
+    scale = f"scale={GIF_WIDTH}:-2:flags=lanczos"
     palette = frame_dir / "palette.png"
-
     subprocess.run([
         ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-        "-framerate", str(FPS),
-        "-i", str(frame_dir / "frame_%04d.png"),
-        "-vf", "scale=900:-2:flags=lanczos,palettegen=max_colors=128",
+        "-framerate", str(FPS), "-i", str(frame_dir / "frame_%04d.png"),
+        "-vf", f"{scale},palettegen=max_colors=128:stats_mode=diff",
         str(palette),
     ], check=True)
-
     subprocess.run([
         ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-        "-framerate", str(FPS),
-        "-i", str(frame_dir / "frame_%04d.png"),
+        "-framerate", str(FPS), "-i", str(frame_dir / "frame_%04d.png"),
         "-i", str(palette),
-        "-lavfi",
-        "scale=900:-2:flags=lanczos [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=5",
-        "-loop", "0",
-        str(output),
+        "-lavfi", f"{scale} [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle",
+        "-loop", "0", str(output),
     ], check=True)
 
 
 def main():
-    if not DEMO_VIDEO.exists():
-        print(f"Demo video not found at {DEMO_VIDEO}.")
-        print("Create one with:")
-        print('  ffmpeg -y -f lavfi -i "testsrc=duration=6:size=1280x720:rate=24" \\')
-        print('         -f lavfi -i "sine=frequency=440:duration=6" \\')
-        print('         -c:v libx264 -c:a aac -pix_fmt yuv420p /tmp/vkshots/demo.mp4')
+    if not ensure_demo():
         return 1
-
-    from videokidnapper.app import App
+    from videokidnapper.utils import settings
     from videokidnapper.utils.ffmpeg_check import find_ffmpeg
 
     ffmpeg = find_ffmpeg()
     if not ffmpeg:
-        print("FFmpeg not found — open the Setup dialog inside the app first.")
+        print("FFmpeg not found. Open Setup inside the app first.")
         return 1
-    ffmpeg = str(ffmpeg)
 
     frame_dir = Path(tempfile.mkdtemp(prefix="vkdemo_"))
-    try:
-        app = App()
-        app.geometry("1100x780")
-        app.update()
+    with tempfile.TemporaryDirectory(prefix="vk-demo-settings-") as temp:
+        settings._SETTINGS_PATH = Path(temp) / "settings.json"
+        settings.update({
+            "onboarding_complete": True,
+            "auto_update_check": False,
+            "theme": os.environ.get("VK_SCREENSHOT_THEME", "light"),
+            "output_folder": _DISPLAY_FOLDER,
+        })
+        from videokidnapper.app import App
         try:
-            app.attributes("-topmost", True)
-            app.lift()
-            app.focus_force()
-        except Exception:
-            pass
-        app.update()
-        time.sleep(0.3)
-
-        # Drive + capture in parallel — the driver issues Tk changes on the
-        # main thread while capture runs in a worker with its own mss loop.
-        def worker():
-            capture_window_frames(app, frame_dir)
-            app.after(0, app.destroy)
-
-        capture_thread = threading.Thread(target=worker, daemon=True)
-        capture_thread.start()
-
-        # The drive script runs on the main thread using a dispatch loop so
-        # Tk stays responsive while capture threads run.
-        driver = threading.Thread(target=lambda: drive_app(app), daemon=True)
-        driver.start()
-
-        app.mainloop()
-        capture_thread.join(timeout=2)
-
-        print(f"→ Captured {FRAME_COUNT} frames, encoding GIF...")
-        OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-        encode_gif(frame_dir, OUTPUT, ffmpeg)
-        print(f"✓ Wrote {OUTPUT}")
-    finally:
-        shutil.rmtree(frame_dir, ignore_errors=True)
+            app = App()
+            app.geometry(WINDOW)
+            app.update()
+            try:
+                app.attributes("-topmost", True)
+                app.lift()
+                app.focus_force()
+            except Exception:
+                pass
+            time.sleep(0.3)
+            rec = Recorder(app, frame_dir)
+            tour(app, rec)
+            app.destroy()
+            print(f"Captured {rec.count} frames ({rec.count / FPS:.1f} s), encoding GIF...")
+            OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+            encode_gif(frame_dir, OUTPUT, str(ffmpeg))
+            print(f"Wrote {OUTPUT} ({OUTPUT.stat().st_size / 1e6:.1f} MB)")
+        finally:
+            shutil.rmtree(frame_dir, ignore_errors=True)
     return 0
 
 
