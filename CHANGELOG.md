@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The play controls covered the timecode on smaller windows.** Below about 1400 pixels wide, the transport under the preview drew the play buttons on top of the time readout, cutting the duration off. The controls now move into the free space and the readout drops its hours when the panel is narrow, so both stay visible down to the minimum window size. Times also round to the nearest millisecond instead of showing 1.2 s as 01.199.
+
 ## [1.9.0] — 2026-10-06
 
 > **A new layout: Import, Edit, Export.** The editor fits on one screen with no scrolling, every export setting lives on one page, and a light Studio look replaces the old default.

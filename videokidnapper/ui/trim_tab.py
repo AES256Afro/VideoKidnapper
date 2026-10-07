@@ -48,7 +48,9 @@ from videokidnapper.ui.platform_presets import PLATFORM_CHOICES, get_preset
 from videokidnapper.ui.studio import controls as C
 from videokidnapper.ui.studio.icons import glyph, icon_button, icon_font
 from videokidnapper.ui.studio.inspector import Inspector
-from videokidnapper.ui.studio.timeline import MAX_ZOOM, TimelineView
+from videokidnapper.ui.studio.timeline import (
+    MAX_ZOOM, TimelineView, transport_play_x, transport_timecode,
+)
 from videokidnapper.ui.text_layers import TextLayersPanel
 from videokidnapper.ui.theme import button
 from videokidnapper.ui.video_player import VideoPlayer
@@ -393,6 +395,14 @@ class TrimTab(ctk.CTkFrame):
 
         play = ctk.CTkFrame(transport, fg_color="transparent")
         play.place(relx=0.5, rely=0.5, anchor="center")
+        # The controls sit at the centre when the panel is wide enough and
+        # slide into the free space (with a shorter timecode) when it isn't,
+        # so they never cover the timecode on a narrow window.
+        self._transport = transport
+        self._transport_marks = marks
+        self._transport_play = play
+        self._compact_timecode = False
+        transport.bind("<Configure>", self._fit_transport, add="+")
         icon_button(play, "to_start", command=self._go_to_in, size=32).pack(side="left", padx=2)
         icon_button(play, "back", command=lambda: self.keyboard_nudge(-1.0),
                     size=32).pack(side="left", padx=2)
@@ -698,11 +708,39 @@ class TrimTab(ctk.CTkFrame):
     # Playhead, selection and transport
     # ------------------------------------------------------------------
     def _update_timecode(self):
-        duration = (self.video_info or {}).get("duration", 0.0)
-        self.timecode_label.configure(
-            text=f"{seconds_to_hms(self.playhead)}   /   {seconds_to_hms(duration)}"
-            if self.video_path else "--:--:--.---",
-        )
+        if self.video_path:
+            duration = (self.video_info or {}).get("duration", 0.0)
+            text = transport_timecode(self.playhead, duration, self._compact_timecode)
+        else:
+            text = transport_timecode(None, None, self._compact_timecode)
+        self.timecode_label.configure(text=text)
+
+    def _fit_transport(self, _event=None):
+        """Lay out the transport row for its current width."""
+        width = self._transport.winfo_width()
+        if width <= 1:
+            return
+
+        def place_x():
+            self.timecode_label.update_idletasks()
+            return transport_play_x(
+                width,
+                left=14 + self.timecode_label.winfo_reqwidth(),
+                play=self._transport_play.winfo_reqwidth(),
+                right=12 + self._transport_marks.winfo_reqwidth(),
+            )
+
+        if self._compact_timecode:
+            self._compact_timecode = False
+            self._update_timecode()
+        x = place_x()
+        if x is None:
+            self._compact_timecode = True
+            self._update_timecode()
+            x = place_x()
+        if x is None:
+            x = width / 2  # too narrow for anything better; centre it
+        self._transport_play.place(relx=0, x=int(x), rely=0.5, anchor="center")
 
     def _request_frame(self, t):
         """Show the frame at ``t``, coalescing bursts from scrubbing."""
@@ -1001,6 +1039,8 @@ class TrimTab(ctk.CTkFrame):
             self.preview_name.configure(text=name)
             self._set_media_card(path)
             self._update_timecode()
+            # An hour-long clip has a wider compact timecode; refit.
+            self.after_idle(self._fit_transport)
             self._update_export_enabled()
             if not preserve_project:
                 self.current_project_path = None

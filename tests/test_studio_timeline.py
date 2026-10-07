@@ -6,7 +6,8 @@ import pytest
 
 from videokidnapper.ui.studio.timeline import (
     LANES, MIN_CLIP_S, RULER_H, clamp_clip, format_tick, lane_at, lane_top,
-    tick_step, time_to_x, total_height, view_window, x_to_time,
+    tick_step, time_to_x, total_height, transport_play_x, transport_timecode,
+    view_window, x_to_time,
 )
 
 
@@ -83,3 +84,38 @@ def test_lanes_stack_below_the_ruler():
         top += height
     assert lane_at(top) is None
     assert total_height() == top
+
+
+def test_transport_timecode_full_and_compact():
+    assert transport_timecode(2.8, 6.0) == "00:00:02.800   /   00:00:06.000"
+    assert transport_timecode(2.8, 6.0, compact=True) == "00:02.800 / 00:06.000"
+    # An hour-long clip keeps its hours even when compact.
+    assert transport_timecode(5.0, 3725.5, compact=True) == "00:00:05.000 / 01:02:05.500"
+
+
+def test_transport_timecode_placeholder_keeps_its_shape():
+    full = transport_timecode(None, None)
+    assert full == "--:--:--.---   /   --:--:--.---"
+    assert len(full) == len(transport_timecode(1.0, 2.0))
+    assert len(transport_timecode(None, None, compact=True)) == len(
+        transport_timecode(1.0, 2.0, compact=True))
+
+
+def test_transport_play_x_prefers_true_centre():
+    assert transport_play_x(900, left=280, play=200, right=200) == 450
+
+
+def test_transport_play_x_shifts_into_free_space_when_crowded():
+    # 640 wide: centred controls (220..420) would hit the 300-px timecode.
+    x = transport_play_x(640, left=300, play=200, right=100)
+    assert x == pytest.approx((312 + 528) / 2)
+    assert x - 100 >= 312 and x + 100 <= 528
+
+
+def test_transport_play_x_reports_no_fit():
+    assert transport_play_x(520, left=300, play=200, right=200) is None
+
+
+def test_transport_timecode_rounds_to_the_nearest_millisecond():
+    assert transport_timecode(2.9996, 6.0, compact=True) == "00:03.000 / 00:06.000"
+    assert transport_timecode(1.2, 59.9999, compact=True) == "00:01.200 / 01:00.000"
