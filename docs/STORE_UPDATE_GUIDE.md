@@ -58,6 +58,7 @@ is the retro-stamp badge on navy, one consistent look everywhere:
 - **1:1 box art** (1080×1080 / 2160×2160): `assets/branding/store-boxart-1080x1080.png` / `-2160x2160.png`
 - **9:16 poster art** (720×1080 / 1440×2160): `assets/branding/store-poster-720x1080.png` / `-1440x2160.png`
 - **Tile overrides** (300 / 150 / 71): `assets/branding/store-tile-300x300.png`, etc. — optional; the package already carries matching tiles in `packaging/msix/Assets/`.
+- **16:9 super hero art** (1920×1080 / 3840×2160), under *Trailers and additional assets*: `assets/branding/store-hero-1920x1080.png` / `-3840x2160.png`. It shows at the top of the Store page and must not contain the product name, which is why it uses the ring-free mark.
 
 You usually don't need to touch these unless the mark changed. `python scripts/make_brand_assets.py` regenerates all of them, plus the package tiles and app icons (see `assets/branding/README.md`).
 
