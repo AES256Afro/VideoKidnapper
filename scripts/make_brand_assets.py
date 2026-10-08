@@ -335,6 +335,35 @@ def main():
         card(w, hh, int(520 * k), int(210 * k), int(66 * k), int(880 * k),
              BRAND / f"store-poster-{w}x{hh}.png")
 
+    # Store 16:9 "super hero" art: shown at the top of the Store page, and
+    # the Store forbids the product name in it, so it uses the ring-free
+    # mark (the badge spells the name) beside the Edit screenshot.
+    source = ROOT / "assets" / "screenshots" / "studio_loaded.png"
+    if source.exists():
+        # Crop off the title bar and app header, which spell the name.
+        full = Image.open(source)
+        shot = TMP / "hero-shot.png"
+        full.crop((0, 88, full.width, full.height)).save(shot)
+        sw, sh = Image.open(shot).size
+        for w, hh in ((1920, 1080), (3840, 2160)):
+            k = w / 1920
+            img_w = 1180 * k
+            img_h = img_w * sh / sw
+            ix, iy = 640 * k, (hh - img_h) / 2
+            body = (f'<defs><clipPath id="r"><rect x="{ix}" y="{iy}" width="{img_w}" '
+                    f'height="{img_h}" rx="{18 * k}"/></clipPath>'
+                    f'<filter id="s" x="-10%" y="-10%" width="120%" height="130%">'
+                    f'<feDropShadow dx="0" dy="{18 * k}" stdDeviation="{24 * k}" '
+                    f'flood-color="#000" flood-opacity="0.45"/></filter></defs>'
+                    f'<rect width="{w}" height="{hh}" fill="{NAVY}"/>'
+                    + place(mark, 150 * k, (hh - 400 * k) / 2, 400 * k)
+                    + f'<rect x="{ix}" y="{iy}" width="{img_w}" height="{img_h}" rx="{18 * k}" '
+                    f'fill="{NAVY}" filter="url(#s)"/>'
+                    f'<image href="{shot.as_uri()}" x="{ix}" y="{iy}" width="{img_w}" '
+                    f'height="{img_h}" clip-path="url(#r)" preserveAspectRatio="xMidYMid slice"/>')
+            render(svg_doc(body, w, hh), w, hh, BRAND / f"store-hero-{w}x{hh}.png",
+                   background=NAVY)
+
     # Store tile overrides (opaque, on navy).
     for s in (300, 150, 71):
         inner = int(s * 0.84)

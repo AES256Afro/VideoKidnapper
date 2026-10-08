@@ -43,6 +43,7 @@ this folder, the MSIX tiles and the app icons.
 | `store-poster-{720x1080,1440x2160}.png` | Microsoft Store 2:3 poster art. |
 | `store-boxart-{1080x1080,2160x2160}.png` | Microsoft Store 1:1 box art. |
 | `store-tile-{300x300,150x150,71x71}.png` | Store tile overrides (the MSIX already bundles its own). |
+| `store-hero-{1920x1080,3840x2160}.png` | Store 16:9 super hero art: the ring-free mark beside the Edit screenshot. The Store forbids the product name here, so it has no badge and the screenshot's header is cropped off. Rebuild it after recapturing screenshots. |
 
 Outside this folder, the same run writes:
 
