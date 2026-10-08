@@ -43,6 +43,7 @@ datas = ctk_datas + dnd_datas + cv2_datas + pil_datas + [
     # Window icon: dest mirrors the package layout so
     # Path(__file__).parent / "assets" resolves inside the bundle.
     ("../videokidnapper/assets/icon.png", "videokidnapper/assets"),
+    ("../videokidnapper/assets/mark.png", "videokidnapper/assets"),
     ("../videokidnapper/assets/icon.ico", "videokidnapper/assets"),
 ]
 binaries = ctk_binaries + dnd_binaries + cv2_binaries

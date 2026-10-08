@@ -53,6 +53,7 @@ datas = ctk_datas + dnd_datas + cv2_datas + pil_datas + [
     # Path(__file__).parent / "assets" resolves inside the bundle.
     ("../videokidnapper/assets/icon.ico", "videokidnapper/assets"),
     ("../videokidnapper/assets/icon.png", "videokidnapper/assets"),
+    ("../videokidnapper/assets/mark.png", "videokidnapper/assets"),
 ]
 binaries = ctk_binaries + dnd_binaries + cv2_binaries
 hiddenimports = ctk_hiddenimports + dnd_hiddenimports + cv2_hiddenimports + [
