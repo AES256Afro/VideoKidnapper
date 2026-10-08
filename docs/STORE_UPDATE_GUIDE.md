@@ -53,13 +53,13 @@ scripts/capture_screenshots.py` then `python scripts/store_screenshots.py`
 ## 3. Logo / Store images
 
 Under **Store listings → Store logos** (and the package tiles). The mark
-is the balaclava on the dark brand tile, one consistent look everywhere:
+is the retro-stamp badge on navy, one consistent look everywhere:
 
 - **1:1 box art** (1080×1080 / 2160×2160): `assets/branding/store-boxart-1080x1080.png` / `-2160x2160.png`
 - **9:16 poster art** (720×1080 / 1440×2160): `assets/branding/store-poster-720x1080.png` / `-1440x2160.png`
 - **Tile overrides** (300 / 150 / 71): `assets/branding/store-tile-300x300.png`, etc. — optional; the package already carries matching tiles in `packaging/msix/Assets/`.
 
-You usually don't need to touch these unless the mark changed. They're regenerated from `assets/branding/logo.svg` by the asset script (see the branding README).
+You usually don't need to touch these unless the mark changed. `python scripts/make_brand_assets.py` regenerates all of them, plus the package tiles and app icons (see `assets/branding/README.md`).
 
 ## 4. App package (new version)
 

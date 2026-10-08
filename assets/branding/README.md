@@ -1,22 +1,54 @@
 # Brand assets
 
-The VideoKidnapper mark is a balaclava (ski-mask) head — a flat, single-color
-pictogram with the eye holes and mouth as true cutouts, so it works on any
-background. Accent color is `#2860D0`; the app's dark surface is `#0D1117`.
+The VideoKidnapper mark is a **retro stamp**: a cream badge with a navy rim,
+"VIDEO KIDNAPPER" across the top, the app's steps (DOWNLOAD ✦ TRIM ✦
+CAPTION ✦ EXPORT) along the bottom, and the balaclava on a navy disc in the
+middle. Below about 64 px the ring text turns to noise, so small sizes use a
+**ring-free mark**: the balaclava on a navy disc with a thin cream rim.
+
+| Colour | Hex | Used for |
+|---|---|---|
+| Cream | `#F3E9D2` | badge disc, mask, wordmark on dark |
+| Navy | `#1F2A44` | rim, inner disc, ring text, wordmark on light |
+| Orange | `#E4572E` | stars, dot, "Kidnapper" on light |
+| Light orange | `#F28B6B` | "Kidnapper" on dark |
+
+Type: ring text in **Space Mono Bold**, wordmark in **Alfa Slab One**. Both are
+under the SIL Open Font License; the files and licences are in `fonts/`.
+
+**Everything here is generated. Don't edit the files; edit
+`scripts/make_brand_assets.py` and run it:**
+
+```
+pip install fonttools
+python scripts/make_brand_assets.py
+```
+
+It converts all text to outlines, so the SVGs render the same anywhere,
+including in an `<img>` that can't load web fonts. PNGs are rendered with
+headless Chrome or Edge (`VK_CHROME` overrides the lookup). One run rewrites
+this folder, the MSIX tiles and the app icons.
 
 | File | What it is |
 |---|---|
-| `logo.svg` | Master mark, accent blue. **Edit this**, then regenerate the PNGs below. |
-| `logo-white.svg` | Same geometry, white — for dark backgrounds. |
-| `logo-512.png` / `logo-1024.png` | Transparent square mark (used by the app icon, AppImage, favicon). |
-| `logo-lockup.png` | Horizontal mark + wordmark, light text — for dark backgrounds. |
-| `logo-lockup-onlight.png` | Lockup with dark text — for light backgrounds. |
-| `logo-lockup-dark.png` | Lockup on the dark brand card — social / hero. |
-| `logo-card-1280x720.png` | Mark + wordmark, 16:9 dark card — social preview. |
+| `logo.svg` | The badge. |
+| `logo-mark.svg` | Ring-free mark, for small sizes and favicons. |
+| `logo-white.svg` | Ring-free mark inverted (cream disc, navy mask), for dark backgrounds. |
+| `logo-512.png` / `logo-1024.png` | The badge, transparent (AppImage and .deb icon, apple-touch-icon). |
+| `favicon-64.png` | Ring-free mark, PNG favicon fallback. |
+| `logo-lockup.png` | Badge + wordmark, light text, for dark backgrounds. |
+| `logo-lockup-onlight.png` | Badge + wordmark, dark text, for light backgrounds. |
+| `logo-lockup-dark.png` | Badge + wordmark on a navy card. |
+| `logo-card-1280x720.png` | Badge over the wordmark on navy, 16:9: social preview (`og:image`). |
 | `store-poster-{720x1080,1440x2160}.png` | Microsoft Store 2:3 poster art. |
-| `store-boxart-{1080x1080,2160x2160}.png` | Store 1:1 box art (mark + wordmark). |
-| `store-tile-{300x300,150x150,71x71}.png` | Store 1:1 tile-icon overrides (the MSIX already bundles its own). |
+| `store-boxart-{1080x1080,2160x2160}.png` | Microsoft Store 1:1 box art. |
+| `store-tile-{300x300,150x150,71x71}.png` | Store tile overrides (the MSIX already bundles its own). |
 
-The `.ico` / multi-size window icon lives at `videokidnapper/assets/icon.ico`
-(shipped as package data); it's regenerated from `logo.svg`. See
-`packaging/msix/Assets/` for the Store tiles baked into the MSIX.
+Outside this folder, the same run writes:
+
+- `videokidnapper/assets/icon.ico` (16 to 256 px), `icon.icns` (16 to 1024 px)
+  and `icon.png` (256 px): the window, taskbar and Dock icons. Sizes under
+  64 px use the ring-free mark.
+- `videokidnapper/assets/mark.png`: the ring-free mark in the app header.
+- `packaging/msix/Assets/*.png`: the tiles and taskbar icons baked into the
+  Store package.

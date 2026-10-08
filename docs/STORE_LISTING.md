@@ -47,17 +47,11 @@ Record your screen straight into the editor. Choose from five looks, from a clea
 ### What's new in this version (Store field: "What's new in this version")
 
 User-facing changes only, no repo/doc housekeeping. Update this each
-release. For 1.9.0, which follows 1.8.3 on the Store (so it also
-carries the 1.8.4 fixes):
+release. For 1.9.1:
 
 ```
-- A new layout in three steps: Import, Edit, Export. Edit fits on one screen with no scrolling: your media, the preview, an Inspector for the selected caption or overlay, and a track timeline.
-- Track timeline: saved cuts, captions, overlays, a filmstrip and the waveform share one playhead. Drag a caption to move it in time, or drag its edge to retime it.
-- Every export setting on one page: platform presets, format, quality, folder, file names, and joining cuts, with a summary of exactly what you will get.
-- Colour adjustments now show in the preview, so a forgotten slider can no longer fade an export.
-- Studio, a clean light look, is the new default. Graphite (dark), Cream retro tech, Fallout and Retro are in Settings.
-- Export history shows a thumbnail of each export, grouped by day.
-- Exports match the video you started with: phone footage no longer comes out darker and faded, captions stay on screen in vertical and cropped exports, and stickers keep the size they have in the preview.
+- A new logo: the balaclava in a retro stamp, on the app, the taskbar and the Start menu.
+- The play controls no longer cover the time readout on smaller windows.
 ```
 
 ### Product features (Store field: "Product features", one per line)
