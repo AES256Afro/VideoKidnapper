@@ -438,10 +438,13 @@ class App(ctk.CTk):
         platform that ships a signed DMG, while the shortcuts overlay
         cheerfully advertised "Ctrl+O".
 
-        Both modifiers are bound everywhere rather than switching on
-        ``sys.platform``: Command never fires on Windows or Linux, and
-        leaving Control live on macOS costs nothing and helps anyone
-        arriving with Windows muscle memory.
+        Command is bound on macOS only. Tk's "Command" is the Mod1
+        modifier, and Tk on Windows sets Mod1 whenever Num Lock is on, so
+        binding it there turned plain typing into accelerators: with Num
+        Lock on, "S" in a caption opened Save As, "s" saved, "o" opened a
+        file instead of marking the out point, and "e" started an export.
+        On X11 Mod1 is usually Alt. Control stays live on macOS too; it
+        costs nothing and helps anyone arriving with Windows muscle memory.
 
         Tk also treats ``<Control-s>`` and ``<Control-S>`` as different
         events, because Shift changes the keysym — so each letter is
@@ -456,7 +459,8 @@ class App(ctk.CTk):
         prefix, _, key = body.rpartition("-")
         prefix = f"{prefix}-" if prefix else ""
         cases = {key.lower(), key.upper()} if both_cases else {key}
-        for modifier in ("Control", "Command"):
+        modifiers = ("Control", "Command") if sys.platform == "darwin" else ("Control",)
+        for modifier in modifiers:
             for case in cases:
                 self.bind_all(f"<{modifier}-{prefix}{case}>", handler)
 
