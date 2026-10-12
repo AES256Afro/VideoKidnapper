@@ -93,7 +93,7 @@ def available_filters():
     try:
         result = subprocess.run(
             [_get_ffmpeg(), "-hide_banner", "-filters"],
-            capture_output=True, text=True, timeout=8, **_run_kwargs(),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8, **_run_kwargs(),
         )
         for line in (result.stdout or "").splitlines():
             parts = line.split()

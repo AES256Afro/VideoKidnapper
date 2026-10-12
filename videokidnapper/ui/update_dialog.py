@@ -134,7 +134,7 @@ class UpdateDialog(ctk.CTkToplevel):
             try:
                 result = subprocess.run(
                     self.plan.command,
-                    capture_output=True, text=True, timeout=600,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600,
                     creationflags=(
                         subprocess.CREATE_NO_WINDOW
                         if os.name == "nt" else 0
