@@ -34,6 +34,7 @@ _DEFAULTS = {
     "cookies_browser":  "",
     "cookies_file":     "",
     "auto_update_check": True,
+    "last_run_version": "",   # shows "Updated to vX" once after an update
     "onboarding_complete": False,
     "recent_projects": [],
     "mute_audio":       False,

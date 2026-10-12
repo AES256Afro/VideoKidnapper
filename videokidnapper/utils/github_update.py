@@ -20,6 +20,21 @@ GITHUB_REPO = "AES256Afro/VideoKidnapper"
 _TIMEOUT_S = 4
 WINGET_PACKAGE_ID = "AES256Afro.VideoKidnapper"
 STORE_PRODUCT_ID = "9N4BMTK8Q7KG"
+_INNO_UNINSTALL_KEY = (
+    "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"
+    "{8C8E1A2F-5D4B-4E6A-9F32-7C1A5B2D6E84}_is1"
+)
+
+#: Channels that download and install the update themselves (see
+#: utils/self_update.py) when running as the built Windows app.
+SELF_UPDATE_CHANNELS = ("setup", "winget", "portable")
+
+
+def can_self_update(channel, platform_name=None, frozen=None):
+    """True when ``channel`` can be updated in place on this machine."""
+    platform_name = platform_name or sys.platform
+    frozen = getattr(sys, "frozen", False) if frozen is None else frozen
+    return platform_name == "win32" and bool(frozen) and channel in SELF_UPDATE_CHANNELS
 
 
 @dataclass(frozen=True)
@@ -54,10 +69,7 @@ def _windows_installer_channel():
         import winreg
     except ImportError:
         return None
-    key_name = (
-        "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"
-        "{8C8E1A2F-5D4B-4E6A-9F32-7C1A5B2D6E84}_is1"
-    )
+    key_name = _INNO_UNINSTALL_KEY
     for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
         for access in (
             winreg.KEY_READ,
@@ -78,6 +90,31 @@ def _windows_installer_channel():
             except OSError:
                 continue
     return None
+
+
+def installer_scope():
+    """"user" or "machine": where the Setup install is registered.
+
+    A silent upgrade has to run in the same scope, or it lands beside the
+    existing install instead of on top of it. Defaults to "user", the
+    installer's own default.
+    """
+    try:
+        import winreg
+    except ImportError:
+        return "user"
+    for root, scope in ((winreg.HKEY_CURRENT_USER, "user"),
+                        (winreg.HKEY_LOCAL_MACHINE, "machine")):
+        for access in (
+            winreg.KEY_READ,
+            winreg.KEY_READ | getattr(winreg, "KEY_WOW64_64KEY", 0),
+        ):
+            try:
+                with winreg.OpenKey(root, _INNO_UNINSTALL_KEY, 0, access):
+                    return scope
+            except OSError:
+                continue
+    return "user"
 
 
 def _inside_source_checkout(module_path):
@@ -113,9 +150,16 @@ def detect_install_channel(
     return "pip"
 
 
-def build_update_plan(channel=None, release_url=None):
+def build_update_plan(channel=None, release_url=None, platform_name=None, frozen=None):
     channel = channel or detect_install_channel()
     release_url = release_url or f"https://github.com/{GITHUB_REPO}/releases/latest"
+    if can_self_update(channel, platform_name, frozen):
+        return UpdatePlan(
+            channel, "Automatic update",
+            "VideoKidnapper downloads the new version, closes, installs it and "
+            "opens again. You'll be asked to save your project first.",
+            "install", "Restart to update", copy_text=release_url,
+        )
     if channel == "store":
         return UpdatePlan(
             channel, "Microsoft Store",

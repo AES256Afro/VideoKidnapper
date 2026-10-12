@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Updates install themselves on Windows.** On a Setup, winget or portable install, the update prompt now offers **Restart to update**: the new version downloads from the GitHub release with a progress bar, is checked against the SHA-256 checksum GitHub publishes, and after you're asked to save your project the app closes, installs it and opens again. Setup and winget installs upgrade silently in the same per-user or all-users scope they were installed with (an all-users install still shows the Windows admin prompt); the portable build swaps its own .exe. You can cancel the download at any time, and the first start after an update says which version you're on. This works from 1.9.2 onward: updating to 1.9.2 itself still goes through the release page once.
+
 ## [1.9.1] — 2026-10-07
 
 > **A new logo**, and the play controls no longer cover the time readout on smaller windows.

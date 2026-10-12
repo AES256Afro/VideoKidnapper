@@ -90,6 +90,10 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
+; In-app updates (videokidnapper/utils/self_update.py) run this installer
+; with /SILENT /RELAUNCH=1 after the app has closed itself: reopen it as
+; the user who started the update, even when the install was elevated.
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait runasoriginaluser; Check: RelaunchRequested
 ; Offer to launch after install — unchecked by default since the user
 ; may have closed the wizard intending to launch later.
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent unchecked
@@ -99,3 +103,10 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}
 ; We DON'T delete user settings on uninstall — leaving them lets a
 ; subsequent reinstall pick up where the user left off. Users who
 ; really want a clean wipe can delete the JSON by hand.
+
+[Code]
+// True when the in-app updater asked for the app to be reopened.
+function RelaunchRequested: Boolean;
+begin
+  Result := ExpandConstant('{param:relaunch|0}') = '1';
+end;
