@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
+import os
 import sys
+import threading
 import tkinter as tk
 import traceback
 from pathlib import Path
@@ -16,7 +18,7 @@ from videokidnapper.ui.widgets import Toast
 from videokidnapper.utils import project_files, settings
 from videokidnapper.utils.dnd import enable_dnd_for
 from videokidnapper.utils.ffmpeg_check import check_ffmpeg
-from videokidnapper.utils.github_update import check_async
+from videokidnapper.utils.github_update import check_async, is_newer
 from videokidnapper.utils.urltools import looks_like_media_url
 
 # The three main workspaces, in the order the header shows them. Each
@@ -70,6 +72,7 @@ class App(ctk.CTk):
         self._bind_keyboard_shortcuts()
         self._install_exception_handler()
         self._load_plugins()
+        self._note_version_change()
         self._maybe_check_for_update()
         if not self._maybe_offer_recovery():
             self._maybe_show_onboarding()
@@ -580,6 +583,54 @@ class App(ctk.CTk):
                 self.after(0, self._show_update_chip, tag, link)
 
         check_async(APP_VERSION, on_update)
+
+    def _note_version_change(self):
+        """First start after an update: say so, and tidy up after it."""
+        last = settings.get("last_run_version", "")
+        if last == APP_VERSION:
+            return
+        settings.set("last_run_version", APP_VERSION)
+        if last and is_newer(APP_VERSION, last) and self.status_bar:
+            self.status_bar.show(f"Updated to v{APP_VERSION}.", "success")
+        from videokidnapper.utils import self_update
+        # The portable build's *.old file and the downloaded installer.
+        threading.Thread(target=self_update.cleanup_after_update, daemon=True).start()
+
+    def install_downloaded_update(self, path, channel):
+        """Close the app and install a verified download.
+
+        Called by the update dialog. Asks to save the project first; if
+        the user keeps it open, or the update can't start, returns a
+        message for the dialog and leaves the app running. On success it
+        does not return: the installer (Setup / winget) or the new
+        portable build takes over and reopens the app.
+        """
+        from videokidnapper.utils import self_update
+        from videokidnapper.utils.github_update import installer_scope
+
+        editor = getattr(self, "trim_tab", None)
+        if editor is not None and not editor.request_close():
+            return "The update is downloaded. Choose Restart to update when you're ready."
+        options = getattr(editor, "options", None)
+        if options is not None:
+            try:
+                options.save()  # flush the debounced settings write
+            except Exception:
+                pass
+        try:
+            if channel == "portable":
+                self_update.swap_portable(path, sys.executable)
+                self_update.start_portable(sys.executable)
+            else:
+                self_update.start_setup_install(path, installer_scope())
+        except self_update.UpdateError as exc:
+            return str(exc)
+        except OSError as exc:
+            return f"Couldn't start the update: {exc}"
+        self.destroy()
+        # Exit now, not when stray worker threads finish: the installer
+        # replaces this executable and waits for it to close.
+        os._exit(0)
 
     def _show_update_chip(self, tag, link):
         self._update_tag = tag
