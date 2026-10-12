@@ -142,7 +142,7 @@ class VideoPlayer(ctk.CTkFrame):
 
     def _on_drop(self, event):
         from videokidnapper.utils.dnd import parse_dnd_files
-        paths = parse_dnd_files(event.data or "")
+        paths = parse_dnd_files(event.data or "", splitlist=self.tk.splitlist)
         if paths and self._on_file_dropped:
             self._on_file_dropped(paths[0])
 

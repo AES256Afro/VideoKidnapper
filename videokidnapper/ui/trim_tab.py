@@ -55,6 +55,7 @@ from videokidnapper.ui.text_layers import TextLayersPanel
 from videokidnapper.ui.theme import button
 from videokidnapper.ui.video_player import VideoPlayer
 from videokidnapper.utils import project_files, settings
+from videokidnapper.utils.threads import wait_for_thread
 from videokidnapper.utils.file_naming import generate_export_path
 from videokidnapper.utils.size_estimator import estimate_bytes, human_bytes
 from videokidnapper.utils.srt_parser import parse_srt_file, srt_to_text_layers
@@ -156,6 +157,9 @@ class TrimTab(ctk.CTkFrame):
         self._autosave_debounce_ms = 1500
         self.current_project_path = None
         self._project_dirty = False
+        # Set while the startup recovery prompt is unanswered, so closing
+        # the app then leaves the autosave alone (see request_close).
+        self._recovery_pending = False
 
         self.playhead = 0.0
         self.selected_text_index = None
@@ -1659,6 +1663,10 @@ class TrimTab(ctk.CTkFrame):
             self._notify("Load a video before saving a project", "warn")
             return False
         path = target or (None if save_as else self.current_project_path)
+        if path and project_files.is_autosave(path):
+            # Saving "into" the autosave and then deleting it, as a saved
+            # project's autosave is, threw recovered work away.
+            path = None
         if not path:
             path = filedialog.asksaveasfilename(
                 title="Save VideoKidnapper Project",
@@ -1716,35 +1724,66 @@ class TrimTab(ctk.CTkFrame):
             return False
         if not self._load_path(str(source), preserve_project=True):
             return False
-        self._apply_snapshot(document.get("editor") or {})
-        self._restoring = True
+        # From here the editor already shows the new video. Until the
+        # project is fully applied it must not keep the previous project's
+        # path: a save would write this project's content into that file.
+        self.current_project_path = None
+        damaged = None
         try:
-            export = document.get("export") or {}
-            platform = str(export.get("platform", "Custom"))
-            self.platform_var.set(
-                platform if platform in PLATFORM_CHOICES else "Custom",
-            )
-            quality = str(export.get("quality", "Medium"))
-            self.quality_var.set(quality if quality in PRESETS else "Medium")
-            fmt = str(export.get("format", "GIF"))
-            self.format_var.set(fmt if fmt in EXPORT_FORMATS else "GIF")
-            self.export_options.apply_options(export.get("options") or {})
-        finally:
-            self._restoring = False
+            self._apply_snapshot(document.get("editor") or {})
+            self._restoring = True
+            try:
+                export = document.get("export") or {}
+                platform = str(export.get("platform", "Custom"))
+                self.platform_var.set(
+                    platform if platform in PLATFORM_CHOICES else "Custom",
+                )
+                quality = str(export.get("quality", "Medium"))
+                self.quality_var.set(quality if quality in PRESETS else "Medium")
+                fmt = str(export.get("format", "GIF"))
+                self.format_var.set(fmt if fmt in EXPORT_FORMATS else "GIF")
+                self.export_options.apply_options(export.get("options") or {})
+            finally:
+                self._restoring = False
+        except Exception as exc:
+            damaged = exc
 
         linked = document.get("linked_project_path") or ""
-        self.current_project_path = (
-            str(Path(linked).expanduser().resolve())
-            if recovery and linked else str(Path(path).expanduser().resolve())
-        )
-        self._project_dirty = bool(recovery)
-        if not recovery:
+        if damaged is not None:
+            # Keep what did load, as an untitled project, so nothing is
+            # overwritten and the user can still save what they see.
+            self.current_project_path = None
+        elif recovery:
+            # An untitled autosave has no project to return to; Save then
+            # asks where to save instead of writing into the autosave.
+            self.current_project_path = (
+                str(Path(linked).expanduser().resolve()) if linked else None
+            )
+        else:
+            self.current_project_path = str(Path(path).expanduser().resolve())
+        self._project_dirty = bool(recovery or damaged is not None)
+        if recovery:
+            self._recovery_pending = False
+            # Write this session's autosave straight away, then drop the
+            # file it came from if that was a postponed one.
+            self._write_autosave()
+            recovered = Path(path).expanduser().resolve()
+            if (project_files.autosave_path().is_file()
+                    and recovered != project_files.autosave_path().resolve()):
+                project_files.delete_autosave(recovered)
+        elif damaged is None:
             settings.add_recent_project(self.current_project_path)
             project_files.delete_autosave()
         self._undo_stack.reset(self._snapshot())
         self._update_project_status()
         self.player.refresh_overlay()
         self._emit_state()
+        if damaged is not None:
+            self._notify(
+                f"Opened {Path(path).name} with problems, as an untitled "
+                f"project: {damaged}", "warn",
+            )
+            return True
         self._notify(
             "Recovered autosaved project" if recovery else
             f"Opened project: {Path(path).name}",
@@ -1752,8 +1791,14 @@ class TrimTab(ctk.CTkFrame):
         )
         return True
 
-    def discard_recovery(self):
-        project_files.delete_autosave()
+    def discard_recovery(self, path=None):
+        self._recovery_pending = False
+        project_files.delete_autosave(path)
+
+    def postpone_recovery(self):
+        """The recovery prompt was closed without a choice: ask next time."""
+        self._recovery_pending = False
+        project_files.postpone_autosave()
 
     def _prepare_to_replace_project(self):
         if not self._project_dirty:
@@ -1770,6 +1815,10 @@ class TrimTab(ctk.CTkFrame):
         return True
 
     def request_close(self):
+        if self._recovery_pending:
+            # Closing while the recovery prompt is still up: nothing was
+            # chosen, so keep the autosave for the next launch.
+            return True
         self._flush_pending_snapshot()
         if self._autosave_after_id is not None:
             try:
@@ -1915,7 +1964,20 @@ class TrimTab(ctk.CTkFrame):
                 dialog.after(0, dialog.export_failed, "Cancelled")
                 self._notify("Export cancelled", "warn")
 
-        threading.Thread(target=run_export, daemon=True).start()
+        self._export_cancel = dialog.cancel_event
+        self._export_thread = threading.Thread(target=run_export, daemon=True)
+        self._export_thread.start()
+
+    def export_in_progress(self):
+        thread = getattr(self, "_export_thread", None)
+        return bool(thread and thread.is_alive())
+
+    def stop_export(self, timeout=3.0):
+        """Cancel a running export and give ffmpeg a moment to be killed."""
+        cancel = getattr(self, "_export_cancel", None)
+        if cancel is not None:
+            cancel.set()
+        wait_for_thread(self, getattr(self, "_export_thread", None), timeout)
 
     def _record_history(self, path, fmt, preset, options):
         try:
