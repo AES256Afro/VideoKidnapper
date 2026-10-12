@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Captions and stickers appeared at the wrong moment.** The editor times them on the full video, but the export counted from the start of the clip, so any clip that did not start at 0:00 showed them late or not at all. They now appear exactly where the preview shows them, at any speed, and a motion-tracked caption follows the same path.
+- **A speed change made the clip the wrong length.** At 2x the export ran on past the end of the selection, and at 0.5x it stopped halfway through. MP4, GIF and MP3 exports now cover exactly the selection.
+- **A caption with % in it came out wrong.** "100% done" lost its percent sign, "%{pts}" turned into a timestamp, and backslashes were mangled. Caption text is now printed exactly as typed.
+- **A manual crop with a frame shape was stretched.** With a manual crop and a preset such as 9:16, the export squeezed the crop into the preset's box. The manual crop now keeps its own shape, as it does in the preview.
+- **Some manual crops could not be exported.** A crop with an odd width or height failed with an encoder error unless the export also downscaled. It is now trimmed by a pixel to an even size.
+- **A failed or stopped export left a broken file behind.** It is now removed.
+- **Non-English file names could stop an export.** On Windows, ffmpeg messages containing such names were read with the wrong text encoding.
+- **An export kept running in the background** if its progress window failed partway. ffmpeg is now stopped.
+- **A file with sound but no picture** now gets a clear message pointing to Audio only instead of an empty video. A file ffprobe describes strangely now gives a clear "cannot read" error instead of a crash.
+- **Command line:** `--audio-only` now writes an `.mp3`, `--audio-only` with `--format GIF` and a speed outside 0.25–4 are refused, and an unreadable file prints an error instead of a traceback.
+
 ## [1.9.1] — 2026-10-07
 
 > **A new logo**, and the play controls no longer cover the time readout on smaller windows.

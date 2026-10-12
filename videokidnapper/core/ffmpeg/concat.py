@@ -91,7 +91,7 @@ def _probe_clip_duration(path):
                 "-of", "default=nokey=1:noprint_wrappers=1",
                 str(path),
             ],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
             **_run_kwargs(),
         )
         if result.returncode != 0:
@@ -225,7 +225,7 @@ def concat_clips_with_transition(
             "-movflags", "+faststart", str(output_path)]
 
     process = subprocess.Popen(
-        cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,
+        cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
         **_run_kwargs(),
     )
     if not _wait_for_concat(process, cancel_event, progress_callback):
@@ -264,7 +264,7 @@ def concat_clips(input_paths, output_path, progress_callback=None, cancel_event=
             str(output_path),
         ]
         process = subprocess.Popen(
-            cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,
+            cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
             **_run_kwargs(),
         )
         # No accurate progress for copy-only concat — just tick the bar.

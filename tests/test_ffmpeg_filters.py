@@ -42,9 +42,11 @@ def test_audio_speed_chains_beyond_range():
 def test_audio_speed_negative_does_not_hang():
     # Regression: a non-positive speed used to spin the chaining loop
     # forever (each ``remaining /= 0.5`` doubled the magnitude, never
-    # reaching >= 0.5). It must terminate and produce a valid filter.
-    f = _build_audio_speed(-1.0)
-    assert "atempo=" in f
+    # reaching >= 0.5). It must terminate; a speed that makes no sense
+    # means normal speed, the same as the video side and the length.
+    assert _build_audio_speed(-1.0) is None
+    assert _build_audio_speed(0) is None
+    assert _build_audio_speed(float("nan")) is None
 
 
 def test_audio_speed_zeroish_clamps():
