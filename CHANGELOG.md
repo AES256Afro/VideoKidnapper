@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Typing with Num Lock on triggered shortcuts on Windows.** A capital S typed into a caption opened Save As, a lowercase s saved the project, O opened a file instead of marking the out point, and outside text fields E could start an export. The ⌘ shortcuts meant for macOS were bound on every platform, and Windows reports Num Lock as the same modifier. They are now bound only on macOS; Ctrl shortcuts work as before.
+
 ## [1.9.1] — 2026-10-07
 
 > **A new logo**, and the play controls no longer cover the time readout on smaller windows.
