@@ -18,6 +18,10 @@ from videokidnapper.utils import settings
 PROJECT_EXTENSION = ".vidkid"
 SCHEMA_VERSION = 1
 AUTOSAVE_NAME = ".videokidnapper_autosave.vidkid"
+# Where an autosave goes when the user closes the recovery prompt without
+# choosing: out of the way of this session's autosaves, offered again at
+# the next launch.
+POSTPONED_AUTOSAVE_NAME = ".videokidnapper_autosave.later.vidkid"
 
 
 class ProjectFileError(ValueError):
@@ -27,6 +31,39 @@ class ProjectFileError(ValueError):
 def autosave_path():
     """Keep recovery data beside settings, including isolated test settings."""
     return settings._SETTINGS_PATH.with_name(AUTOSAVE_NAME)
+
+
+def postponed_autosave_path():
+    return settings._SETTINGS_PATH.with_name(POSTPONED_AUTOSAVE_NAME)
+
+
+def recoverable_autosave():
+    """The autosave to offer at startup, or None.
+
+    The current autosave (from a session that just crashed) comes before
+    one the user postponed earlier; that one waits for the next launch.
+    """
+    for path in (autosave_path(), postponed_autosave_path()):
+        if path.is_file():
+            return path
+    return None
+
+
+def is_autosave(path):
+    """True for either autosave file, which is never a project to save into."""
+    try:
+        resolved = Path(path).expanduser().resolve()
+    except (OSError, TypeError, ValueError):
+        return False
+    return resolved in (autosave_path().resolve(), postponed_autosave_path().resolve())
+
+
+def postpone_autosave():
+    """Move the autosave aside so this session's autosaves cannot replace it."""
+    try:
+        os.replace(autosave_path(), postponed_autosave_path())
+    except OSError:
+        pass
 
 
 def build_document(source_path, editor_state, export_state, project_path=None):
@@ -80,8 +117,21 @@ def load_document(path):
     try:
         with open(project_file, encoding="utf-8") as stream:
             data = json.load(stream)
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
+        # ValueError covers bad JSON and a file that is not UTF-8 text.
         raise ProjectFileError(f"Could not read project: {exc}") from exc
+    try:
+        return _validated(data, project_file)
+    except (TypeError, ValueError, AttributeError) as exc:
+        if isinstance(exc, ProjectFileError):
+            raise
+        # A shared .vidkid is untrusted input; anything the checks below
+        # did not anticipate is still "this project is damaged", not a
+        # crash halfway through opening it.
+        raise ProjectFileError(f"Project file is damaged: {exc}") from exc
+
+
+def _validated(data, project_file):
     if not isinstance(data, dict):
         raise ProjectFileError("Project root must be a JSON object")
     version = data.get("schema_version")
@@ -99,6 +149,8 @@ def load_document(path):
         data["source"].get("path") or data["source"].get("relative_path")
     ):
         raise ProjectFileError("Project source path is missing")
+    if not _valid_portable_path(data["source"]):
+        raise ProjectFileError("Project source path is invalid")
     if not isinstance(data.get("export", {}), dict):
         raise ProjectFileError("Project export state must be an object")
     editor = data["editor"]
@@ -114,18 +166,33 @@ def load_document(path):
     for key in ("layers", "images"):
         if any(not isinstance(item, dict) for item in editor.get(key, [])):
             raise ProjectFileError(f"Project {key} entries must be objects")
+    for image in editor.get("images", []):
+        if not isinstance(image.get("path") or "", str) or not _valid_portable_path(
+                image.get("source") if isinstance(image.get("source"), dict) else {}):
+            raise ProjectFileError("Project image path is invalid")
     linked = data.get("linked_project_path") or ""
-    resolution_file = Path(linked).expanduser().resolve() if linked else project_file
-    data["editor"] = _resolve_editor_paths(data["editor"], resolution_file)
-    data["resolved_source"] = str(
-        _resolve_portable_path(data["source"], resolution_file),
-    )
+    if not isinstance(linked, str):
+        raise ProjectFileError("Project link is invalid")
+    # Relative paths are tried against the file's real location first, so
+    # a project folder that was moved or shared still finds its media.
+    # linked_project_path is where the project was when it was saved. It
+    # comes first only for the autosave, which lives beside the settings
+    # rather than beside the project it backs up.
+    bases = [project_file]
+    if linked:
+        linked_file = Path(linked).expanduser().resolve()
+        if is_autosave(project_file):
+            bases = [linked_file]
+        elif linked_file != project_file:
+            bases.append(linked_file)
+    data["editor"] = _resolve_editor_paths(data["editor"], bases)
+    data["resolved_source"] = str(_resolve_portable_path(data["source"], bases))
     return data
 
 
-def delete_autosave():
+def delete_autosave(path=None):
     try:
-        autosave_path().unlink(missing_ok=True)
+        Path(path or autosave_path()).unlink(missing_ok=True)
     except OSError:
         pass
 
@@ -148,12 +215,17 @@ def _valid_range(value):
     return all(math.isfinite(float(item)) for item in value)
 
 
-def _resolve_portable_path(value, project_file):
+def _valid_portable_path(value):
+    return all(isinstance(value.get(key) or "", str) for key in ("path", "relative_path"))
+
+
+def _resolve_portable_path(value, project_files):
     relative = value.get("relative_path") or ""
     if relative:
-        candidate = (project_file.parent / relative).resolve()
-        if candidate.exists():
-            return candidate
+        for project_file in project_files:
+            candidate = (project_file.parent / relative).resolve()
+            if candidate.exists():
+                return candidate
     return Path(value.get("path") or "").expanduser().resolve()
 
 
@@ -170,13 +242,13 @@ def _prepare_editor_paths(editor_state, project_file):
     return editor
 
 
-def _resolve_editor_paths(editor_state, project_file):
+def _resolve_editor_paths(editor_state, project_files):
     editor = dict(editor_state or {})
     images = []
     for raw in editor.get("images", []):
         layer = dict(raw)
         if isinstance(layer.get("source"), dict):
-            layer["path"] = str(_resolve_portable_path(layer["source"], project_file))
+            layer["path"] = str(_resolve_portable_path(layer["source"], project_files))
         images.append(layer)
     editor["images"] = images
     return editor

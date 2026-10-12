@@ -81,8 +81,16 @@ def _windows_installer_channel():
 
 
 def _inside_source_checkout(module_path):
-    path = Path(module_path).resolve()
-    return any((parent / ".git").exists() for parent in (path, *path.parents))
+    """True when the package is running from a git clone of this repo.
+
+    Only the repo root counts: the folder holding the ``videokidnapper``
+    package. Looking further up called a pip install a source checkout
+    whenever site-packages happened to sit inside some git repository (a
+    venv in a project folder, a home directory kept in git), and then
+    told the user to update with Git.
+    """
+    package_dir = Path(module_path).resolve().parent.parent
+    return (package_dir.parent / ".git").exists()
 
 
 def detect_install_channel(
@@ -195,22 +203,39 @@ def fetch_latest(repo=GITHUB_REPO):
     return None
 
 
-def check_async(current_version, on_update_available, repo=GITHUB_REPO):
+def check_async(current_version, on_update_available, repo=GITHUB_REPO,
+                on_done=None):
     """Run ``fetch_latest`` in a thread; call callback only when newer.
 
     ``on_update_available(latest_tag, html_url)`` runs on the background
     thread — callers must marshal back to the UI thread themselves.
+
+    ``on_done(outcome)``, when given, runs last with ``"newer"``,
+    ``"current"`` or ``"failed"``, also on the background thread. A
+    manual check needs it to tell "you are up to date" from "could not
+    reach GitHub"; it used to call silence after five seconds success.
     """
+
+    def finish(outcome):
+        if on_done is not None:
+            try:
+                on_done(outcome)
+            except Exception:
+                pass
 
     def worker():
         result = fetch_latest(repo)
         if not result:
+            finish("failed")
             return
         tag, link = result
-        if is_newer(tag, current_version):
-            try:
-                on_update_available(tag, link)
-            except Exception:
-                pass
+        if not is_newer(tag, current_version):
+            finish("current")
+            return
+        try:
+            on_update_available(tag, link)
+        except Exception:
+            pass
+        finish("newer")
 
     threading.Thread(target=worker, daemon=True).start()

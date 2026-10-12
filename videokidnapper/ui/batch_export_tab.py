@@ -34,6 +34,7 @@ from videokidnapper.ui.studio import controls as C
 from videokidnapper.ui.studio.icons import icon_button
 from videokidnapper.ui.theme import button
 from videokidnapper.utils import settings
+from videokidnapper.utils.threads import wait_for_thread
 from videokidnapper.utils.batch import (
     PLATFORM_INHERIT,
     STATUS_CANCELLED,
@@ -137,6 +138,14 @@ class BatchExportTab(ctk.CTkFrame):
 
     def _running(self) -> bool:
         return bool(self._worker and self._worker.is_alive())
+
+    def export_in_progress(self) -> bool:
+        return self._running()
+
+    def stop_export(self, timeout: float = 3.0) -> None:
+        """Cancel the batch and give ffmpeg a moment to be killed."""
+        self._cancel.set()
+        wait_for_thread(self, self._worker, timeout)
 
     # ------------------------------------------------------------------
     # Layout
@@ -340,7 +349,7 @@ class BatchExportTab(ctk.CTkFrame):
             pass
 
     def _on_dnd_event(self, event) -> None:
-        paths = parse_dnd_files(event.data or "")
+        paths = parse_dnd_files(event.data or "", splitlist=self.tk.splitlist)
         if paths:
             self._on_files_dropped(paths)
 

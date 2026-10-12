@@ -15,6 +15,15 @@ All notable changes to this project are documented here. The format is based on 
 - **Non-English file names could stop an export.** On Windows, ffmpeg messages containing such names were read with the wrong text encoding.
 - **An export kept running in the background** if its progress window failed partway. ffmpeg is now stopped.
 - **A file with sound but no picture** now gets a clear message pointing to Audio only instead of an empty video. A file ffprobe describes strangely now gives a clear "cannot read" error instead of a crash.
+- **Saving a recovered project deleted it.** After recovering unsaved work from a crash, Save wrote into the autosave and then removed it. Save now asks where to save. Closing the recovery prompt, or the app while the prompt is up, no longer throws the autosave away; it is offered again next time.
+- **A damaged project could overwrite the one you had open.** If a project failed partway through opening, the next Save wrote its content into the previous project's file. A damaged project now opens as an untitled project with a warning, and odd values in project files are read sensibly instead of failing.
+- **A moved or shared project lost its media.** Projects now find the video and images next to them after the folder is moved, copied to another drive or sent to someone else.
+- **Odd values in the settings file stopped the app from starting.** A hand-edited or damaged settings file now falls back to defaults for the values it cannot use.
+- **Settings changes were sometimes lost on Windows** when something else was reading the settings file at the same moment, for example the newest History entry. Writes now retry.
+- **One broken plugin stopped the app from starting.** A plugin with a numeric version range, or one that quits while loading, is now skipped and reported in the Debug log.
+- **Closing or restarting during an export left ffmpeg running in the background.** You are now asked first, and the export is stopped cleanly. "Restart now" after a theme change and Setup's Relaunch now ask about unsaved work like closing does.
+- **Check for updates said "You're up to date" when it could not reach GitHub.** It now says the check failed. A pip install inside another git folder is no longer mistaken for a source checkout.
+- **Dropping a file with braces in its name**, such as "Take {2}.mp4", now works.
 - **Command line:** `--audio-only` now writes an `.mp3`, `--audio-only` with `--format GIF` and a speed outside 0.25–4 are refused, and an unreadable file prints an error instead of a traceback.
 
 ## [1.9.1] — 2026-10-07

@@ -75,15 +75,19 @@ class App(ctk.CTk):
             self._maybe_show_onboarding()
 
     def _maybe_offer_recovery(self):
-        recovery_file = project_files.autosave_path()
-        if not recovery_file.is_file():
+        recovery_file = project_files.recoverable_autosave()
+        if recovery_file is None:
             return False
+        # Pending from now, not from when the prompt appears: closing the
+        # window in the next 250 ms must not delete the autosave either.
+        self.trim_tab._recovery_pending = True
 
         def show():
             if not self.winfo_exists():
                 return
             from videokidnapper.ui.project_dialog import RecoveryDialog
-            self._recovery_dialog = RecoveryDialog(self, self.trim_tab)
+            self._recovery_dialog = RecoveryDialog(
+                self, self.trim_tab, path=recovery_file)
 
         self.after(250, show)
         return True
@@ -419,12 +423,24 @@ class App(ctk.CTk):
             if self.winfo_exists():
                 self.after(0, self._show_update_chip, tag, link)
 
-        def report_if_current():
-            if not getattr(self, "_update_tag", None):
-                self.status_bar.show(f"You're up to date (v{APP_VERSION})", "success")
+        # The worker only drops the outcome here; the main thread picks it
+        # up. Tk calls from a worker thread fail unless mainloop is running.
+        result = {}
 
-        check_async(APP_VERSION, on_update)
-        self.after(5000, report_if_current)
+        def poll(waited=0):
+            outcome = result.get("outcome")
+            if outcome is None and waited < 30000:
+                self.after(200, poll, waited + 200)
+            elif outcome == "current":
+                self.status_bar.show(f"You're up to date (v{APP_VERSION})", "success")
+            elif outcome in ("failed", None):
+                self.status_bar.show(
+                    "Couldn't reach GitHub to check for updates. Try again later.",
+                    "warn")
+
+        check_async(APP_VERSION, on_update,
+                    on_done=lambda outcome: result.setdefault("outcome", outcome))
+        self.after(200, poll)
 
     # ------------------------------------------------------------------
     # Keyboard shortcuts
@@ -563,10 +579,38 @@ class App(ctk.CTk):
         return "break"
 
     def _request_close(self):
+        if self._confirm_close():
+            self.destroy()
+
+    def _confirm_close(self):
+        """True when the app may close: nothing running, nothing unsaved.
+
+        Shared by the window's close button, the theme's "Restart now" and
+        Setup's relaunch. The restarts used to skip it, so they dropped
+        unsaved work and left ffmpeg running in the background.
+        """
+        # Either page may not exist yet: the setup landing has neither.
+        tabs = (getattr(self, "trim_tab", None),
+                getattr(self, "_built_tabs", {}).get(TAB_BATCH))
+        running = [
+            tab for tab in tabs
+            if tab is not None and getattr(tab, "export_in_progress", lambda: False)()
+        ]
+        if running:
+            from tkinter import messagebox
+            if not messagebox.askyesno(
+                "Export in progress",
+                "An export is still running. Stop it and close VideoKidnapper?",
+                parent=self,
+            ):
+                return False
         editor = getattr(self, "trim_tab", None)
         if editor is not None and not editor.request_close():
-            return
-        self.destroy()
+            return False
+        # Stopped last, so cancelling the save prompt leaves it running.
+        for tab in running:
+            tab.stop_export()
+        return True
 
     # ------------------------------------------------------------------
     # Update check
@@ -647,7 +691,17 @@ class App(ctk.CTk):
         """
         from videokidnapper.plugins import discover_plugins
 
-        discovered = discover_plugins(app_version=APP_VERSION)
+        try:
+            discovered = discover_plugins(app_version=APP_VERSION)
+        except Exception as exc:
+            # Plugins are optional; a broken entry-point table is not a
+            # reason to stop the app from starting.
+            discovered = []
+            if hasattr(self, "debug_tab"):
+                try:
+                    self.debug_tab.add_log(f"Plugin discovery failed: {exc}", "ERROR")
+                except Exception:
+                    pass
         self.plugins = discovered
 
         loaded = 0
@@ -674,7 +728,11 @@ class App(ctk.CTk):
                         )
                     except Exception:
                         pass
-            except Exception as exc:
+            except KeyboardInterrupt:
+                raise
+            except BaseException as exc:
+                # BaseException: a plugin calling sys.exit() must not
+                # close the app.
                 if hasattr(self, "debug_tab"):
                     try:
                         self.debug_tab.add_log(
@@ -824,6 +882,8 @@ class App(ctk.CTk):
         prepending sys.executable would pass it twice.
         """
         import subprocess
+        if not self._confirm_close():
+            return
         if getattr(sys, "frozen", False):
             args = [sys.executable, *sys.argv[1:]]
         else:

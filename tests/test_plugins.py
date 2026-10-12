@@ -175,3 +175,36 @@ def test_version_mismatch_on_bad_version_string_is_tolerant():
         min_app_version = "not-a-version"
     # Bad bound → treated as unenforceable; plugin loads.
     assert _version_mismatch(P(), "1.0.0") is None
+
+
+# ---------------------------------------------------------------------------
+# A careless plugin must not stop the app from starting
+# ---------------------------------------------------------------------------
+
+class FloatBounds(Plugin):
+    name = "FloatBounds"
+    min_app_version = 1.8          # a float, not "1.8"
+
+
+class ExitsOnInit(Plugin):
+    name = "ExitsOnInit"
+
+    def __init__(self):
+        raise SystemExit(1)
+
+
+def test_numeric_version_bounds_are_read_as_text():
+    results = discover_plugins(app_version="1.9.1", entry_points=[_ep("f", FloatBounds)])
+    assert results[0].error is None
+    results = discover_plugins(app_version="1.7.0", entry_points=[_ep("f", FloatBounds)])
+    assert "requires VideoKidnapper >= 1.8" in results[0].error
+
+
+def test_plugin_calling_sys_exit_is_captured():
+    results = discover_plugins(entry_points=[
+        _ep("exit-load", None, load_exc=SystemExit(2)),
+        _ep("exit-init", ExitsOnInit),
+        _ep("good", GoodPlugin),
+    ])
+    assert [r.plugin is None for r in results] == [True, True, False]
+    assert "load error" in results[0].error and "init error" in results[1].error
