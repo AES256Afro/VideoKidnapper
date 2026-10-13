@@ -41,8 +41,8 @@ required for a core feature. Specifically:
   `https://api.github.com/repos/AES256Afro/VideoKidnapper/releases/latest`
   to see whether a newer version exists. This is a public, anonymous
   GitHub API call; no identifying information is sent. The check can
-  be disabled from the Setup dialog
-  (`auto_update_check` setting → false).
+  be turned off by setting `"auto_update_check": false` in the
+  settings file (`.videokidnapper_settings.json` in the home folder).
 - **Optional AI captions (opt-in, off by default).** If the user
   installs the optional `faster-whisper` extra and clicks
   🗣 Auto-captions, the Whisper model is downloaded from Hugging

@@ -783,41 +783,46 @@ class App(ctk.CTk):
         # The portable build's *.old file and the downloaded installer.
         threading.Thread(target=self_update.cleanup_after_update, daemon=True).start()
 
-    def install_downloaded_update(self, path, channel):
-        """Close the app and install a verified download.
+    def install_downloaded_update(self, path, channel, on_cancel=None, on_error=None):
+        """Close the app safely, then install a verified download.
 
-        Called by the update dialog. Asks to save the project first; if
-        the user keeps it open, or the update can't start, returns a
-        message for the dialog and leaves the app running. On success it
-        does not return: the installer (Setup / winget) or the new
-        portable build takes over and reopens the app.
+        Called by the update prompt. Never blocks: it goes through
+        :meth:`close_then`, so a running export and unsaved work are asked
+        about in the banner first. If the user keeps the app open,
+        ``on_cancel`` runs; if the installer can't start, ``on_error(message)``
+        runs and the app stays open. On success the app exits and the
+        installer (Setup / winget) or the new portable build takes over
+        and reopens it.
         """
         from videokidnapper.utils import self_update
         from videokidnapper.utils.github_update import installer_scope
 
-        editor = getattr(self, "trim_tab", None)
-        if editor is not None and not editor.request_close():
-            return "The update is downloaded. Choose Restart to update when you're ready."
-        options = getattr(editor, "options", None)
-        if options is not None:
+        def install():
+            editor = getattr(self, "trim_tab", None)
+            options = getattr(editor, "options", None)
+            if options is not None:
+                try:
+                    options.save()  # flush the debounced settings write
+                except Exception:
+                    pass
             try:
-                options.save()  # flush the debounced settings write
-            except Exception:
-                pass
-        try:
-            if channel == "portable":
-                self_update.swap_portable(path, sys.executable)
-                self_update.start_portable(sys.executable)
-            else:
-                self_update.start_setup_install(path, installer_scope())
-        except self_update.UpdateError as exc:
-            return str(exc)
-        except OSError as exc:
-            return f"Couldn't start the update: {exc}"
-        self.destroy()
-        # Exit now, not when stray worker threads finish: the installer
-        # replaces this executable and waits for it to close.
-        os._exit(0)
+                if channel == "portable":
+                    self_update.swap_portable(path, sys.executable)
+                    self_update.start_portable(sys.executable)
+                else:
+                    self_update.start_setup_install(path, installer_scope())
+            except (self_update.UpdateError, OSError) as exc:
+                message = (str(exc) if isinstance(exc, self_update.UpdateError)
+                           else f"Couldn't start the update: {exc}")
+                if on_error is not None:
+                    on_error(message)
+                return
+            self.destroy()
+            # Exit now, not when stray worker threads finish: the installer
+            # replaces this executable and waits for it to close.
+            os._exit(0)
+
+        self.close_then(install, verb="update", on_cancel=on_cancel)
 
     def _show_update_chip(self, tag, link):
         self._update_tag = tag
@@ -826,14 +831,26 @@ class App(ctk.CTk):
         self.update_chip.pack(side="right", padx=(0, 10), before=self.project_btn)
         if self.status_bar:
             self.status_bar.show(f"Update available: {tag}", "success")
+        # Offer it once, in the banner, the way other apps ask "Restart to
+        # update?"; Later leaves the chip for whenever the user is ready.
+        if not getattr(self, "_update_offered", False):
+            self._update_offered = True
+            self._open_update_link()
 
     def _open_update_link(self):
+        """Offer the update in the banner (the header's update chip)."""
         link = getattr(self, "_update_link", None)
-        if link:
-            from videokidnapper.ui.update_dialog import UpdateDialog
-            self._update_dialog = UpdateDialog(
-                self, APP_VERSION, getattr(self, "_update_tag", "new"), link,
-            )
+        if not link:
+            return
+        from videokidnapper.ui.update_prompt import UpdatePrompt
+
+        tag = getattr(self, "_update_tag", "new")
+        prompt = getattr(self, "_update_prompt", None)
+        # The same release keeps its prompt, so a finished download is
+        # not fetched again after "Later".
+        if prompt is None or prompt.tag != tag:
+            prompt = self._update_prompt = UpdatePrompt(self, APP_VERSION, tag, link)
+        prompt.show()
 
     # ------------------------------------------------------------------
     # Plugin API
