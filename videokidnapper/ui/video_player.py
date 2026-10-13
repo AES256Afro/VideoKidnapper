@@ -38,6 +38,8 @@ from videokidnapper.utils.snap import apply_snap, build_targets
 class VideoPlayer(ctk.CTkFrame):
     _PLAY_FPS = 8
     _PLAY_MS = int(1000 / _PLAY_FPS)
+    # How often the Tk thread collects frames during A/V playback.
+    _AV_PUMP_MS = 15
 
     def __init__(self, master, on_empty_click=None, on_file_dropped=None,
                  canvas_bg=None, inset=10, **kwargs):
@@ -69,9 +71,14 @@ class VideoPlayer(ctk.CTkFrame):
         self._playing = False
         self._play_after_id = None
         self._play_end = None
-        # Real-time A/V player (None until play() creates one).
+        # Real-time A/V player (None until play() creates one). The
+        # decode threads leave the newest frame and the end-of-clip
+        # reason in the two slots below for the Tk thread to collect.
         self._av_player = None
         self._av_time_after_id = None
+        self._av_session = None
+        self._av_frame = None
+        self._av_finished = None
 
         # Crop state: a rect in SOURCE pixel coords, or None when disabled.
         self._crop_mode = False
@@ -397,6 +404,15 @@ class VideoPlayer(ctk.CTkFrame):
         frame = get_frame_at(self.video_path, timestamp)
         if frame is None:
             return
+        self._render_frame(frame, timestamp)
+
+    def _render_frame(self, frame, timestamp):
+        """Show a source-sized ``frame`` as the export will produce it.
+
+        Scrubbing and playback both come through here, so a playing clip
+        shows the same rotation, frame shape, crop, blur fill and image
+        overlays as a paused one.
+        """
         frame = self._apply_color(frame)
 
         cw = self.canvas.winfo_width()
@@ -794,7 +810,9 @@ class VideoPlayer(ctk.CTkFrame):
         else:
             self._tick()
 
-    def stop(self):
+    def stop(self, wait=0.0):
+        """Stop playback. ``wait`` seconds is passed to the A/V player for
+        callers about to exit (see :meth:`AudioVideoPlayer.stop`)."""
         self._playing = False
         if self._play_after_id is not None:
             try:
@@ -803,12 +821,13 @@ class VideoPlayer(ctk.CTkFrame):
                 pass
             self._play_after_id = None
         # A/V player cleanup — safe to call even when one isn't running.
-        if self._av_player is not None:
+        player, self._av_player = self._av_player, None
+        self._av_session = None
+        if player is not None:
             try:
-                self._av_player.stop()
+                player.stop(wait=wait)
             except Exception:
                 pass
-            self._av_player = None
         if self._av_time_after_id is not None:
             try:
                 self.after_cancel(self._av_time_after_id)
@@ -816,21 +835,38 @@ class VideoPlayer(ctk.CTkFrame):
                 pass
             self._av_time_after_id = None
 
+    def destroy(self):
+        # Closing the window mid-playback: stop the player and give its
+        # audio thread a moment to close the sound device. Left running,
+        # the sound carried on after the window was gone, and the
+        # process crashed on exit when the sound library shut down
+        # underneath the still-open stream.
+        self.stop(wait=1.0)
+        super().destroy()
+
     # ------------------------------------------------------------------
     # Real-time A/V playback branch
     # ------------------------------------------------------------------
     def _start_av_playback(self, start, end):
         """Launch an AudioVideoPlayer and wire its frame output to the canvas."""
+        # Both callbacks run on the player's worker threads, so they only
+        # hand data over; _av_pump picks it up on the Tk thread. Calling
+        # Tk from those threads (even winfo_exists or after) blocks them
+        # on the UI thread and fails outright once the window closes.
+        # ``session`` ties the hand-over to this play, so a frame from a
+        # player being torn down cannot land in the next one.
+        session = object()
+        self._av_session = session
+        self._av_frame = None
+        self._av_finished = None
+
         def on_frame(img, ts):
-            # Called from the video decode thread — marshal to Tk main.
-            if not self.winfo_exists():
-                return
-            self.after(0, self._av_render_frame, img, ts)
+            if self._av_session is session:
+                self._av_frame = (img, ts)
 
         def on_finished(reason):
-            if not self.winfo_exists():
-                return
-            self.after(0, self._av_on_finished, reason)
+            if self._av_session is session:
+                self._av_finished = reason
 
         try:
             self._av_player = playback.AudioVideoPlayer(
@@ -843,55 +879,51 @@ class VideoPlayer(ctk.CTkFrame):
             # Construction failed (bad path, missing deps at runtime).
             # Fall back to the scrub loop so the Play button still works.
             self._av_player = None
+            self._av_session = None
             self._tick()
             return
-        # Poll the A/V clock a few times a second so ``current_time``
-        # stays in sync — keyboard-nudge / slider-mark reads it, and we
-        # don't want those reading a stale value while playback runs.
-        self._av_poll_time()
+        self._av_pump()
+
+    def _av_pump(self):
+        """Tk-thread side of A/V playback: show the newest decoded frame,
+        keep ``current_time`` in step (keyboard nudges and marks read it)
+        and notice the end of the clip."""
+        self._av_time_after_id = None
+        if self._av_player is None or not self._playing:
+            return
+        frame, self._av_frame = self._av_frame, None
+        if frame is not None:
+            self._av_render_frame(*frame)
+        else:
+            try:
+                self.current_time = self._av_player.current_time()
+            except Exception:
+                pass
+        if self._av_finished is not None:
+            reason, self._av_finished = self._av_finished, None
+            self._av_on_finished(reason)
+            return
+        self._av_time_after_id = self.after(self._AV_PUMP_MS, self._av_pump)
 
     def _av_render_frame(self, img, ts):
         """Main-thread render path for a frame produced by AudioVideoPlayer."""
         if not self._playing or self._av_player is None:
             return
         self.current_time = ts
-        cw = self.canvas.winfo_width()
-        ch = self.canvas.winfo_height()
-        if cw < 10 or ch < 10:
-            return
-        fw, fh = img.size
-        scale = min(cw / fw, ch / fh)
-        new_w = max(1, int(fw * scale))
-        new_h = max(1, int(fh * scale))
-        # Match the scrub path: composite overlays onto the source-sized
-        # frame, then resize. Keeps preview-matches-export alignment.
-        composited = self._apply_text_overlay(self._apply_color(img), ts)
-        rendered = composited.resize((new_w, new_h), Image.LANCZOS)
-        self._photo = ImageTk.PhotoImage(rendered)
-        self.canvas.delete("frame")
-        self.canvas.create_image(
-            cw // 2, ch // 2, image=self._photo, tags="frame",
-        )
-        self._last_frame_rect = (
-            cw // 2 - new_w // 2, ch // 2 - new_h // 2, new_w, new_h, fw, fh,
-        )
-        self._draw_crop_overlay()
-
-    def _av_poll_time(self):
-        """Mirror the A/V player's clock into ``self.current_time``."""
-        if self._av_player is None or not self._playing:
-            return
-        try:
-            self.current_time = self._av_player.current_time()
-        except Exception:
-            pass
-        # 80ms keeps the timeline playhead moving smoothly during playback.
-        self._av_time_after_id = self.after(80, self._av_poll_time)
+        self._render_frame(img, ts)
 
     def _av_on_finished(self, reason):
         """Tear down when the A/V player reports end-of-clip or stop."""
         self._playing = False
-        self._av_player = None
+        player, self._av_player = self._av_player, None
+        self._av_session = None
+        if player is not None:
+            # Already finished; this just makes sure no decoder outlives
+            # the session.
+            try:
+                player.stop()
+            except Exception:
+                pass
         if self._av_time_after_id is not None:
             try:
                 self.after_cancel(self._av_time_after_id)

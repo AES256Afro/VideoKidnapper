@@ -16,6 +16,9 @@ All notable changes to this project are documented here. The format is based on 
 - **An export kept running in the background** if its progress window failed partway. ffmpeg is now stopped.
 - **A file with sound but no picture** now gets a clear message pointing to Audio only instead of an empty video. A file ffprobe describes strangely now gives a clear "cannot read" error instead of a crash.
 - **Command line:** `--audio-only` now writes an `.mp3`, `--audio-only` with `--format GIF` and a speed outside 0.25–4 are refused, and an unreadable file prints an error instead of a traceback.
+- **Pausing could close the app.** Pausing playback, or anything that stops it (clicking the timeline, stepping with J or L, opening another file), could crash the app without a word. Closing the window while a clip played left the sound running and crashed on the way out. Playback now stops cleanly.
+- **Videos without sound would not play.** Screen recordings, GIFs and other silent videos stopped a fraction of a second after pressing Play. They now play to the end, as does a clip whose sound ends before its picture.
+- **Playback ignored rotation, frame shape and stickers.** While a clip played, the preview showed the original video without the rotation, frame shape, crop, blur fill or image overlays, and stayed that way after pausing, so a caption dragged just after pausing landed in the wrong place. Playback now shows what the export will.
 
 ## [1.9.1] — 2026-10-07
 
