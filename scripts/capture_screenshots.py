@@ -259,14 +259,12 @@ def shot_debug():
     app.destroy()
 
 
-def shot_setup_dialog():
-    from videokidnapper.ui.setup_dialog import SetupDialog
+def shot_setup():
+    """Setup and components, a page inside the window."""
     app = new_app()
-    dlg = SetupDialog(app, on_relaunch=app._restart_app)
-    dlg.geometry("+160+120")
+    app._open_setup_page()
     pump(app, 0.4)
-    grab(dlg, "setup.png")
-    dlg.destroy()
+    grab(app, "setup.png")
     app.destroy()
 
 
@@ -327,7 +325,7 @@ def _shots():
         "onboarding": shot_onboarding,
         "history": shot_history,
         "debug": shot_debug,
-        "setup": shot_setup_dialog,
+        "setup": shot_setup,
         "projects": shot_project_dialog,
         "updates": shot_update_dialog,
     }
