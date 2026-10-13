@@ -9,6 +9,7 @@ free of ffprobe plumbing.
 
 import json
 import subprocess
+import threading
 
 from videokidnapper.core.ffmpeg._internals import (
     _get_ffmpeg, _get_ffprobe, _run_kwargs,
@@ -20,6 +21,10 @@ class ProbeError(RuntimeError):
     """ffprobe failed to read the file (missing binary, bad media, timeout)."""
 
 
+_info_cache = {}
+_info_lock = threading.Lock()
+
+
 def get_video_info(input_path):
     """Return a metadata dict for ``input_path``.
 
@@ -27,7 +32,34 @@ def get_video_info(input_path):
     can't read the file — callers (TrimTab._load_path, CLI) already
     catch the old generic-Exception path, so this is wire-compatible
     while giving the error funnel something actionable to surface.
+
+    Results are cached per file version (path, size, modification time):
+    loading one clip asked ffprobe about it eight times, about 45 ms each,
+    from the editor, the preview colour filter, the waveform and the
+    export. Each caller gets its own copy.
     """
+    import os
+
+    try:
+        st = os.stat(input_path)
+        key = (os.path.abspath(str(input_path)), st.st_size, st.st_mtime_ns)
+    except (OSError, TypeError, ValueError):
+        key = None
+    if key is not None:
+        with _info_lock:
+            cached = _info_cache.get(key)
+        if cached is not None:
+            return dict(cached)
+    info = _probe(input_path)
+    if key is not None:
+        with _info_lock:
+            if len(_info_cache) >= 64:
+                _info_cache.clear()
+            _info_cache[key] = dict(info)
+    return info
+
+
+def _probe(input_path):
     cmd = [
         _get_ffprobe(),
         "-v", "quiet",
