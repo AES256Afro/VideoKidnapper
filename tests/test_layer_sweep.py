@@ -266,3 +266,126 @@ def test_project_with_odd_values_opens_normally(editor, clip, tmp_path):
         editor.text_layers.clear_layers()
         editor.image_layers.clear_layers()
         editor.selected_text_index = editor.selected_image_index = None
+
+
+# ---------------------------------------------------------------------------
+# Batch export
+# ---------------------------------------------------------------------------
+
+def _run_until(root, predicate, timeout=20.0):
+    """Run the Tk loop (the batch worker posts to it) until ``predicate``."""
+    end = time.monotonic() + timeout
+
+    def poll():
+        if predicate() or time.monotonic() > end:
+            root.quit()
+            return
+        root.after(20, poll)
+
+    root.after(20, poll)
+    root.mainloop()
+    assert predicate(), "timed out"
+
+
+class _FakeEncoder:
+    """Stands in for trim_to_video: writes a partial file, waits to be
+    released (or cancelled), then finishes or gives up like ffmpeg."""
+
+    def __init__(self):
+        import threading
+
+        self.release = threading.Event()
+        self.started = []
+
+    def __call__(self, input_path, start, end, preset, output_path,
+                 cancel_event=None, **_kw):
+        self.started.append(input_path)
+        with open(output_path, "wb") as fh:
+            fh.write(b"half a video")
+        while not self.release.is_set():
+            if cancel_event is not None and cancel_event.is_set():
+                return None     # ffmpeg killed; output left behind
+            time.sleep(0.01)
+        with open(output_path, "wb") as fh:
+            fh.write(b"a whole video")
+        return output_path
+
+
+@pytest.fixture
+def batch_tab(root, tmp_path, monkeypatch):
+    from videokidnapper.ui import batch_export_tab as bet
+    from videokidnapper.utils import settings
+
+    monkeypatch.setattr(settings, "_SETTINGS_PATH", tmp_path / "settings.json")
+    encoder = _FakeEncoder()
+    monkeypatch.setattr(bet, "trim_to_video", encoder)
+    monkeypatch.setattr(bet, "get_video_info", lambda _p: {"duration": 5.0})
+    tab = bet.BatchExportTab(root, types.SimpleNamespace())
+    tab.export_options.output_folder_var.set(str(tmp_path / "out"))
+    sources = []
+    for name in ("first.mp4", "second.mp4"):
+        src = tmp_path / "src" / name
+        src.parent.mkdir(exist_ok=True)
+        src.write_bytes(b"x")
+        sources.append(str(src))
+    tab._enqueue(sources)
+    tab.encoder = encoder
+    yield tab
+    encoder.release.set()
+    if tab._worker is not None:
+        tab._worker.join(5)
+    tab.destroy()
+
+
+def test_stop_after_this_file_finishes_it(root, batch_tab):
+    """The button said "Stop after this file" but killed the file being
+    exported, marked it Stopped and left half of it on disk."""
+    from videokidnapper.utils.batch import STATUS_CANCELLED, STATUS_DONE
+
+    first, second = batch_tab.get_jobs()
+    batch_tab._start_batch()
+    _run_until(root, lambda: batch_tab.encoder.started)
+    batch_tab._stop_batch()
+    root.after(200, batch_tab.encoder.release.set)
+    _run_until(root, lambda: not batch_tab._running())
+    root.update()
+
+    assert first.status == STATUS_DONE
+    assert open(first.output_path, "rb").read() == b"a whole video"
+    assert second.status == STATUS_CANCELLED
+    assert batch_tab.encoder.started == [first.input_path]
+    assert batch_tab.stop_btn.cget("text") == "Stop after this file"
+
+
+def test_second_stop_click_stops_now_and_cleans_up(root, batch_tab):
+    from pathlib import Path
+
+    from videokidnapper.utils.batch import STATUS_CANCELLED
+
+    first, second = batch_tab.get_jobs()
+    batch_tab._start_batch()
+    _run_until(root, lambda: batch_tab.encoder.started)
+    batch_tab._stop_batch()
+    batch_tab._stop_batch()
+    _run_until(root, lambda: not batch_tab._running())
+    root.update()
+
+    assert first.status == STATUS_CANCELLED and second.status == STATUS_CANCELLED
+    assert not Path(first.output_path).exists()
+
+
+def test_closing_the_app_still_stops_now(root, batch_tab):
+    """stop_export (used when the app closes) keeps meaning "stop now"."""
+    from videokidnapper.utils.batch import STATUS_CANCELLED
+
+    first, _second = batch_tab.get_jobs()
+    batch_tab._start_batch()
+    _run_until(root, lambda: batch_tab.encoder.started)
+    assert batch_tab.export_in_progress()
+    # As on close: called from a Tk callback, inside the event loop.
+    stopped = []
+    root.after(0, lambda: (batch_tab.stop_export(timeout=5.0), stopped.append(1)))
+    _run_until(root, lambda: stopped)
+    assert not batch_tab.export_in_progress()
+    root.update()
+    assert first.status == STATUS_CANCELLED

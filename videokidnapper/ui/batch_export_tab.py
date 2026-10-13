@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import subprocess
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog
@@ -82,6 +83,22 @@ def status_text(job: BatchJob) -> str:
     return "Waiting"
 
 
+def _discard_partial(path, since: float) -> None:
+    """Remove an output this attempt wrote but did not finish.
+
+    Only a file written since ``since``: one left from an earlier run
+    (when the encode failed before ffmpeg started) is not ours to delete.
+    The encoder already removes what it leaves on failure; this covers a
+    failure that escapes it.
+    """
+    try:
+        out = Path(path)
+        if out.is_file() and out.stat().st_mtime >= since - 2:
+            out.unlink()
+    except OSError:
+        pass
+
+
 def _status_color(status):
     return {
         STATUS_DONE:       T.SUCCESS,
@@ -103,7 +120,11 @@ class BatchExportTab(ctk.CTkFrame):
         self._jobs: list[BatchJob] = []
         self._job_rows: list[dict] = []  # parallel to _jobs; UI handles
         self._worker: threading.Thread | None = None
+        # Two ways to stop: _stop_after lets the file being exported
+        # finish (the Stop button's first click), _cancel kills it too
+        # (a second click, or closing the app via stop_export).
         self._cancel = threading.Event()
+        self._stop_after = threading.Event()
         # Suppress persistence writes during bulk ops (initial restore,
         # _rebuild_rows from worker callbacks). _persist_jobs is cheap
         # but the JSON lock + atomic rename add up on a per-row basis.
@@ -624,28 +645,40 @@ class BatchExportTab(ctk.CTkFrame):
         self._refresh_all_rows()
 
         self._cancel.clear()
+        self._stop_after.clear()
         self.start_btn.configure(state="disabled", text="Running…")
-        self.stop_btn.configure(state="normal")
+        self.stop_btn.configure(state="normal", text="Stop after this file")
 
-        self._worker = threading.Thread(target=self._run_batch, daemon=True)
-        self._worker.start()
-
-    def _stop_batch(self) -> None:
-        if self._running():
-            self._cancel.set()
-            self._notify("Stopping the queue…", "warn")
-
-    def _run_batch(self) -> None:
+        # Read the settings here, on the Tk thread; the worker must not.
         batch_preset = self.quality_var.get()
         batch_options = dict(self.export_options.get_options())
         batch_options["audio_only"] = self.format_var.get() == "MP3"
+        self._worker = threading.Thread(
+            target=self._run_batch, args=(batch_preset, batch_options), daemon=True)
+        self._worker.start()
 
+    def _stop_batch(self) -> None:
+        """First click: finish the file being exported, then stop. It used
+        to kill that file too, despite the label, and mark it Stopped.
+        Second click: stop that file as well."""
+        if not self._running():
+            return
+        if not self._stop_after.is_set():
+            self._stop_after.set()
+            self.stop_btn.configure(text="Stop now")
+            self._notify("The queue will stop after this file", "warn")
+        else:
+            self._cancel.set()
+            self.stop_btn.configure(state="disabled")
+            self._notify("Stopping the queue…", "warn")
+
+    def _run_batch(self, batch_preset: str, batch_options: dict) -> None:
         for job in self._jobs:
-            if self._cancel.is_set():
+            if self._cancel.is_set() or self._stop_after.is_set():
                 if job.status == STATUS_QUEUED:
                     job.status = STATUS_CANCELLED
-                self.after(0, self._refresh_row, job)
-                self.after(0, self._persist_jobs)
+                self._post(self._refresh_row, job)
+                self._post(self._persist_jobs)
                 continue
             if job.status == STATUS_DONE:
                 continue  # already succeeded in an earlier run
@@ -664,7 +697,8 @@ class BatchExportTab(ctk.CTkFrame):
 
             job.status = STATUS_PROCESSING
             job.progress = 0.0
-            self.after(0, self._refresh_row, job)
+            self._post(self._refresh_row, job)
+            started = time.time()
 
             try:
                 info = get_video_info(job.input_path)
@@ -674,7 +708,7 @@ class BatchExportTab(ctk.CTkFrame):
 
                 def progress_cb(p: float, j: BatchJob = job) -> None:
                     j.progress = max(0.0, min(1.0, p))
-                    self.after(0, self._refresh_row, j)
+                    self._post(self._refresh_row, j)
 
                 result = trim_to_video(
                     job.input_path, 0.0, duration, preset, job.output_path,
@@ -684,7 +718,7 @@ class BatchExportTab(ctk.CTkFrame):
                 if result:
                     job.status = STATUS_DONE
                     job.progress = 1.0
-                    self.after(0, self._record_history, job, preset,
+                    self._post(self._record_history, job, preset,
                                bool(options.get("audio_only")))
                 else:
                     # trim_to_video returns None on cancellation or
@@ -695,13 +729,25 @@ class BatchExportTab(ctk.CTkFrame):
             except Exception as exc:
                 job.status = STATUS_FAILED
                 job.error = str(exc)
+            if job.status != STATUS_DONE:
+                _discard_partial(job.output_path, started)
 
-            self.after(0, self._refresh_row, job)
+            self._post(self._refresh_row, job)
             # Persist after each row so a crash mid-batch preserves
             # everything up to the currently-processing job.
-            self.after(0, self._persist_jobs)
+            self._post(self._persist_jobs)
 
-        self.after(0, self._finish_batch)
+        self._post(self._finish_batch)
+
+    def _post(self, fn, *args) -> None:
+        """Run ``fn(*args)`` on the Tk thread; the one Tk call the worker
+        makes. It fails once the window is closing (stop_export waits
+        for the worker then), which a late worker has no reason to report.
+        """
+        try:
+            self.after(0, fn, *args)
+        except (RuntimeError, tk.TclError):
+            pass
 
     def _record_history(self, job: BatchJob, preset: str, audio_only: bool) -> None:
         """Finished batch files show up in History next to Edit exports."""
@@ -728,7 +774,7 @@ class BatchExportTab(ctk.CTkFrame):
 
     def _finish_batch(self) -> None:
         self.start_btn.configure(state="normal", text="Run queue")
-        self.stop_btn.configure(state="disabled")
+        self.stop_btn.configure(state="disabled", text="Stop after this file")
         self._update_summary()
         self._persist_jobs()
         done = sum(1 for j in self._jobs if j.status == STATUS_DONE)
