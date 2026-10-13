@@ -4,6 +4,7 @@
 
 - Export progress, now under the Export button (running, done, failed,
   stopped), and the export worker reporting to it.
+- The colour palette that replaced the operating system's colour dialog.
 
 The editor methods run against small stand-ins with the slow parts
 stubbed, so nothing is encoded, transcribed or recorded. The one Tk root
@@ -19,6 +20,9 @@ ctk = pytest.importorskip("customtkinter", reason="needs customtkinter")
 
 from videokidnapper.ui import trim_tab as trim_tab_module  # noqa: E402
 from videokidnapper.ui.studio import export_progress as ep  # noqa: E402
+from videokidnapper.ui.studio.color_palette import (  # noqa: E402
+    PRESETS, ColorPalette, normalize_hex, preset_name,
+)
 from videokidnapper.ui.trim_tab import TrimTab  # noqa: E402
 from videokidnapper.utils import settings  # noqa: E402
 
@@ -262,5 +266,149 @@ def test_stopping_an_export_records_nothing(root, panel, tmp_path, monkeypatch):
     _run_until(root, lambda: panel.state == ep.CANCELLED)
     assert editor.history == []
     assert ("warn", "Export stopped") in editor.notes
+
+
+# ---------------------------------------------------------------------------
+# Colour palette
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("value, expected", [
+    ("#ff8800", "#FF8800"),
+    ("FF8800", "#FF8800"),
+    ("  #12ab34  ", "#12AB34"),
+    ("#abc", "#AABBCC"),
+    ("abc", "#AABBCC"),
+    ("white", "#FFFFFF"),
+    ("Black", "#000000"),
+    ("Red", "#FF0000"),
+    ("pink", "#FF69B4"),
+])
+def test_normalize_hex_accepts_codes_and_preset_names(value, expected):
+    assert normalize_hex(value) == expected
+
+
+@pytest.mark.parametrize("value", [
+    "", "#", "#12345", "#1234567", "#GGGGGG", "reddish", "Custom #FFFFFF",
+    None, 0xFFFFFF, ["#FFFFFF"],
+])
+def test_normalize_hex_rejects_everything_else(value):
+    assert normalize_hex(value) is None
+
+
+def test_presets_are_hex_and_named():
+    assert [name for name, _hex in PRESETS][:2] == ["White", "Black"]
+    assert all(normalize_hex(value) == value for _name, value in PRESETS)
+    assert preset_name("#ff0000") == "Red"
+    assert preset_name("white") == "White"
+    assert preset_name("#123456") is None
+    assert preset_name("nonsense") is None
+
+
+@pytest.fixture
+def palette(root):
+    picked = []
+    widget = ColorPalette(root, command=picked.append)
+    widget.pack()
+    widget.picked = picked
+    yield widget
+    widget.destroy()
+
+
+def test_swatch_click_reports_its_hex(palette):
+    palette.swatches["#FF0000"].invoke()
+    assert palette.picked == ["#FF0000"]
+    assert palette.get() == "#FF0000"
+    assert palette.var.get() == "#FF0000"
+    assert palette.name_label.cget("text") == "Red"
+    palette.swatches["#FF0000"].invoke()  # same colour again: no change event
+    assert palette.picked == ["#FF0000"]
+
+
+def test_typed_hex_is_normalised_and_reported(palette):
+    palette.var.set("12ab34")
+    palette._entered()
+    assert palette.picked == ["#12AB34"]
+    assert palette.var.get() == "#12AB34"
+    assert palette.name_label.cget("text") == "Custom"
+
+
+def test_bad_hex_puts_the_colour_back(palette):
+    palette.set("#00FFFF")
+    palette.var.set("not a colour")
+    palette._entered()
+    assert palette.picked == []
+    assert palette.get() == "#00FFFF"
+    assert palette.var.get() == "#00FFFF"
+
+
+def test_set_shows_without_reporting(palette):
+    palette.set("black")
+    assert palette.get() == "#000000"
+    assert palette.var.get() == "#000000"
+    assert palette.picked == []
+    palette.set("rubbish")  # ignored
+    assert palette.get() == "#000000"
+
+
+def test_caption_edits_leave_a_half_typed_code_alone(palette):
+    """The Inspector re-shows the colour on every caption edit."""
+    palette.set("#FF0000")
+    palette.var.set("#12")
+    palette.set("#ff0000")  # same colour: nothing to redraw
+    assert palette.var.get() == "#12"
+    palette.set("#00FF00")  # a different colour does replace it
+    assert palette.var.get() == "#00FF00"
+
+
+@pytest.fixture
+def text_layer(root):
+    from videokidnapper.ui.text_layers import TextLayerWidget
+
+    widget = TextLayerWidget(root, layer_index=0, video_duration=10.0)
+    yield widget
+    widget.destroy()
+
+
+def test_preset_colours_are_stored_as_before(text_layer):
+    """Picking White from the palette stores what picking it by name did."""
+    assert text_layer.set_color("#FFFFFF")
+    assert text_layer.color_var.get() == "White"
+    assert text_layer.get_layer_data()["fontcolor"] == "white"
+    assert text_layer.set_color("#ff0000")
+    assert text_layer.color_var.get() == "Red"
+    assert text_layer.get_layer_data()["fontcolor"] == "#FF0000"
+
+
+def test_custom_colours_are_stored_as_hex(text_layer):
+    assert text_layer.set_color("#12ab34")
+    assert text_layer.color_var.get() == "Custom #12AB34"
+    assert text_layer.get_layer_data()["fontcolor"] == "#12AB34"
+    assert text_layer.color_value() == "#12AB34"
+
+
+def test_not_a_colour_changes_nothing(text_layer):
+    text_layer.set_color("#00FF00")
+    assert not text_layer.set_color("greenish")
+    assert text_layer.get_layer_data()["fontcolor"] == "#00FF00"
+
+
+def test_custom_colour_round_trips_through_layer_data(root, text_layer):
+    from videokidnapper.ui.text_layers import TextLayerWidget
+
+    text_layer.set_color("#ABCDEF")
+    copy = TextLayerWidget(root, layer_index=1, video_duration=10.0)
+    try:
+        copy.load_from_dict(text_layer.get_layer_data())
+        assert copy.color_value() == "#ABCDEF"
+    finally:
+        copy.destroy()
+
+
+def test_same_colour_does_not_fire_a_change(text_layer):
+    fired = []
+    text_layer.set_color("#FF8800")
+    text_layer.color_var.trace_add("write", lambda *_a: fired.append(1))
+    text_layer.set_color("#ff8800")
+    assert fired == []
 
 
