@@ -39,6 +39,7 @@ All notable changes to this project are documented here. The format is based on 
 - **Closing the app deleted downloaded videos and pasted stickers.** Downloads and images pasted from the clipboard were kept in a temporary folder that was emptied on exit, so a saved project could not find its video or stickers the next time. They are now kept in Downloads\VideoKidnapper (pasted images in its "Pasted images" folder), and closing the app only clears unfinished downloads.
 - **Importing a subtitle file froze the app.** Each caption built a hidden set of controls, so a 50-line SRT took most of a minute and a 300-line one stopped after about 90 lines with "No more menus can be allocated". Captions are now plain data edited in the Inspector: a 300-line file imports in a fraction of a second, and undo with many captions is fast too.
 - **One odd value made a whole project count as damaged.** A caption, sticker or motion-path value of the wrong kind in a project file (a word where a number belongs, a missing point) made the project open as an untitled copy. Such values now fall back to their defaults and the project opens normally under its own name. A motion path with no usable points no longer stops the preview; the caption stays where its position says.
+- **A download could open a different video with the same title.** Instagram names every reel "Video by" its account, so the second reel from an account came back as the first one, with no error. Downloaded files now carry the video's id in their name.
 
 ## [1.9.1] — 2026-10-07
 
