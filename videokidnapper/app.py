@@ -34,6 +34,15 @@ _EDIT_ONLY = {
     "keyboard_play_pause", "keyboard_nudge", "keyboard_mark_in",
     "keyboard_mark_out", "keyboard_save_range", "keyboard_paste_url",
 }
+# How many recent projects the header's project menu lists.
+_MENU_RECENT = 8
+
+
+def _accel(keys):
+    """A shortcut as menus show it: "Ctrl+S" here, "⌘S" on a Mac."""
+    if sys.platform != "darwin":
+        return keys
+    return keys.replace("Ctrl+Shift+", "⌘⇧").replace("Ctrl+", "⌘")
 
 
 class App(ctk.CTk):
@@ -193,9 +202,9 @@ class App(ctk.CTk):
         icon_button(right, "undo",
                     command=lambda: self.trim_tab.keyboard_undo()).pack(side="right", padx=1)
         self.project_btn = button(
-            right, "Untitled project", variant="ghost", height=32,
+            right, "Untitled project  ▾", variant="ghost", height=32,
             font=T.font(T.SIZE_MD, "bold"), text_color=T.TEXT,
-            command=lambda: self.trim_tab.open_project_hub(),
+            command=self._open_project_menu,
         )
         self.project_btn.pack(side="right", padx=(0, 8))
 
@@ -211,6 +220,12 @@ class App(ctk.CTk):
         self._settings_menu = tk.Menu(
             self, tearoff=0, bg=T.BG_SURFACE, fg=T.TEXT,
             activebackground=T.ACCENT_SOFT, activeforeground=T.TEXT,
+            font=(T.FONT_FAMILY, 10), bd=1, relief="solid",
+        )
+        self._project_menu = tk.Menu(
+            self, tearoff=0, bg=T.BG_SURFACE, fg=T.TEXT,
+            activebackground=T.ACCENT_SOFT, activeforeground=T.TEXT,
+            disabledforeground=T.TEXT_DIM,
             font=(T.FONT_FAMILY, 10), bd=1, relief="solid",
         )
 
@@ -369,9 +384,51 @@ class App(ctk.CTk):
         has_video = bool(editor is not None and editor.video_path)
         # "Saved" only means something once the project has a file.
         state = "Edited" if dirty else ("" if untitled else "Saved")
-        self.project_btn.configure(
-            text=f"{label}  ·  {state}" if has_video and state else label,
-        )
+        text = f"{label}  ·  {state}" if has_video and state else label
+        # The ▾ says the name opens the project menu.
+        self.project_btn.configure(text=f"{text}  ▾")
+
+    # ------------------------------------------------------------------
+    # Project menu (the project name in the header)
+    # ------------------------------------------------------------------
+    def _open_project_menu(self):
+        """Open, Save, Save as and the recent projects, under the name."""
+        menu = self._build_project_menu()
+        btn = self.project_btn
+        try:
+            menu.tk_popup(btn.winfo_rootx(), btn.winfo_rooty() + btn.winfo_height())
+        finally:
+            menu.grab_release()
+
+    def _build_project_menu(self):
+        """Refill the project menu for the editor's current state."""
+        menu = self._project_menu
+        menu.delete(0, "end")
+        editor = self.trim_tab
+        # Save needs something to save; it would only say so in the
+        # status bar, so the entries are greyed out instead.
+        can_save = "normal" if editor.video_path else "disabled"
+        menu.add_command(label="Open project…", accelerator=_accel("Ctrl+Shift+O"),
+                         command=editor.choose_and_open_project)
+        menu.add_command(label="Save", accelerator=_accel("Ctrl+S"), state=can_save,
+                         command=editor.save_project)
+        menu.add_command(label="Save as…", accelerator=_accel("Ctrl+Shift+S"),
+                         state=can_save,
+                         command=lambda: editor.save_project(save_as=True))
+        menu.add_separator()
+        recent = [Path(p) for p in settings.get_recent_projects()[:_MENU_RECENT]]
+        if not recent:
+            menu.add_command(label="No recent projects", state="disabled")
+            return menu
+        menu.add_command(label="Recent projects", state="disabled")
+        stems = [p.stem for p in recent]
+        for path in recent:
+            # Two projects with one name are told apart by their folder.
+            label = (f"{path.stem}  ({path.parent.name})"
+                     if stems.count(path.stem) > 1 else path.stem)
+            menu.add_command(label=f"   {label}",
+                             command=lambda p=str(path): editor.open_project(p))
+        return menu
 
     # ------------------------------------------------------------------
     # Settings menu (gear)

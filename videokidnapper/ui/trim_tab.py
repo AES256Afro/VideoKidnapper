@@ -1687,8 +1687,12 @@ class TrimTab(ctk.CTkFrame):
         setter(name, self._project_dirty)
 
     def open_project_hub(self):
-        from videokidnapper.ui.project_dialog import ProjectDialog
-        ProjectDialog(self.app, self)
+        """Show Import, which lists recent projects and has Open project.
+
+        There used to be a Projects window. Save and Save as are now in
+        the menu under the project's name in the header.
+        """
+        self._show_workspace("import")
 
     def save_project(self, save_as=False, target=None):
         if not self.video_path:
