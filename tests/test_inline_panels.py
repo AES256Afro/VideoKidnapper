@@ -6,6 +6,7 @@
   stopped), and the export worker reporting to it.
 - The colour palette that replaced the operating system's colour dialog.
 - "Captions from speech" in the Text tab, wired to the transcriber.
+- "Record your screen" in Import, wired to the recorder.
 
 The editor methods run against small stand-ins with the slow parts
 stubbed, so nothing is encoded, transcribed or recorded. The one Tk root
@@ -549,3 +550,119 @@ def test_a_failed_transcription_shows_the_error(root, whisper, monkeypatch):
         box.destroy()
 
 
+# ---------------------------------------------------------------------------
+# Record your screen
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text, expected", [
+    ("10", 10), (" 45 ", 45), ("12.7", 12), ("0", 1), ("-5", 1),
+    ("500", 120), ("abc", 10), ("", 10), (None, 10),
+])
+def test_record_length_is_kept_within_limits(text, expected):
+    from videokidnapper.ui.studio.import_workspace import record_seconds
+
+    assert record_seconds(text) == expected
+
+
+def _record_editor(root, tmp_path):
+    window = SimpleNamespace(events=[])
+    window.iconify = lambda: window.events.append("iconify")
+    window.deiconify = lambda: window.events.append("deiconify")
+    editor = SimpleNamespace(
+        notes=[], loaded=[], window=window, after=root.after,
+        export_options=SimpleNamespace(get_output_folder=lambda: str(tmp_path)),
+        quality_var=_Var("Medium"),
+    )
+    editor.winfo_toplevel = lambda: window
+    editor._notify = lambda message, level="info": editor.notes.append((level, message))
+    editor._load_path = lambda path: editor.loaded.append(path) or True
+    return _bind(editor, "start_screen_recording", "stop_screen_recording",
+                 "screen_recording_in_progress", "_on_record_elapsed",
+                 "_on_record_encoding", "_on_record_done", "_on_record_stopped",
+                 "_on_record_failed")
+
+
+@pytest.fixture
+def no_wait(monkeypatch):
+    # The worker waits for the window to minimize; nothing minimizes here.
+    monkeypatch.setattr(trim_tab_module, "time", SimpleNamespace(sleep=lambda _s: None))
+
+
+def _record_panel(root, editor):
+    from videokidnapper.ui.studio.import_workspace import RecordPanel
+
+    panel = RecordPanel(root, editor)
+    editor.record_panel = panel
+    return panel
+
+
+def test_recording_runs_from_the_import_page(root, tmp_path, monkeypatch, no_wait):
+    recorded, encoded = [], []
+
+    def fake_record(seconds, fps=15, cancel_event=None, progress_callback=None, **_kw):
+        recorded.append((seconds, fps, cancel_event))
+        progress_callback(0.0)
+        progress_callback(1.4)
+        return tmp_path, fps, 30
+
+    def fake_encode(frame_dir, fps, preset, output):
+        encoded.append(output)
+        return output
+
+    monkeypatch.setattr(trim_tab_module, "record_screen", fake_record)
+    monkeypatch.setattr(trim_tab_module, "frames_to_video", fake_encode)
+    editor = _record_editor(root, tmp_path)
+    panel = _record_panel(root, editor)
+    try:
+        panel.seconds_var.set("7")
+        panel.start_btn.invoke()
+        assert panel.running
+        assert panel.start_btn.cget("text") == "Stop recording"
+        _run_until(root, lambda: not panel.running)
+
+        assert [r[:2] for r in recorded] == [(7, 15)]
+        assert recorded[0][2] is editor._record_cancel
+        assert editor.window.events == ["iconify", "deiconify"]
+        assert editor.loaded == encoded and len(encoded) == 1
+        assert panel.status.cget("text").startswith("Recorded ")
+        assert panel.start_btn.cget("text") == "Start recording"
+        assert settings.get("record_seconds") == 7
+    finally:
+        panel.destroy()
+
+
+def test_stop_before_any_frames_records_nothing(root, tmp_path, monkeypatch, no_wait):
+    def waiting_record(seconds, fps=15, cancel_event=None, **_kw):
+        cancel_event.wait(5)
+        return tmp_path, fps, 0
+
+    monkeypatch.setattr(trim_tab_module, "record_screen", waiting_record)
+    monkeypatch.setattr(trim_tab_module, "frames_to_video",
+                        lambda *a, **k: pytest.fail("nothing to encode"))
+    editor = _record_editor(root, tmp_path)
+    panel = _record_panel(root, editor)
+    try:
+        panel.start_btn.invoke()
+        panel.start_btn.invoke()  # Stop
+        _run_until(root, lambda: not panel.running)
+        assert editor.loaded == []
+        assert editor.window.events == ["iconify", "deiconify"]
+        assert panel.status.cget("text") == "Stopped before anything was recorded."
+    finally:
+        panel.destroy()
+
+
+def test_a_failed_recording_brings_the_window_back(root, tmp_path, monkeypatch, no_wait):
+    def broken(*_a, **_k):
+        raise OSError("no monitor")
+
+    monkeypatch.setattr(trim_tab_module, "record_screen", broken)
+    editor = _record_editor(root, tmp_path)
+    panel = _record_panel(root, editor)
+    try:
+        panel.start_btn.invoke()
+        _run_until(root, lambda: not panel.running)
+        assert editor.window.events == ["iconify", "deiconify"]
+        assert panel.status.cget("text") == "Recording failed: no monitor"
+    finally:
+        panel.destroy()
