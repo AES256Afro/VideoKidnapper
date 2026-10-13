@@ -9,6 +9,7 @@ import customtkinter as ctk
 
 from videokidnapper.config import TEXT_STYLES, POSITION_MAP, TEXT_COLORS
 from videokidnapper.ui import theme as T
+from videokidnapper.utils.coerce import coerce_float, coerce_int
 
 
 def _get_system_fonts():
@@ -457,33 +458,38 @@ class TextLayer:
         }
 
     def load_from_dict(self, data):
-        """Populate this caption from a layer dict (duplicate, import, undo)."""
-        self._set_text(data.get("text", ""))
-        self.font_var.set(data.get("font", "Arial"))
-        self.size_var.set(str(data.get("fontsize", 24)))
+        """Populate this caption from a layer dict (duplicate, import, undo).
+
+        Project files are shared, so every value may be the wrong type or
+        missing; odd values fall back to the defaults (see utils.coerce)
+        rather than failing the whole project.
+        """
+        text = data.get("text", "")
+        self._set_text(text if isinstance(text, str) else
+                       "" if text is None else str(text))
+        font = data.get("font")
+        self.font_var.set(font if isinstance(font, str) and font else "Arial")
+        fontsize = coerce_int(data.get("fontsize", 24), 24)
+        self.size_var.set(str(fontsize if fontsize > 0 else 24))
         self.box_var.set(bool(data.get("box", True)))
         self.bold_var.set(bool(data.get("bold", False)))
         self.italic_var.set(bool(data.get("italic", False)))
         # Outline / shadow: a positive imported width / offset is preserved
         # in the private fields so duplicate and undo round-trips don't
         # normalise it back to the 2px default.
-        try:
-            borderw = int(data.get("borderw", 0) or 0)
-        except (TypeError, ValueError):
-            borderw = 0
+        borderw = coerce_int(data.get("borderw", 0) or 0, 0)
         self.outline_var.set(borderw > 0)
         if borderw > 0:
             self._borderw = borderw
-        try:
-            sx = int(data.get("shadowx", 0) or 0)
-            sy = int(data.get("shadowy", 0) or 0)
-        except (TypeError, ValueError):
-            sx = sy = 0
+        sx = coerce_int(data.get("shadowx", 0) or 0, 0)
+        sy = coerce_int(data.get("shadowy", 0) or 0, 0)
         self.shadow_var.set(bool(sx or sy))
         if sx or sy:
             self._shadow_offset = (sx, sy)
         # Position: match a preset name, fall back to numeric custom, else default.
         pos_expr = data.get("position", "(w-tw)/2:h-th-20")
+        if not isinstance(pos_expr, str):
+            pos_expr = "(w-tw)/2:h-th-20"
         friendly = next(
             (k for k, v in POSITION_MAP.items() if v == pos_expr),
             None,
@@ -512,8 +518,8 @@ class TextLayer:
                 "White",
             )
             self.color_var.set(matched)
-        start = float(data.get("start", 0))
-        end = float(data.get("end", self.video_duration))
+        start = coerce_float(data.get("start", 0), 0.0)
+        end = coerce_float(data.get("end", self.video_duration), self.video_duration)
         self.time_slider.set_values(start, end)
         # Motion path round-trips through undo snapshots / duplication.
         from videokidnapper.utils.keyframes import normalize_keyframes

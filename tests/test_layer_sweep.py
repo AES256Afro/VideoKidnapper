@@ -14,6 +14,8 @@ import types
 
 import pytest
 
+from tests.test_corrupt_layer_values import HOSTILE_TEXT_LAYERS
+
 ctk = pytest.importorskip("customtkinter")
 
 _HAS_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
@@ -149,9 +151,9 @@ def test_large_subtitle_import_is_quick(editor, tmp_path, monkeypatch):
     toasts = []
     monkeypatch.setattr(editor, "_notify", lambda m, level="info": toasts.append((level, m)))
 
+    editor.update()     # settle whatever loading the clip queued
     started = time.perf_counter()
     editor._import_srt()
-    editor.update()
     elapsed = time.perf_counter() - started
     try:
         assert len(editor.text_layers.layers) == 300
@@ -161,3 +163,106 @@ def test_large_subtitle_import_is_quick(editor, tmp_path, monkeypatch):
         editor.text_layers.clear_layers()
         editor.selected_text_index = None
         editor._sync_timeline_clips()
+
+
+# ---------------------------------------------------------------------------
+# Loaders: undo, duplicate and project open all go through them
+# ---------------------------------------------------------------------------
+
+HOSTILE_LOADER_TEXT_LAYERS = HOSTILE_TEXT_LAYERS + [
+    {"text": None, "font": ["Arial"], "fontsize": float("inf"),
+     "position": 12, "start": None, "end": float("nan")},
+    {"text": 5, "fontsize": -3, "borderw": float("inf"), "shadowx": "1.5",
+     "position": ["x"], "fontcolor": {"r": 1}},
+    {"text": "hi", "start": 0, "end": 9, "keyframes": [{"t": 1, "y": 2}, "junk"]},
+    {"text": "hi", "keyframes": "not a list"},
+]
+
+
+@pytest.mark.parametrize("layer", HOSTILE_LOADER_TEXT_LAYERS)
+def test_caption_loader_survives_corrupt_values(root, layer):
+    """Opening a project with one of these raised ValueError, TypeError
+    or KeyError from the caption loader."""
+    from videokidnapper.ui.text_layers import TextLayersPanel
+
+    panel = TextLayersPanel(root)
+    panel.set_duration(10.0)
+    try:
+        caption = panel._add_layer(preset_data=layer)
+        data = caption.get_layer_data()
+        assert data["fontsize"] > 0
+        assert 0.0 <= data["start"] <= 10.0 and 0.0 <= data["end"] <= 10.0
+        assert isinstance(data["text"], str) and isinstance(data["font"], str)
+        assert "keyframes" not in data
+    finally:
+        panel.destroy()
+
+
+@pytest.mark.parametrize("layer", [
+    {"path": "/nonexistent.png", "scale": "big", "opacity": "x",
+     "x": None, "y": "12abc", "start": "soon", "end": None},
+    {"path": ["a.png"], "position": ["top_left"], "scale": float("inf"),
+     "x": float("inf"), "y": [], "start": float("nan"), "end": {}},
+])
+def test_image_loader_survives_corrupt_values(root, layer):
+    from videokidnapper.ui.image_layers import ImageLayersPanel
+
+    panel = ImageLayersPanel(root)
+    panel.set_duration(10.0)
+    try:
+        overlay = panel._add_layer(preset_data=layer)
+        data = overlay.get_layer_data()
+        assert data["scale"] == 0.25 and data["opacity"] == 1.0
+        assert "x" not in data and "y" not in data
+        assert isinstance(data["path"], str)
+    finally:
+        panel.destroy()
+
+
+def test_preview_survives_an_unusable_motion_path(root):
+    from PIL import Image
+
+    from videokidnapper.ui.video_player import VideoPlayer
+
+    player = VideoPlayer(root)
+    try:
+        player.set_text_layers_provider(lambda: [{
+            "text": "hi", "start": 0, "end": 9, "keyframes": [{"t": "x"}],
+        }])
+        player._apply_text_overlay(Image.new("RGB", (160, 120)), 1.0)
+    finally:
+        player.destroy()
+
+
+def test_project_with_odd_values_opens_normally(editor, clip, tmp_path):
+    """Odd numbers in a shared project used to make the caption and
+    sticker loaders raise, so the project opened as "damaged" and
+    untitled. They now load with sane values, under the project's name."""
+    import json
+
+    from videokidnapper.utils import project_files
+
+    doc = project_files.build_document(
+        str(clip),
+        {"range": [0.0, 6.0], "queued": [],
+         "layers": HOSTILE_LOADER_TEXT_LAYERS,
+         "images": [{"path": "", "scale": "big", "x": None, "start": "soon"}]},
+        {}, project_path=tmp_path / "odd.vidkid")
+    path = project_files.save_document(tmp_path / "odd.vidkid", doc)
+    json.loads(path.read_text(encoding="utf-8"))   # really written
+    toasts = []
+    notify = editor._notify
+    editor._notify = lambda m, level="info": toasts.append((level, m))
+    editor._project_dirty = False      # no "save first?" question
+    try:
+        assert editor.open_project(str(path))
+        assert editor.current_project_path == str(path.resolve()), toasts
+        assert len(editor.text_layers.layers) == len(HOSTILE_LOADER_TEXT_LAYERS)
+        assert len(editor.image_layers.layers) == 1
+        assert toasts[-1][0] == "success", toasts
+    finally:
+        editor._notify = notify
+        editor._project_dirty = False
+        editor.text_layers.clear_layers()
+        editor.image_layers.clear_layers()
+        editor.selected_text_index = editor.selected_image_index = None
