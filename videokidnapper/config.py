@@ -54,7 +54,18 @@ APP_VERSION = __version__
 WINDOW_SIZE = "1440x900"
 MIN_WINDOW_SIZE = (1024, 640)
 
+# Scratch space: partial downloads and screen-recording frames. What is
+# left here is cleared on exit (see downloader.cleanup_temp), so nothing
+# a project might point at may stay here.
 TEMP_DIR = Path.home() / ".videokidnapper_temp"
+
+# Media the app makes for you and keeps: finished downloads, and images
+# pasted from the clipboard as stickers. Projects point at these files,
+# so the app never deletes anything here. It lives in Downloads, beside
+# where exports go by default, because a downloaded video is the user's
+# own file: they should be able to find it, keep it or delete it. An
+# app-data folder would hide it, and an uninstall would take it along.
+MEDIA_DIR = DOWNLOADS_DIR / "VideoKidnapper"
 
 THEME_COLOR = "#1a73e8"
 
