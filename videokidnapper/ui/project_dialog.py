@@ -116,16 +116,20 @@ class ProjectDialog(ctk.CTkToplevel):
 
 
 class RecoveryDialog(ctk.CTkToplevel):
-    def __init__(self, master, editor, **kwargs):
+    def __init__(self, master, editor, path=None, **kwargs):
         super().__init__(master, **kwargs)
         self.editor = editor
+        self.path = path or project_files.autosave_path()
+        editor._recovery_pending = True
         self.title("Recover VideoKidnapper Project")
         self.geometry("500x250")
         self.resizable(False, False)
         self.configure(fg_color=T.BG_BASE)
         self.transient(master)
         self.grab_set()
-        self.protocol("WM_DELETE_WINDOW", self._discard)
+        # Closing the window is not "discard": nothing was chosen, so the
+        # autosave is kept and offered again next time.
+        self.protocol("WM_DELETE_WINDOW", self._later)
 
         card = ctk.CTkFrame(
             self, fg_color=T.BG_SURFACE,
@@ -164,9 +168,17 @@ class RecoveryDialog(ctk.CTkToplevel):
         self.geometry(f"+{x}+{y}")
 
     def _recover(self):
-        if self.editor.open_project(project_files.autosave_path(), recovery=True):
+        if self.editor.open_project(self.path, recovery=True):
             self.destroy()
 
     def _discard(self):
-        self.editor.discard_recovery()
+        self.editor.discard_recovery(self.path)
+        self.destroy()
+
+    def _later(self):
+        if self.path == project_files.autosave_path():
+            self.editor.postpone_recovery()
+        else:
+            # Already the postponed file; it simply stays where it is.
+            self.editor._recovery_pending = False
         self.destroy()

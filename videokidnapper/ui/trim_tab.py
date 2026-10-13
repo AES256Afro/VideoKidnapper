@@ -16,10 +16,10 @@ The class keeps its historical name and public API (``app.trim_tab``,
 ``open_project``, ``receive_url``, keyboard handlers, ...) so dialogs,
 plugins and the CLI-adjacent code that call into it keep working.
 
-Captions and image overlays still live in ``TextLayersPanel`` /
-``ImageLayersPanel`` rows, which act as the data model; they're never
-shown. The Inspector edits one selected row at a time and the timeline
-draws them all as clips.
+Captions live in ``TextLayersPanel`` as plain ``TextLayer`` objects and
+image overlays in ``ImageLayersPanel`` rows; they are the data model and
+are never shown. The Inspector edits one selected row at a time and the
+timeline draws them all as clips.
 """
 
 import os
@@ -55,6 +55,7 @@ from videokidnapper.ui.text_layers import TextLayersPanel
 from videokidnapper.ui.theme import button
 from videokidnapper.ui.video_player import VideoPlayer
 from videokidnapper.utils import project_files, settings
+from videokidnapper.utils.threads import wait_for_thread
 from videokidnapper.utils.file_naming import generate_export_path
 from videokidnapper.utils.size_estimator import estimate_bytes, human_bytes
 from videokidnapper.utils.srt_parser import parse_srt_file, srt_to_text_layers
@@ -67,6 +68,9 @@ INSPECTOR_W = 340
 _FRAME_COALESCE_MS = 15
 _PREVIEW_REFRESH_MS = 40
 _PLAY_POLL_MS = 80
+# Shortest selection or saved range: the gap the timeline keeps between
+# the in and out edges, and RangeStore's minimum.
+MIN_SELECTION_S = 0.05
 
 
 def short_duration(seconds):
@@ -77,10 +81,43 @@ def short_duration(seconds):
     return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
 
 
+def clamp_range(start, end, duration):
+    """``(start, end)`` limited to ``[0, duration]``, or None if too little
+    of it is left to export.
+
+    A project relinked to a shorter video kept its old selection and saved
+    ranges, some of them wholly past the new end.
+    """
+    start = max(0.0, min(float(start), duration))
+    end = max(start, min(float(end), duration))
+    if end - start < MIN_SELECTION_S:
+        return None
+    return start, end
+
+
+def export_output_ok(path, audio_only=False):
+    """True when an export produced something playable.
+
+    ffmpeg exits cleanly when a range holds no frames (an empty selection,
+    a saved range past the end of the video) and leaves a stub behind: a
+    few hundred bytes with no streams, or a millisecond of sound and no
+    picture. That used to be reported as a successful export.
+    """
+    try:
+        if Path(path).stat().st_size <= 0:
+            return False
+        info = get_video_info(path)
+    except Exception:
+        return False
+    if audio_only:
+        return bool(info.get("has_audio")) and info.get("duration", 0) > 0
+    return bool(info.get("has_video", True))
+
+
 class RangeStore:
     """Saved ranges: what the old ``RangeQueue`` held, minus its widget."""
 
-    MIN_LENGTH = 0.05
+    MIN_LENGTH = MIN_SELECTION_S
 
     def __init__(self, on_change=None):
         self._ranges = []
@@ -156,6 +193,9 @@ class TrimTab(ctk.CTkFrame):
         self._autosave_debounce_ms = 1500
         self.current_project_path = None
         self._project_dirty = False
+        # Set while the startup recovery prompt is unanswered, so closing
+        # the app then leaves the autosave alone (see request_close).
+        self._recovery_pending = False
 
         self.playhead = 0.0
         self.selected_text_index = None
@@ -499,9 +539,12 @@ class TrimTab(ctk.CTkFrame):
     # Providers and change handlers
     # ------------------------------------------------------------------
     def _current_image_layers(self):
-        # Only layers whose path is a real file — the ffmpeg export path
-        # applies the same filter, so the preview matches.
-        return self.image_layers.get_all_layers()
+        # include_empty keeps the list index aligned with panel.layers,
+        # as for captions: the player's drag and click callbacks address
+        # rows by it. Filtering out missing files here made dragging one
+        # sticker move another. The player skips files it cannot load,
+        # so the preview still matches the export, which drops them too.
+        return self.image_layers.get_all_layers(include_empty=True)
 
     def _current_text_layers(self):
         # include_empty keeps the list index aligned with panel.layers so
@@ -867,9 +910,15 @@ class TrimTab(ctk.CTkFrame):
         if self.download_bar is None:
             self._notify("The downloader isn't ready yet", "warn")
             return
+        if self.download_bar.busy():
+            # Keep the link here; it used to be cleared while the old one
+            # was downloaded a second time.
+            self._notify("A download is already running. Wait for it, or "
+                         "cancel it on the Import page.", "warn")
+            return
         self.download_bar.receive_url(url)
-        self.download_bar._download()
-        self.media_link_entry.delete(0, "end")
+        if self.download_bar._download():
+            self.media_link_entry.delete(0, "end")
 
     def _auto_track(self, index):
         """Auto-track: follow the video patch under the caption from the
@@ -885,7 +934,7 @@ class TrimTab(ctk.CTkFrame):
             self._notify(hint, "warn")
             return
         bbox = self.player.get_text_source_bbox(index)
-        if not bbox:
+        if not bbox or not (0 <= index < len(self.text_layers.layers)):
             self._notify(
                 "Drag the caption onto the thing you want to track first",
                 "warn")
@@ -900,11 +949,15 @@ class TrimTab(ctk.CTkFrame):
 
         self._notify("Tracking… the caption will follow when it's done", "info")
         state = {"frac": 0.0, "done": False, "result": None, "error": None}
+        # The path follows a caption, not a row number, and only in the
+        # video it was tracked in: either can change while it runs.
+        video_path = self.video_path
+        layer = self.text_layers.layers[index]
 
         def worker():
             try:
                 state["result"] = trk.track_region(
-                    self.video_path, region, start_t, end_t,
+                    video_path, region, start_t, end_t,
                     progress_cb=lambda f: state.__setitem__("frac", f),
                 )
             except Exception as e:      # noqa: BLE001 - surfaced to the user
@@ -917,6 +970,9 @@ class TrimTab(ctk.CTkFrame):
             if not state["done"]:
                 self._notify(f"Tracking… {int(state['frac']*100)}%", "info")
                 self.after(250, poll)
+                return
+            if self.video_path != video_path or layer not in self.text_layers.layers:
+                self._notify("Tracking finished, but its caption is gone", "warn")
                 return
             if state["error"]:
                 self._notify(f"Tracking failed: {state['error'][:120]}", "error")
@@ -937,7 +993,8 @@ class TrimTab(ctk.CTkFrame):
                     kf["x"], kf["y"], kf["x"] + bw, kf["y"] + bh)
                 mapped.append(dict(kf, x=int(round(lx1)), y=int(round(ly1))))
             kfs = mapped
-            self.text_layers.set_layer_keyframes(index, kfs)
+            self.text_layers.set_layer_keyframes(
+                self.text_layers.layers.index(layer), kfs)
             self.player.refresh_overlay()
             self._notify(
                 f"Tracked {kfs[-1]['t'] - kfs[0]['t']:.1f}s → "
@@ -1250,31 +1307,37 @@ class TrimTab(ctk.CTkFrame):
         from videokidnapper.core import whisper_captions
 
         start, end = self.timeline.get_values()
+        video_path = self.video_path
         self._notify(f"Transcribing with Whisper ({model_size})…", "info")
         self.captions_btn.configure(state="disabled")
 
         def worker():
             try:
                 entries = whisper_captions.transcribe(
-                    self.video_path,
+                    video_path,
                     model_size=model_size,
                     start=start, end=end,
                 )
             except Exception as exc:
-                self.after(0, self._on_captions_failed, str(exc))
+                self._post(self._on_captions_failed, str(exc))
                 return
-            self.after(0, self._on_captions_done, entries)
+            self._post(self._on_captions_done, entries, video_path)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _on_captions_done(self, entries):
+    def _on_captions_done(self, entries, video_path=None):
         self.captions_btn.configure(state="normal")
+        if video_path is not None and video_path != self.video_path:
+            # Transcription takes a while. If another video was opened
+            # meanwhile, these captions belong to the old one.
+            self._notify(
+                f"Captions for {os.path.basename(video_path)} were not added: "
+                "a different video is open now", "warn")
+            return
         if not entries:
             self._notify("Whisper produced no text (silent clip?)", "warn")
             return
-        self.text_layers.import_srt_layers(srt_to_text_layers(entries))
-        self.select_layer("text", 0)
-        self._notify(f"Imported {len(entries)} caption line(s)", "success")
+        self._add_captions(entries, "caption line(s)")
 
     def _on_captions_failed(self, error):
         self.captions_btn.configure(state="normal")
@@ -1295,11 +1358,31 @@ class TrimTab(ctk.CTkFrame):
             if not entries:
                 self._notify("No subtitle entries found", "warn")
                 return
-            self.text_layers.import_srt_layers(srt_to_text_layers(entries))
-            self.select_layer("text", 0)
-            self._notify(f"Imported {len(entries)} subtitle line(s)", "success")
+            self._add_captions(entries, "subtitle line(s)")
         except Exception as e:
             self._notify(f"SRT import failed: {e}", "error")
+
+    def _add_captions(self, entries, what):
+        """Add timed lines as captions and select the first one added.
+
+        Lines that start after the end of the video are left out: they
+        used to be squeezed to zero length at the very end, invisible
+        but counted as imported.
+        """
+        duration = float((self.video_info or {}).get("duration") or 0.0)
+        inside = [e for e in entries if duration <= 0 or e["start"] < duration]
+        late = len(entries) - len(inside)
+        if not inside:
+            self._notify(f"All {len(entries)} {what} start after the end of "
+                         "this video; nothing was added", "warn")
+            return
+        first = len(self.text_layers.layers)
+        self.text_layers.import_srt_layers(srt_to_text_layers(inside))
+        self.select_layer("text", first)
+        message = f"Imported {len(inside)} {what}"
+        if late:
+            message += f"; {late} after the end of the video left out"
+        self._notify(message, "success")
 
     # ------------------------------------------------------------------
     def _record_screen(self):
@@ -1349,6 +1432,9 @@ class TrimTab(ctk.CTkFrame):
         self._notify(f"Recording {duration_seconds}s — window will minimize...", "info")
         self.winfo_toplevel().iconify()
         time.sleep(0.4)  # let the window minimize before capture begins
+        # Tk variables are read here, not on the worker thread.
+        output_folder = self.export_options.get_output_folder()
+        preset = self.quality_var.get()
 
         def worker():
             try:
@@ -1357,21 +1443,20 @@ class TrimTab(ctk.CTkFrame):
                     progress_callback=None,
                 )
             except Exception as e:
-                self.after(0, self._on_record_failed, str(e))
+                self._post(self._on_record_failed, str(e))
                 return
             if count < 2:
-                self.after(0, self._on_record_failed, "No frames captured")
+                self._post(self._on_record_failed, "No frames captured")
                 return
             # A screen recording has no source video, so the title
             # styles fall back to "clip" — which is the honest answer.
             output = generate_export_path(
                 "record", "mp4",
-                base_dir=self.export_options.get_output_folder(),
+                base_dir=output_folder,
                 source_name="screen recording",
             )
-            preset = self.quality_var.get()
             result = frames_to_video(str(frame_dir), fps, preset, str(output))
-            self.after(0, self._on_record_done, str(result) if result else None)
+            self._post(self._on_record_done, str(result) if result else None)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1437,20 +1522,27 @@ class TrimTab(ctk.CTkFrame):
     def keyboard_mark_in(self):
         if not self.video_path:
             return
+        duration = self.video_info["duration"]
         _, end = self.timeline.get_values()
         start = self.playhead
-        if end <= start + 0.05:
-            end = self.video_info["duration"]
+        if end <= start + MIN_SELECTION_S:
+            end = duration
+        # I at the very end used to make an empty selection, which
+        # exported as a file with no picture. Keep at least a sliver.
+        start = max(0.0, min(start, end - MIN_SELECTION_S))
         self._apply_selection(start, end)
         self._request_snapshot(immediate=True)
 
     def keyboard_mark_out(self):
         if not self.video_path:
             return
+        duration = self.video_info["duration"]
         start, _ = self.timeline.get_values()
         end = self.playhead
-        if end <= start + 0.05:
+        if end <= start + MIN_SELECTION_S:
             start = 0.0
+        # Likewise O at 0:00, before the playhead has moved.
+        end = min(duration, max(end, start + MIN_SELECTION_S))
         self._apply_selection(start, end)
         self._request_snapshot(immediate=True)
 
@@ -1564,20 +1656,29 @@ class TrimTab(ctk.CTkFrame):
             return
         self._restoring = True
         try:
-            start, end = snap.get(
-                "range", (0.0, float((self.video_info or {}).get("duration", 0.0))),
-            )
-            self._apply_selection(start, end)
-            self.range_queue.set_ranges(snap.get("queued", []))
+            duration = float((self.video_info or {}).get("duration", 0.0))
+            # Limit everything to this video: a project reopened against
+            # a shorter replacement showed an Out point past the end and
+            # exported saved ranges that held nothing.
+            selection = clamp_range(*snap.get("range", (0.0, duration)), duration)
+            self._apply_selection(*(selection or (0.0, duration)))
+            self.range_queue.set_ranges([
+                kept for kept in (clamp_range(s, e, duration)
+                                  for s, e in snap.get("queued", []))
+                if kept
+            ])
 
             # Crop rect.
             self.player.set_crop(snap.get("crop"))
             settings.set("crop", snap.get("crop"))
 
             # Captions and overlays — rebuild the model rows from dicts.
-            self.text_layers.clear_layers()
-            for data in snap.get("layers", []):
-                self.text_layers._add_layer(preset_data=data)
+            # One change notification for all the captions, not one per
+            # field per caption (each redraws the timeline).
+            with self.text_layers.batch_changes():
+                self.text_layers.clear_layers()
+                for data in snap.get("layers", []):
+                    self.text_layers._add_layer(preset_data=data)
 
             self.image_layers.clear_layers()
             for data in snap.get("images", []):
@@ -1659,6 +1760,10 @@ class TrimTab(ctk.CTkFrame):
             self._notify("Load a video before saving a project", "warn")
             return False
         path = target or (None if save_as else self.current_project_path)
+        if path and project_files.is_autosave(path):
+            # Saving "into" the autosave and then deleting it, as a saved
+            # project's autosave is, threw recovered work away.
+            path = None
         if not path:
             path = filedialog.asksaveasfilename(
                 title="Save VideoKidnapper Project",
@@ -1716,35 +1821,66 @@ class TrimTab(ctk.CTkFrame):
             return False
         if not self._load_path(str(source), preserve_project=True):
             return False
-        self._apply_snapshot(document.get("editor") or {})
-        self._restoring = True
+        # From here the editor already shows the new video. Until the
+        # project is fully applied it must not keep the previous project's
+        # path: a save would write this project's content into that file.
+        self.current_project_path = None
+        damaged = None
         try:
-            export = document.get("export") or {}
-            platform = str(export.get("platform", "Custom"))
-            self.platform_var.set(
-                platform if platform in PLATFORM_CHOICES else "Custom",
-            )
-            quality = str(export.get("quality", "Medium"))
-            self.quality_var.set(quality if quality in PRESETS else "Medium")
-            fmt = str(export.get("format", "GIF"))
-            self.format_var.set(fmt if fmt in EXPORT_FORMATS else "GIF")
-            self.export_options.apply_options(export.get("options") or {})
-        finally:
-            self._restoring = False
+            self._apply_snapshot(document.get("editor") or {})
+            self._restoring = True
+            try:
+                export = document.get("export") or {}
+                platform = str(export.get("platform", "Custom"))
+                self.platform_var.set(
+                    platform if platform in PLATFORM_CHOICES else "Custom",
+                )
+                quality = str(export.get("quality", "Medium"))
+                self.quality_var.set(quality if quality in PRESETS else "Medium")
+                fmt = str(export.get("format", "GIF"))
+                self.format_var.set(fmt if fmt in EXPORT_FORMATS else "GIF")
+                self.export_options.apply_options(export.get("options") or {})
+            finally:
+                self._restoring = False
+        except Exception as exc:
+            damaged = exc
 
         linked = document.get("linked_project_path") or ""
-        self.current_project_path = (
-            str(Path(linked).expanduser().resolve())
-            if recovery and linked else str(Path(path).expanduser().resolve())
-        )
-        self._project_dirty = bool(recovery)
-        if not recovery:
+        if damaged is not None:
+            # Keep what did load, as an untitled project, so nothing is
+            # overwritten and the user can still save what they see.
+            self.current_project_path = None
+        elif recovery:
+            # An untitled autosave has no project to return to; Save then
+            # asks where to save instead of writing into the autosave.
+            self.current_project_path = (
+                str(Path(linked).expanduser().resolve()) if linked else None
+            )
+        else:
+            self.current_project_path = str(Path(path).expanduser().resolve())
+        self._project_dirty = bool(recovery or damaged is not None)
+        if recovery:
+            self._recovery_pending = False
+            # Write this session's autosave straight away, then drop the
+            # file it came from if that was a postponed one.
+            self._write_autosave()
+            recovered = Path(path).expanduser().resolve()
+            if (project_files.autosave_path().is_file()
+                    and recovered != project_files.autosave_path().resolve()):
+                project_files.delete_autosave(recovered)
+        elif damaged is None:
             settings.add_recent_project(self.current_project_path)
             project_files.delete_autosave()
         self._undo_stack.reset(self._snapshot())
         self._update_project_status()
         self.player.refresh_overlay()
         self._emit_state()
+        if damaged is not None:
+            self._notify(
+                f"Opened {Path(path).name} with problems, as an untitled "
+                f"project: {damaged}", "warn",
+            )
+            return True
         self._notify(
             "Recovered autosaved project" if recovery else
             f"Opened project: {Path(path).name}",
@@ -1752,8 +1888,14 @@ class TrimTab(ctk.CTkFrame):
         )
         return True
 
-    def discard_recovery(self):
-        project_files.delete_autosave()
+    def discard_recovery(self, path=None):
+        self._recovery_pending = False
+        project_files.delete_autosave(path)
+
+    def postpone_recovery(self):
+        """The recovery prompt was closed without a choice: ask next time."""
+        self._recovery_pending = False
+        project_files.postpone_autosave()
 
     def _prepare_to_replace_project(self):
         if not self._project_dirty:
@@ -1770,6 +1912,10 @@ class TrimTab(ctk.CTkFrame):
         return True
 
     def request_close(self):
+        if self._recovery_pending:
+            # Closing while the recovery prompt is still up: nothing was
+            # chosen, so keep the autosave for the next launch.
+            return True
         self._flush_pending_snapshot()
         if self._autosave_after_id is not None:
             try:
@@ -1821,6 +1967,12 @@ class TrimTab(ctk.CTkFrame):
         ranges = self._gather_ranges()
         concat = options.get("concat") and len(ranges) > 1 and fmt != "GIF" \
                  and not options.get("audio_only")
+        audio_only = bool(options.get("audio_only"))
+        # Read once, here on the Tk thread. The worker used to re-read
+        # them for every clip, so a file opened mid-export supplied (and
+        # named) the clips still to come.
+        video_path = self.video_path
+        source_title = self.source_title
 
         title_suffix = " (joined)" if concat else ""
         dialog = ExportDialog(
@@ -1829,6 +1981,14 @@ class TrimTab(ctk.CTkFrame):
         )
         self._notify(f"Exporting {len(ranges)} clip(s) [{preset}]{title_suffix}...", "info")
 
+        # Runs on the Tk thread (through _post), like everything below
+        # that touches a widget.
+        def failed(message, toast=None):
+            if dialog.winfo_exists():
+                dialog.export_failed(message)
+                if toast:
+                    self._notify(toast, "error")
+
         def run_export():
             produced = []
             for i, (start, end) in enumerate(ranges, 1):
@@ -1836,18 +1996,17 @@ class TrimTab(ctk.CTkFrame):
                     break
                 output_path = str(generate_export_path(
                     "trim", ext, base_dir=output_dir,
-                    source_name=self.source_title,
+                    source_name=source_title,
                 ))
 
                 def progress_cb(p, i=i):
-                    if dialog.winfo_exists():
-                        prog = ((i - 1) + p) / len(ranges)
-                        dialog.after(0, dialog.update_progress, prog,
-                                     f"Clip {i}/{len(ranges)} — encoding {fmt}...")
+                    prog = ((i - 1) + p) / len(ranges)
+                    self._post(dialog.update_progress, prog,
+                               f"Clip {i}/{len(ranges)} — encoding {fmt}...")
                 try:
-                    if options.get("audio_only"):
+                    if audio_only:
                         result = trim_to_video(
-                            self.video_path, start, end, preset, output_path,
+                            video_path, start, end, preset, output_path,
                             text_layers=layers, options=options,
                             progress_callback=progress_cb, cancel_event=dialog.cancel_event,
                         )
@@ -1856,36 +2015,40 @@ class TrimTab(ctk.CTkFrame):
                         # first (see ffmpeg_backend.trim_to_gif) — slower
                         # but keeps the filter-graph plumbing simple.
                         result = trim_to_gif(
-                            self.video_path, start, end, preset, output_path,
+                            video_path, start, end, preset, output_path,
                             text_layers=layers, image_layers=image_layers,
                             options=options,
                             progress_callback=progress_cb, cancel_event=dialog.cancel_event,
                         )
                     else:
                         result = trim_to_video(
-                            self.video_path, start, end, preset, output_path,
+                            video_path, start, end, preset, output_path,
                             text_layers=layers, image_layers=image_layers,
                             options=options,
                             progress_callback=progress_cb, cancel_event=dialog.cancel_event,
                         )
+                    if result and not export_output_ok(result, audio_only):
+                        try:
+                            Path(result).unlink()
+                        except OSError:
+                            pass
+                        self._post(failed, f"Clip {i} came out empty — check "
+                                           "that it lies inside the video")
+                        return
                     if result:
                         produced.append(str(result))
                     else:
-                        if dialog.winfo_exists():
-                            dialog.after(0, dialog.export_failed,
-                                         f"Clip {i} failed — aborting")
+                        self._post(failed, f"Clip {i} failed — aborting")
                         return
                 except Exception as e:
-                    if dialog.winfo_exists():
-                        dialog.after(0, dialog.export_failed, f"Error: {e}")
-                        self._notify(f"Export error: {e}", "error")
+                    self._post(failed, f"Error: {e}", f"Export error: {e}")
                     return
 
             final_path = None
             if concat and len(produced) > 1:
                 combined = str(generate_export_path(
                     "trim_concat", ext, base_dir=output_dir,
-                    source_name=self.source_title,
+                    source_name=source_title,
                 ))
                 # Pick transition from the export options. "cut" stays on
                 # the fast lossless concat demuxer path; anything else
@@ -1903,19 +2066,54 @@ class TrimTab(ctk.CTkFrame):
                             Path(p).unlink()
                         except OSError:
                             pass
+            # Every file left on disk goes into History: the joined file,
+            # or each clip when they were not joined (or the join failed).
+            saved = [final_path] if final_path else list(produced)
             if not final_path:
                 final_path = produced[-1] if produced else None
+            self._post(finished, final_path, saved)
 
-            if final_path and dialog.winfo_exists():
+        def finished(final_path, saved=()):
+            if not dialog.winfo_exists():
+                return
+            if final_path:
                 settings.set("last_export", final_path)
-                self._record_history(final_path, fmt, preset, options)
-                dialog.after(0, dialog.export_complete, final_path)
+                # Only the last clip used to be recorded, so the others
+                # from a multi-range export were missing from History.
+                for path in saved or [final_path]:
+                    self._record_history(path, fmt, preset, options)
+                dialog.export_complete(final_path)
                 self._notify(f"Exported {len(ranges)} clip(s)", "success")
-            elif dialog.winfo_exists():
-                dialog.after(0, dialog.export_failed, "Cancelled")
+            else:
+                dialog.export_failed("Cancelled")
                 self._notify("Export cancelled", "warn")
 
-        threading.Thread(target=run_export, daemon=True).start()
+        self._export_cancel = dialog.cancel_event
+        self._export_thread = threading.Thread(target=run_export, daemon=True)
+        self._export_thread.start()
+
+    def export_in_progress(self):
+        thread = getattr(self, "_export_thread", None)
+        return bool(thread and thread.is_alive())
+
+    def stop_export(self, timeout=3.0):
+        """Cancel a running export and give ffmpeg a moment to be killed."""
+        cancel = getattr(self, "_export_cancel", None)
+        if cancel is not None:
+            cancel.set()
+        wait_for_thread(self, getattr(self, "_export_thread", None), timeout)
+
+    def _post(self, fn, *args):
+        """Run ``fn(*args)`` on the Tk thread. Safe from a worker thread.
+
+        Workers must not touch widgets themselves; ``after`` is the one Tk
+        call they make. It fails once the window is closing, which a late
+        worker has no reason to report.
+        """
+        try:
+            self.after(0, fn, *args)
+        except (RuntimeError, tk.TclError):
+            pass
 
     def _record_history(self, path, fmt, preset, options):
         try:

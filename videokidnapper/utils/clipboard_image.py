@@ -35,9 +35,10 @@ SUPPORTED_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif", ".bm
 def grab_clipboard_image(temp_dir: str | os.PathLike[str] | None = None) -> Optional[Path]:
     """Return a :class:`Path` to an image sourced from the clipboard, or ``None``.
 
-    Bitmap data is saved as PNG into ``temp_dir`` (defaults to the app
-    temp dir); file-path clipboards return the first supported image
-    path that actually exists on disk.
+    Bitmap data is saved as PNG into ``temp_dir`` (by default the app's
+    "Pasted images" media folder, which is kept: the sticker's project
+    needs the file after the app closes); file-path clipboards return
+    the first supported image path that actually exists on disk.
 
     Never raises — any failure (PIL missing, clipboard unreachable,
     write permission denied) resolves to ``None`` so the caller can
@@ -86,8 +87,16 @@ def _first_supported_path(paths: list) -> Optional[Path]:
 
 
 def _save_bitmap(image, temp_dir) -> Optional[Path]:
-    """Persist a PIL Image to a fresh temp file and return its path."""
-    out_dir = Path(temp_dir) if temp_dir else Path.home() / ".videokidnapper_temp"
+    """Persist a PIL Image to a fresh PNG file and return its path.
+
+    Not in the app's temp folder, which is cleared on exit: that deleted
+    the sticker of any project it was pasted into.
+    """
+    if temp_dir:
+        out_dir = Path(temp_dir)
+    else:
+        from videokidnapper import config
+        out_dir = config.MEDIA_DIR / "Pasted images"
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
     except OSError:

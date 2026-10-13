@@ -45,31 +45,57 @@ def enable_dnd_for(root):
     return True
 
 
-def parse_dnd_files(data):
+def parse_dnd_files(data, splitlist=None):
     """Split tkdnd's drop payload into individual file paths.
 
-    Paths containing spaces come back wrapped in ``{...}``; bare paths are
-    separated by spaces. Returns a list; empty on empty input.
+    The payload is a Tcl list: paths with spaces or braces come wrapped
+    in ``{...}`` (braces inside nest), and a bare path can carry
+    backslash escapes. Pass the widget's ``tk.splitlist`` to have Tcl
+    parse it; the fallback below follows the same rules. The old parser
+    closed a path at its first ``}``, so "Take {2}.mp4" arrived as two
+    bogus files. Returns a list; empty on empty input.
     """
     if not data:
         return []
+    if splitlist is not None:
+        try:
+            return [str(item) for item in splitlist(data)]
+        except Exception:
+            pass
+    return _split_tcl_list(str(data))
+
+
+def _split_tcl_list(data):
     paths = []
-    buf = ""
-    in_brace = False
-    for ch in data:
-        if ch == "{" and not in_brace:
-            in_brace = True
-        elif ch == "}" and in_brace:
-            in_brace = False
-            if buf:
-                paths.append(buf)
-                buf = ""
-        elif ch == " " and not in_brace:
-            if buf:
-                paths.append(buf)
-                buf = ""
+    i, n = 0, len(data)
+    while i < n:
+        while i < n and data[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        if data[i] == "{":
+            # Braced: everything up to the matching brace, taken as is.
+            depth, j = 1, i + 1
+            while j < n and depth:
+                if data[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if data[j] == "{":
+                    depth += 1
+                elif data[j] == "}":
+                    depth -= 1
+                j += 1
+            paths.append(data[i + 1:j - 1] if depth == 0 else data[i + 1:])
+            i = j
         else:
-            buf += ch
-    if buf:
-        paths.append(buf)
+            # Bare word: up to whitespace, with backslash escapes.
+            buf = []
+            while i < n and not data[i].isspace():
+                if data[i] == "\\" and i + 1 < n:
+                    buf.append(data[i + 1])
+                    i += 2
+                else:
+                    buf.append(data[i])
+                    i += 1
+            paths.append("".join(buf))
     return paths
