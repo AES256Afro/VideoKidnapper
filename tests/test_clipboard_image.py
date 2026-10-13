@@ -123,18 +123,19 @@ def test_grabclipboard_raises_returns_none(tmp_path, monkeypatch):
     assert clipboard_image.grab_clipboard_image(temp_dir=tmp_path) is None
 
 
-def test_default_temp_dir_is_app_dir(monkeypatch, tmp_path):
-    # When temp_dir is omitted, the helper uses the app's ~/.videokidnapper_temp.
-    # We redirect HOME to tmp_path so the test doesn't pollute the real home.
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows
-    # PIL must see the redirect too — Path.home() reads USERPROFILE on win.
+def test_default_save_dir_is_kept_media_folder(monkeypatch, tmp_path):
+    """A pasted bitmap used to be saved in ~/.videokidnapper_temp, which
+    is deleted on exit, so the sticker vanished from saved projects. It
+    now goes to the app's media folder, which is never cleaned up."""
+    from videokidnapper import config
+
+    monkeypatch.setattr(config, "MEDIA_DIR", tmp_path / "media")
     fake = _FakeImage()
     _patch_grabclipboard(monkeypatch, fake)
     result = clipboard_image.grab_clipboard_image()
     assert result is not None
-    # Parent dir name matches the app's convention.
-    assert result.parent.name == ".videokidnapper_temp"
+    assert result.parent == tmp_path / "media" / "Pasted images"
+    assert result.parent != config.TEMP_DIR
 
 
 # ---------------------------------------------------------------------------

@@ -2,9 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 import os
 import re
+import shutil
 import threading
+from pathlib import Path
 
-from videokidnapper.config import SUPPORTED_PLATFORMS, TEMP_DIR
+from videokidnapper import config
+from videokidnapper.config import SUPPORTED_PLATFORMS
 from videokidnapper.utils.ffmpeg_check import find_ffmpeg
 
 
@@ -55,8 +58,31 @@ def detect_platform(url):
 
 
 def _ensure_temp_dir():
-    TEMP_DIR.mkdir(parents=True, exist_ok=True)
-    return str(TEMP_DIR)
+    config.TEMP_DIR.mkdir(parents=True, exist_ok=True)
+    return str(config.TEMP_DIR)
+
+
+def _unique_path(path):
+    """``path``, or ``name (2).ext``, ``name (3).ext``... if it is taken."""
+    path = Path(path)
+    candidate, n = path, 2
+    while candidate.exists():
+        candidate = path.with_name(f"{path.stem} ({n}){path.suffix}")
+        n += 1
+    return candidate
+
+
+def _keep(path, name):
+    """Move a finished download into MEDIA_DIR as ``name``; return it.
+
+    Downloads are edited in place and saved projects point at them, and
+    TEMP_DIR is cleared on exit, so a finished file must not stay there.
+    An existing file of that name is never replaced.
+    """
+    config.MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    target = _unique_path(config.MEDIA_DIR / name)
+    shutil.move(str(path), str(target))
+    return str(target)
 
 
 def _build_ydl_opts(url, ffmpeg_dir, progress_hook, cookies=None):
@@ -74,7 +100,12 @@ def _build_ydl_opts(url, ffmpeg_dir, progress_hook, cookies=None):
 
     opts = {
         "format": "bv*+ba/best",
-        "outtmpl": os.path.join(str(TEMP_DIR), "%(title).80s.%(ext)s"),
+        # Partial files and the separate audio/video streams are written to
+        # TEMP_DIR; yt-dlp moves the finished file to MEDIA_DIR. Only the
+        # former is cleared on exit: the editor and saved projects use the
+        # finished file where it lands.
+        "paths": {"home": str(config.MEDIA_DIR), "temp": str(config.TEMP_DIR)},
+        "outtmpl": "%(title).80s.%(ext)s",
         "merge_output_format": "mp4",
         "progress_hooks": [progress_hook],
         "quiet": True,
@@ -184,7 +215,7 @@ def _reddit_media_url(err_msg):
 
 def _download_direct_media(media_url, progress_callback=None, cancel_event=None):
     """Fetch a direct media file (a Reddit GIF/image redirect target) over
-    plain HTTP with a browser User-Agent and save it to ``TEMP_DIR``.
+    plain HTTP with a browser User-Agent and keep it in ``MEDIA_DIR``.
 
     yt-dlp's default request gets bounced to the un-extractable /media
     HTML page; a browser User-Agent gets the real file instead. Only
@@ -210,11 +241,13 @@ def _download_direct_media(media_url, progress_callback=None, cancel_event=None)
         base, cur_ext = os.path.splitext(name)
         if cur_ext.lower() != ext:
             name = (base or "reddit_media") + ext
-        out_path = os.path.join(str(TEMP_DIR), name)
+        # Written as .part in TEMP_DIR, so an interrupted fetch is cleaned
+        # up on exit like any other partial download.
+        partial = os.path.join(str(config.TEMP_DIR), name + ".part")
 
         total = int(resp.headers.get("Content-Length") or 0)
         got = 0
-        with open(out_path, "wb") as fh:
+        with open(partial, "wb") as fh:
             while True:
                 if cancel_event is not None and cancel_event.is_set():
                     raise Exception("Download cancelled")
@@ -228,6 +261,7 @@ def _download_direct_media(media_url, progress_callback=None, cancel_event=None)
                         got / total,
                         f"Downloading... {got // (1024*1024)}MB / {total // (1024*1024)}MB",
                     )
+    out_path = _keep(partial, name)
     if progress_callback:
         progress_callback(0.95, "Processing download...")
     return out_path
@@ -479,7 +513,33 @@ def get_video_info_from_url(url, timeout=_PROBE_TIMEOUT_SECONDS):
     return result_box.get("ok", {"error": "unknown probe failure"})
 
 
+# What an unfinished download leaves behind: yt-dlp's .part / .ytdl files
+# and fragments, a merge in progress (.temp.mp4), and the separate video
+# and audio streams of a merge that never ran (.f137.mp4, .f140.m4a).
+_PARTIAL_FILE_RE = re.compile(
+    r"(\.part(-Frag\d+)?|\.ytdl|\.temp\.\w+|\.f\d+\.\w+)$", re.IGNORECASE)
+
+
 def cleanup_temp():
-    import shutil
-    if TEMP_DIR.exists():
-        shutil.rmtree(str(TEMP_DIR), ignore_errors=True)
+    """Clear partial downloads and recording frames out of TEMP_DIR.
+
+    Called on exit. It used to delete the whole folder, which is where
+    downloads were kept: closing the app deleted the video you had been
+    editing, so a saved project could not find it again. Finished files
+    now move to MEDIA_DIR, and a finished file found here (saved by an
+    older version, perhaps still used by a recovered autosave) is left
+    alone.
+    """
+    temp = config.TEMP_DIR
+    if not temp.is_dir():
+        return
+    for entry in temp.iterdir():
+        try:
+            if entry.is_dir():
+                if entry.name.startswith("record_"):
+                    shutil.rmtree(entry, ignore_errors=True)
+            elif _PARTIAL_FILE_RE.search(entry.name):
+                entry.unlink()
+        except OSError:
+            # Still open (a download running as the app closes), or gone.
+            continue
