@@ -42,7 +42,6 @@ from videokidnapper.core.preview import clear_cache
 from videokidnapper.core.screen_capture import record_screen
 from videokidnapper.ui import theme as T
 from videokidnapper.ui.editor_options import EditorOptions
-from videokidnapper.ui.export_dialog import ExportDialog
 from videokidnapper.ui.image_layers import SUPPORTED_IMAGE_EXTS, ImageLayersPanel
 from videokidnapper.ui.platform_presets import PLATFORM_CHOICES, get_preset
 from videokidnapper.ui.studio import controls as C
@@ -166,6 +165,7 @@ class TrimTab(ctk.CTkFrame):
         self.selected_image_index = None
         self.size_estimate_text = ""
         self.download_bar = None          # set by the Import workspace
+        self.export_progress = None       # set by the Export workspace
         self._state_listeners = []
         self._frame_after_id = None
         self._pending_frame_t = None
@@ -1853,8 +1853,25 @@ class TrimTab(ctk.CTkFrame):
         ranges.append((start, end))
         return ranges
 
+    def _show_export_progress(self):
+        """Bring the Export workspace's "This project" page into view."""
+        self._show_workspace("export")
+        workspace = getattr(self.app, "export_workspace", None)
+        if workspace is not None:
+            workspace.show("project")
+
     def _export(self):
         if not self.video_path:
+            return
+        panel = self.export_progress
+        if panel is None:
+            self._notify("Export isn't ready yet", "warn")
+            return
+        # Progress shows under the Export button, so go there: an export
+        # started from Edit (Ctrl+E, Quick export) is then in view too.
+        self._show_export_progress()
+        if panel.running or self.export_in_progress():
+            self._notify("An export is already running. Stop it first.", "warn")
             return
 
         preset = self.quality_var.get()
@@ -1872,9 +1889,10 @@ class TrimTab(ctk.CTkFrame):
                  and not options.get("audio_only")
 
         title_suffix = " (joined)" if concat else ""
-        dialog = ExportDialog(
-            self,
-            title=f"Exporting {len(ranges)} clip{'s' if len(ranges) != 1 else ''}{title_suffix}...",
+        # The job answers what the old progress window did, so the worker
+        # below still calls it ``dialog``.
+        dialog = panel.begin(
+            f"Exporting {len(ranges)} clip{'s' if len(ranges) != 1 else ''}{title_suffix}…",
         )
         self._notify(f"Exporting {len(ranges)} clip(s) [{preset}]{title_suffix}...", "info")
 
@@ -1920,15 +1938,26 @@ class TrimTab(ctk.CTkFrame):
                     if result:
                         produced.append(str(result))
                     else:
+                        if dialog.cancel_event.is_set():
+                            break  # Stopped; reported below.
                         if dialog.winfo_exists():
                             dialog.after(0, dialog.export_failed,
                                          f"Clip {i} failed — aborting")
+                        self._notify(f"Export failed on clip {i}", "error")
                         return
                 except Exception as e:
                     if dialog.winfo_exists():
                         dialog.after(0, dialog.export_failed, f"Error: {e}")
                         self._notify(f"Export error: {e}", "error")
                     return
+
+            if dialog.cancel_event.is_set():
+                # Clips that finished before Stop stay on disk, but they
+                # aren't the export that was asked for: not recorded.
+                if dialog.winfo_exists():
+                    dialog.after(0, dialog.export_failed, "Cancelled")
+                self._notify("Export stopped", "warn")
+                return
 
             final_path = None
             if concat and len(produced) > 1:

@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Changed
+
+- **Exporting no longer opens a separate window.** Progress, Stop and the finished file now appear right under the Export button: open the file, show it in its folder, or share it from there. While an export runs the button turns into Stop, so pressing it again can't start a second export. Quick export and `Ctrl+E` take you to Export so you can watch it.
+
 ### Fixed
 
 - **Captions and stickers appeared at the wrong moment.** The editor times them on the full video, but the export counted from the start of the clip, so any clip that did not start at 0:00 showed them late or not at all. They now appear exactly where the preview shows them, at any speed, and a motion-tracked caption follows the same path.
