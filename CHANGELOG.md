@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Changed
+
+- **Smooth scrubbing.** Dragging the playhead no longer freezes the window while each frame is fetched: frames load in the background and show as they arrive. In a test drag across a 1080p clip the window was unresponsive for 3.7 seconds in total before, and 0.2 seconds now. Loading a clip also shows the window sooner.
+- **Faster timeline and much less memory.** The filmstrip under the timeline loads about twice as fast and uses a few hundred kilobytes instead of up to 800 MB for 4K video, because it now fetches small frames several at a time instead of full-size frames one by one. The preview's frame cache is now capped by memory as well as by count. The waveform for an hour-long video is drawn in a fraction of a second instead of several seconds. Loading a clip no longer asks ffprobe about the same file eight times.
+
 ### Fixed
 
 - **Captions and stickers appeared at the wrong moment.** The editor times them on the full video, but the export counted from the start of the clip, so any clip that did not start at 0:00 showed them late or not at all. They now appear exactly where the preview shows them, at any speed, and a motion-tracked caption follows the same path.
