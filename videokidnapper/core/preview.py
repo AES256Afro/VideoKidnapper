@@ -89,6 +89,11 @@ def get_frame_at(video_path, timestamp_seconds, cache_key=None, max_height=None)
     return frame
 
 
+def peek_frame(video_path, timestamp_seconds):
+    """The cached full frame at ``timestamp_seconds``, or None. Never runs ffmpeg."""
+    return _cache_get((str(video_path), round(timestamp_seconds, 2), None))
+
+
 def extract_thumbnail_strip(video_path, duration, count=10, height=None):
     """``count`` frames spread evenly over ``duration``, in order.
 

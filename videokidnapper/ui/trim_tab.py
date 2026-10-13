@@ -794,7 +794,7 @@ class TrimTab(ctk.CTkFrame):
         def run():
             self._frame_after_id = None
             if self._pending_frame_t is not None and self.video_path:
-                self.player.show_frame(self._pending_frame_t)
+                self.player.request_frame(self._pending_frame_t)
 
         self._frame_after_id = self.after(_FRAME_COALESCE_MS, run)
 
@@ -1031,17 +1031,30 @@ class TrimTab(ctk.CTkFrame):
         name = os.path.basename(path)
         self.file_label.configure(text=name if len(name) <= 24 else name[:21] + "…")
         self.file_meta.configure(text=" · ".join(parts))
-        try:
+        # The card's thumbnail is fetched small and off the Tk thread: it
+        # was a second full-size frame, fetched while the window waited.
+        timestamp = min(1.0, info.get("duration", 0) / 2)
+
+        def fetch():
             from videokidnapper.core.preview import get_frame_at
-            frame = get_frame_at(path, min(1.0, info.get("duration", 0) / 2))
+            try:
+                frame = get_frame_at(path, timestamp, max_height=72)
+                if frame is not None:
+                    frame = frame.copy()
+                    frame.thumbnail((64, 36))
+            except Exception:
+                return
             if frame is not None:
-                frame = frame.copy()
-                frame.thumbnail((64, 36))
-                self._media_thumb = ctk.CTkImage(light_image=frame, dark_image=frame,
-                                                 size=frame.size)
-                self.media_thumb.configure(image=self._media_thumb)
-        except Exception:
-            pass
+                self._post(show, frame)
+
+        def show(frame):
+            if path != self.video_path or not self.media_thumb.winfo_exists():
+                return
+            self._media_thumb = ctk.CTkImage(light_image=frame, dark_image=frame,
+                                             size=frame.size)
+            self.media_thumb.configure(image=self._media_thumb)
+
+        threading.Thread(target=fetch, daemon=True, name="media-card-thumb").start()
 
     def _load_path(self, path, preserve_project=False):
         if not preserve_project and not self._prepare_to_replace_project():
