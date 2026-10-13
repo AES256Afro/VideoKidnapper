@@ -1181,9 +1181,33 @@ class TrimTab(ctk.CTkFrame):
 
     # ------------------------------------------------------------------
     def _auto_caption(self):
+        """Open "Captions from speech" in the Inspector's Text tab.
+
+        The model choice used to be a small window; it now sits inline,
+        with its own Generate button (see ``generate_captions``).
+        """
+        self._show_workspace("edit")
+        self.inspector.show("text")
+        self.inspector.pages["text"].show_speech()
+
+    def _speech_box(self):
+        inspector = getattr(self, "inspector", None)
+        page = inspector.pages.get("text") if inspector is not None else None
+        return getattr(page, "speech", None)
+
+    def captions_in_progress(self):
+        thread = getattr(self, "_captions_thread", None)
+        return bool(thread and thread.is_alive())
+
+    def generate_captions(self, model_size):
         """Run Whisper over the selection and import the result as captions."""
+        if self.captions_in_progress():
+            return
+        box = self._speech_box()
         if not self.video_path:
             self._notify("Load a video first", "warn")
+            if box is not None:
+                box.set_result("Open a video first.", "warn")
             return
         # Late-import so the app still runs when faster-whisper isn't installed.
         from videokidnapper.core import whisper_captions
@@ -1194,95 +1218,108 @@ class TrimTab(ctk.CTkFrame):
                 "Install with:  pip install faster-whisper",
                 "error",
             )
+            if box is not None:
+                box.set_result("This needs faster-whisper. Install it with:  "
+                               "pip install faster-whisper", "error")
             return
+        if model_size not in whisper_captions.MODEL_SIZES:
+            model_size = "base"
+        settings.set("whisper_model", model_size)
+        self._run_whisper_in_background(model_size)
 
-        # Small dialog: pick model size. Larger = slower + more accurate.
-        dialog = ctk.CTkToplevel(self)
-        dialog.title("Captions from speech")
-        dialog.geometry("380x220")
-        dialog.resizable(False, False)
-        dialog.configure(fg_color=T.BG_BASE)
-        dialog.transient(self.winfo_toplevel())
-        dialog.grab_set()
-
-        card = ctk.CTkFrame(
-            dialog, fg_color=T.BG_SURFACE,
-            border_width=1, border_color=T.BORDER,
-            corner_radius=T.RADIUS_LG,
-        )
-        card.pack(fill="both", expand=True, padx=14, pady=14)
-
-        ctk.CTkLabel(
-            card, text="Write captions from the speech",
-            font=T.font(T.SIZE_LG, "bold"), text_color=T.TEXT,
-        ).pack(pady=(16, 8))
-
-        model_var = ctk.StringVar(value="base")
-        row = ctk.CTkFrame(card, fg_color="transparent")
-        row.pack(pady=4)
-        ctk.CTkLabel(
-            row, text="Accuracy model", font=T.font(T.SIZE_MD),
-            text_color=T.TEXT_MUTED,
-        ).pack(side="left", padx=(0, 8))
-        C.option_menu(row, list(whisper_captions.MODEL_SIZES),
-                      variable=model_var, width=110).pack(side="left")
-
-        ctk.CTkLabel(
-            card,
-            text=(
-                "Transcribes the selection only.\n"
-                "The first run downloads the model (~75 MB for base)."
-            ),
-            font=T.font(T.SIZE_SM), text_color=T.TEXT_MUTED,
-            justify="center",
-        ).pack(pady=(8, 4))
-
-        def start():
-            model_size = model_var.get()
-            dialog.destroy()
-            self._run_whisper_in_background(model_size)
-
-        btns = ctk.CTkFrame(card, fg_color="transparent")
-        btns.pack(pady=10)
-        button(btns, "Start", variant="primary", width=120,
-               command=start).pack(side="left", padx=4)
-        button(btns, "Cancel", variant="secondary", width=120,
-               command=dialog.destroy).pack(side="left", padx=4)
+    def stop_captions(self):
+        cancel = getattr(self, "_captions_cancel", None)
+        if cancel is None or not self.captions_in_progress():
+            return
+        cancel.set()
+        box = self._speech_box()
+        if box is not None:
+            box.set_stopping()
 
     def _run_whisper_in_background(self, model_size):
         """Worker thread: transcribe then marshal the result back to Tk."""
         from videokidnapper.core import whisper_captions
 
+        video = self.video_path
         start, end = self.timeline.get_values()
         self._notify(f"Transcribing with Whisper ({model_size})…", "info")
         self.captions_btn.configure(state="disabled")
+        cancel = threading.Event()
+        self._captions_cancel = cancel
+        page = self.inspector.pages.get("text")
+        if page is not None:
+            # Keep it open for the outcome, even once captions arrive.
+            page.show_speech()
+            page.speech.set_running(model_size)
+
+        def progress(fraction):
+            try:
+                self.after(0, self._on_captions_progress, fraction)
+            except Exception:
+                pass  # the window is closing
 
         def worker():
             try:
                 entries = whisper_captions.transcribe(
-                    self.video_path,
+                    video,
                     model_size=model_size,
                     start=start, end=end,
+                    progress_callback=progress,
+                    cancel_event=cancel,
                 )
             except Exception as exc:
                 self.after(0, self._on_captions_failed, str(exc))
                 return
-            self.after(0, self._on_captions_done, entries)
+            if cancel.is_set():
+                self.after(0, self._on_captions_stopped)
+            else:
+                self.after(0, self._on_captions_done, entries, video)
 
-        threading.Thread(target=worker, daemon=True).start()
+        self._captions_thread = threading.Thread(target=worker, daemon=True)
+        self._captions_thread.start()
 
-    def _on_captions_done(self, entries):
+    def _on_captions_progress(self, fraction):
+        box = self._speech_box()
+        if box is not None:
+            box.set_progress(fraction)
+
+    def _on_captions_done(self, entries, video=None):
         self.captions_btn.configure(state="normal")
+        box = self._speech_box()
+        if video is not None and video != self.video_path:
+            # Another video was opened mid-run; these lines belong to the
+            # old one.
+            message = ("A different video was opened while transcribing, "
+                       "so the captions were dropped.")
+            self._notify(message, "warn")
+            if box is not None:
+                box.set_result(message, "warn")
+            return
         if not entries:
             self._notify("Whisper produced no text (silent clip?)", "warn")
+            if box is not None:
+                box.set_result("No speech found in the selection.", "warn")
             return
         self.text_layers.import_srt_layers(srt_to_text_layers(entries))
         self.select_layer("text", 0)
         self._notify(f"Imported {len(entries)} caption line(s)", "success")
+        if box is not None:
+            box.set_result(f"Added {len(entries)} caption"
+                           f"{'s' if len(entries) != 1 else ''}.", "success")
+
+    def _on_captions_stopped(self):
+        self.captions_btn.configure(state="normal")
+        self._notify("Captions from speech stopped", "info")
+        box = self._speech_box()
+        if box is not None:
+            box.set_result("Stopped. No captions were added.")
 
     def _on_captions_failed(self, error):
         self.captions_btn.configure(state="normal")
         self._notify(f"Auto-captions failed: {error}", "error")
+        box = self._speech_box()
+        if box is not None:
+            box.set_result(f"Couldn't transcribe: {error}", "error")
 
     def _import_srt(self):
         if not self.video_path:

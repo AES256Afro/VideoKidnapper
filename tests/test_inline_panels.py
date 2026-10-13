@@ -5,6 +5,7 @@
 - Export progress, now under the Export button (running, done, failed,
   stopped), and the export worker reporting to it.
 - The colour palette that replaced the operating system's colour dialog.
+- "Captions from speech" in the Text tab, wired to the transcriber.
 
 The editor methods run against small stand-ins with the slow parts
 stubbed, so nothing is encoded, transcribed or recorded. The one Tk root
@@ -25,6 +26,7 @@ from videokidnapper.ui.studio.color_palette import (  # noqa: E402
 )
 from videokidnapper.ui.trim_tab import TrimTab  # noqa: E402
 from videokidnapper.utils import settings  # noqa: E402
+from videokidnapper.utils.srt_parser import srt_to_text_layers  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -410,5 +412,140 @@ def test_same_colour_does_not_fire_a_change(text_layer):
     text_layer.color_var.trace_add("write", lambda *_a: fired.append(1))
     text_layer.set_color("#ff8800")
     assert fired == []
+
+
+# ---------------------------------------------------------------------------
+# Captions from speech
+# ---------------------------------------------------------------------------
+
+def _captions_editor(root):
+    page = SimpleNamespace(speech=None, opened=0)
+    page.show_speech = lambda: setattr(page, "opened", page.opened + 1)
+    editor = SimpleNamespace(
+        video_path="clip.mp4", notes=[], imported=[], selected=[],
+        timeline=SimpleNamespace(get_values=lambda: (2.0, 5.0)),
+        captions_btn=SimpleNamespace(configure=lambda **_kw: None),
+        inspector=SimpleNamespace(pages={"text": page}),
+        after=root.after, page=page,
+    )
+    editor.text_layers = SimpleNamespace(import_srt_layers=editor.imported.extend)
+    editor.select_layer = lambda kind, index: editor.selected.append((kind, index))
+    editor._notify = lambda message, level="info": editor.notes.append((level, message))
+    return _bind(editor, "generate_captions", "stop_captions", "captions_in_progress",
+                 "_speech_box", "_run_whisper_in_background", "_on_captions_progress",
+                 "_on_captions_done", "_on_captions_stopped", "_on_captions_failed")
+
+
+def _speech_box(root, editor):
+    from videokidnapper.ui.studio.inspector import SpeechCaptions
+
+    box = SpeechCaptions(root, editor)
+    editor.page.speech = box
+    return box
+
+
+@pytest.fixture
+def whisper(monkeypatch):
+    from videokidnapper.core import whisper_captions
+
+    monkeypatch.setattr(whisper_captions, "is_available", lambda: True)
+    return whisper_captions
+
+
+def test_chosen_model_reaches_the_transcriber(root, whisper, monkeypatch):
+    calls = []
+    entries = [{"start": 2.5, "end": 3.5, "text": "hello there"}]
+
+    def fake_transcribe(video, model_size="base", start=None, end=None,
+                        progress_callback=None, cancel_event=None, **_kw):
+        calls.append(dict(video=video, model_size=model_size, start=start, end=end))
+        progress_callback(0.5)
+        return entries
+
+    monkeypatch.setattr(whisper, "transcribe", fake_transcribe)
+    editor = _captions_editor(root)
+    box = _speech_box(root, editor)
+    try:
+        box.model_var.set("small")
+        box.go_btn.invoke()
+        assert box.running
+        assert box.go_btn.cget("text") == "Stop"
+        _run_until(root, lambda: not box.running)
+
+        assert calls == [dict(video="clip.mp4", model_size="small", start=2.0, end=5.0)]
+        assert editor.imported == srt_to_text_layers(entries)
+        assert editor.selected == [("text", 0)]
+        assert box.status.cget("text") == "Added 1 caption."
+        assert box.go_btn.cget("text") == "Generate captions"
+        assert editor.page.opened == 1, "the box stays open for the outcome"
+        # Remembered for next time.
+        assert settings.get("whisper_model") == "small"
+    finally:
+        box.destroy()
+
+
+def test_saved_model_is_preselected_and_bad_values_fall_back(root):
+    from videokidnapper.ui.studio.inspector import SpeechCaptions
+
+    editor = _captions_editor(root)
+    settings.set("whisper_model", "tiny")
+    box = SpeechCaptions(root, editor)
+    assert box.model_var.get() == "tiny"
+    box.destroy()
+    settings.set("whisper_model", "enormous")
+    box = SpeechCaptions(root, editor)
+    assert box.model_var.get() == "base"
+    box.destroy()
+
+
+def test_missing_faster_whisper_is_explained_inline(root, monkeypatch):
+    from videokidnapper.core import whisper_captions
+
+    monkeypatch.setattr(whisper_captions, "is_available", lambda: False)
+    monkeypatch.setattr(whisper_captions, "transcribe",
+                        lambda *a, **k: pytest.fail("must not transcribe"))
+    editor = _captions_editor(root)
+    box = _speech_box(root, editor)
+    try:
+        box.go_btn.invoke()
+        assert not box.running
+        assert "pip install faster-whisper" in box.status.cget("text")
+    finally:
+        box.destroy()
+
+
+def test_stop_discards_the_partial_transcript(root, whisper, monkeypatch):
+    def slow_transcribe(*_a, cancel_event=None, **_kw):
+        cancel_event.wait(5)
+        return [{"start": 2.0, "end": 2.5, "text": "half a sentence"}]
+
+    monkeypatch.setattr(whisper, "transcribe", slow_transcribe)
+    editor = _captions_editor(root)
+    box = _speech_box(root, editor)
+    try:
+        box.go_btn.invoke()
+        box.go_btn.invoke()  # Stop
+        assert box.go_btn.cget("text") == "Stopping…"
+        _run_until(root, lambda: not box.running)
+        assert editor.imported == []
+        assert box.status.cget("text") == "Stopped. No captions were added."
+    finally:
+        box.destroy()
+
+
+def test_a_failed_transcription_shows_the_error(root, whisper, monkeypatch):
+    def broken(*_a, **_kw):
+        raise RuntimeError("ffmpeg failed to extract audio")
+
+    monkeypatch.setattr(whisper, "transcribe", broken)
+    editor = _captions_editor(root)
+    box = _speech_box(root, editor)
+    try:
+        box.go_btn.invoke()
+        _run_until(root, lambda: not box.running)
+        assert "ffmpeg failed to extract audio" in box.status.cget("text")
+        assert editor.imported == []
+    finally:
+        box.destroy()
 
 
