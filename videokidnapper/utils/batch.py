@@ -9,6 +9,7 @@ standing up a Tk root. The tab itself only wires these to widgets.
 
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -106,6 +107,23 @@ def is_supported_video(path: str | Path) -> bool:
     return ext in SUPPORTED_VIDEO_EXTENSIONS
 
 
+def _output_key(path: str | Path) -> str:
+    """How two planned outputs are compared: case-insensitively.
+
+    Windows and macOS file systems treat ``Clip_batch.mp4`` and
+    ``clip_batch.mp4`` as one file, so ``D:/cam/Clip.mp4`` and
+    ``E:/phone/clip.mp4`` were both planned to it and the second export
+    overwrote the first. Where case does matter, a false match only
+    costs a ``_1`` suffix.
+    """
+    return os.path.normpath(str(path)).casefold()
+
+
+def _input_key(path: str | Path) -> str:
+    """How two inputs are compared: as the platform's file system does."""
+    return os.path.normcase(os.path.normpath(str(path)))
+
+
 def plan_output_path(
     input_path: str | Path,
     output_dir: str | Path,
@@ -118,9 +136,9 @@ def plan_output_path(
     ``my_video_batch.mp4``. On collision (another job in the same batch
     already claimed the name, or the file already exists on disk), a
     numeric ``_1`` / ``_2`` suffix is appended until a free slot is
-    found. ``taken`` is the set of previously-planned paths in the
-    current batch — pass the same set to every call for a consistent
-    plan across the whole queue.
+    found. ``taken`` collects the plan of the current batch (as
+    case-insensitive keys); pass the same set to every call for a
+    consistent plan across the whole queue.
     """
     out_dir = Path(output_dir)
     stem = Path(input_path).stem
@@ -128,10 +146,10 @@ def plan_output_path(
     candidate = out_dir / f"{stem}_batch.{ext}"
     counter = 1
     taken = taken if taken is not None else set()
-    while str(candidate) in taken or candidate.exists():
+    while _output_key(candidate) in taken or candidate.exists():
         candidate = out_dir / f"{stem}_batch_{counter}.{ext}"
         counter += 1
-    taken.add(str(candidate))
+    taken.add(_output_key(candidate))
     return candidate
 
 
@@ -165,17 +183,17 @@ def extend_batch_jobs(
     are silently dropped. Index values are recomputed so the returned
     list stays contiguous.
     """
-    seen_inputs: set[str] = {job.input_path for job in existing}
-    taken_outputs: set[str] = {job.output_path for job in existing}
+    seen_inputs: set[str] = {_input_key(job.input_path) for job in existing}
+    taken_outputs: set[str] = {_output_key(job.output_path) for job in existing}
     # Copy so callers can safely mutate their own list without feedback.
     jobs: list[BatchJob] = list(existing)
     for raw in input_paths:
         path = str(Path(raw))
-        if path in seen_inputs:
+        if _input_key(path) in seen_inputs:
             continue
         if not is_supported_video(path):
             continue
-        seen_inputs.add(path)
+        seen_inputs.add(_input_key(path))
         output = plan_output_path(path, output_dir, extension, taken=taken_outputs)
         jobs.append(BatchJob(
             input_path=path,
@@ -186,6 +204,30 @@ def extend_batch_jobs(
     for i, job in enumerate(jobs):
         job.index = i
     return jobs
+
+
+def replan_outputs(
+    jobs: list[BatchJob],
+    output_dir: str | Path,
+    extension: str,
+) -> bool:
+    """Re-plan every unfinished job's output for the current settings.
+
+    Paths used to be fixed when a file was added, so changing "Save to"
+    or the format afterwards was ignored (or, for the format, just
+    swapped the extension, which could land on an existing file). Done
+    jobs keep theirs: the file is there. Returns True if anything moved.
+    """
+    taken = {_output_key(job.output_path) for job in jobs if job.status == STATUS_DONE}
+    changed = False
+    for job in jobs:
+        if job.status == STATUS_DONE:
+            continue
+        planned = str(plan_output_path(job.input_path, output_dir, extension, taken=taken))
+        if planned != job.output_path:
+            job.output_path = planned
+            changed = True
+    return changed
 
 
 def summarise(jobs: list[BatchJob]) -> str:
