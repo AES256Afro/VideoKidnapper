@@ -60,7 +60,7 @@
   <p>VideoKidnapper makes outbound connections only to servers you direct it to, or to well-known public services required for a core feature:</p>
   <ul>
     <li><strong>User-initiated downloads.</strong> When you paste a URL and click Download, the app (via <code>yt-dlp</code>) contacts the host of that URL directly. No VideoKidnapper server sits in the middle — none exists.</li>
-    <li><strong>Update check.</strong> Once per launch, the app makes an anonymous query to the public GitHub API to see whether a newer version exists. No identifying information is sent, and the check can be disabled in the Setup dialog.</li>
+    <li><strong>Update check.</strong> Once per launch, the app makes an anonymous query to the public GitHub API to see whether a newer version exists. No identifying information is sent, and the check can be turned off by setting <code>"auto_update_check": false</code> in the settings file (<code>.videokidnapper_settings.json</code> in your home folder).</li>
     <li><strong>Optional AI captions (opt-in, off by default).</strong> If you install the optional <code>faster-whisper</code> extra, the speech model is downloaded from Hugging Face on first use and cached. Your audio never leaves your computer — transcription runs entirely offline.</li>
   </ul>
   <p>No other network activity exists in the codebase — it's <a href="https://github.com/AES256Afro/VideoKidnapper">open source</a>, so you can audit this yourself.</p>

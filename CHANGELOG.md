@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Added
+
+- **Updates install themselves on Windows.** When a new version is out, the bar at the top of the window asks whether to **Restart to update** (Setup, winget and portable installs). The new version downloads from the GitHub release with a progress bar in that same bar, is checked against the SHA-256 checksum GitHub publishes, and after you're asked to save your project the app closes, installs it and opens again. Setup and winget installs upgrade silently in the same per-user or all-users scope they were installed with (an all-users install still shows the Windows admin prompt); the portable build swaps its own .exe. You can cancel the download at any time, and the first start after an update says which version you're on. This works from 1.9.2 onward: updating to 1.9.2 itself still goes through the release page once.
+
 ### Changed
 
 - **One window.** Recovering unsaved work, saving before you close or open another project, stopping an export that is still running, and restarting after a theme change are now asked in a bar at the top of the window instead of separate popups. The bar floats over the top edge, so nothing else moves, and you can keep working while it waits. Closing the recovery bar with ✕, or opening another video first, keeps the unsaved work for next time.
@@ -15,6 +19,7 @@ All notable changes to this project are documented here. The format is based on 
 - **Text colour no longer opens the system colour picker.** The Text tab shows the eight preset swatches and a box for any hex code, such as `#FF8800`, next to the current colour.
 - **Setup and components opens inside the window.** It used to open a second window. It is now a page in the main window, like the debug log: the prerequisites on the left, the install output on the right, all without scrolling. **Back** or **Esc** returns to the step you were on. An install keeps going if you leave the page, and the page shows how it went when you come back. On first run, **Review details** opens the same page in place of the setup screen.
 - **Keyboard shortcuts open inside the window.** Press **?**, or the **?** button in the header, to see every shortcut on one page. Press **?** again, **Esc** or **Back** to return to where you were. A **?** typed into a caption or any other text box is still just a question mark.
+- **The update offer is in the main window too.** Store, pip and release-page installs see their update route in the bar at the top instead of a separate window.
 - **Smooth scrubbing.** Dragging the playhead no longer freezes the window while each frame is fetched: frames load in the background and show as they arrive. In a test drag across a 1080p clip the window was unresponsive for 3.7 seconds in total before, and 0.2 seconds now. Loading a clip also shows the window sooner.
 - **Faster start.** The window is ready about a third sooner (2.6 s to 1.7 s on the test machine): the Export page and the Inspector's Text and Image tabs are built the first time they are used instead of at startup.
 - **Faster timeline and much less memory.** The filmstrip under the timeline loads about twice as fast and uses a few hundred kilobytes instead of up to 800 MB for 4K video, because it now fetches small frames several at a time instead of full-size frames one by one. The preview's frame cache is now capped by memory as well as by count. The waveform for an hour-long video is drawn in a fraction of a second instead of several seconds. Loading a clip no longer asks ffprobe about the same file eight times.

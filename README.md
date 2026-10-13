@@ -23,7 +23,7 @@ Grab a video from the web, cut the part you want, caption it, and export a clean
 - **Export for the platform.** Tune GIFs (dither, palette, loop) or export hardware-encoded MP4s. Reframe 16:9 to 9:16 for Shorts, Reels, and TikTok with a blurred-background fill. Speed, rotate, mute, audio-only, and colour adjustment are built in.
 - **Record your screen** straight into the editor.
 - **Save real projects.** `.vidkid` project files preserve the source link, trim ranges, crop, captions, overlays, and export choices. Autosave recovery protects work after an interrupted session, and recent projects stay one click away.
-- **Updates that fit the install.** Store installs update through the Microsoft Store; Setup, winget and portable installs open the GitHub release; pip, APT, AppImage, macOS and source installs each get the route that fits them.
+- **One-click updates on Windows.** Setup, winget and portable installs download the new version from GitHub, restart and install it themselves. Store installs update through the Microsoft Store; pip, APT, AppImage, macOS and source installs each get the route that fits them.
 - **Runs fully offline.** No upload, no account, no watermark. Open source, FFmpeg included.
 
 The app is three steps across the top of the window: **Import** brings a clip in (a file, a screen recording, or a link), **Edit** is where you trim, caption, crop and color it, and **Export** makes the MP4, GIF or MP3. Edit fits on one screen with no scrolling. VideoKidnapper also has undo and redo, project save and recovery, batch export, an export history, keyboard shortcuts (`Ctrl+S` project, `Space` play, `J`/`L` step, `I`/`O` in-out, `Q` save range, `Ctrl+E` export; `⌘` on a Mac), five themes, a CLI mode, and a [plugin API](docs/PLUGINS.md). See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what is next.
@@ -87,7 +87,7 @@ Questions like this never open a separate window. Saving before you close, stopp
 
 ![Install-aware update prompt](assets/screenshots/updates.png)
 
-When a release is available, an **Update** chip appears in the header (or use **Check for updates** in the settings menu). Microsoft Store installs update through the Store. Setup and winget installs open the GitHub release, whose Setup installer updates them in place and keeps your settings. pip and APT installs use their package manager. Portable, AppImage, macOS, and source installs open the matching release instead of replacing a running executable in place.
+When a release is available, an **Update** chip appears in the header (or use **Check for updates** in the settings menu). On Windows Setup, winget and portable installs, **Restart to update** downloads the new version from the GitHub release with a progress bar, checks it against the SHA-256 checksum GitHub publishes, asks you to save your project, then closes, installs and reopens the app. Setup and winget installs upgrade in place, in the same per-user or all-users scope they were installed with; the portable build swaps its own .exe. Microsoft Store installs update through the Store. pip and APT installs use their package manager. AppImage, macOS, and source installs open the matching release.
 
 ### Debug log
 

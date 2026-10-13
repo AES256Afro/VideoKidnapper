@@ -71,7 +71,7 @@ videokidnapper/
 │   ├── multi_range.py       # queue of trim ranges + concat toggle
 │   ├── export_options.py    # speed / rotate / aspect / color / transitions
 │   ├── setup_page.py        # FFmpeg + pip-packages auto-installer
-│   ├── update_dialog.py     # install-aware app update action
+│   ├── update_prompt.py     # install-aware update offer, in the banner
 │   ├── shortcuts_page.py    # discoverable keyboard reference
 │   ├── batch_queue.py       # batch URL download panel
 │   ├── share_panel.py       # clipboard + platform-compose-page share
