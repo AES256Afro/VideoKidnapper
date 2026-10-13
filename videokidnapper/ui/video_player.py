@@ -214,8 +214,11 @@ class VideoPlayer(ctk.CTkFrame):
                 options = dict(self._export_options_provider() or {})
             except Exception:
                 options = {}
-        # The live crop rect: settings only learn it on mouse release.
-        options["crop"] = self._crop_rect if self._crop_mode else None
+        # The player's own crop rect: settings only learn a new one on
+        # mouse release. It applies outside crop mode too. Dropping it
+        # there laid captions out on the whole frame while the export
+        # placed them inside the crop.
+        options["crop"] = self._crop_rect
         if self._crop_mode:
             # The crop tool is drawn on the unrotated source, so show that.
             options["rotate"] = 0
@@ -469,7 +472,7 @@ class VideoPlayer(ctk.CTkFrame):
         self._draw_crop_overlay()
 
     def _draw_layout_dim(self):
-        """Dim the parts of the source an aspect-preset crop discards."""
+        """Dim the parts of the source an aspect preset or crop discards."""
         self.canvas.delete("layoutdim")
         if self._crop_mode or not self._last_frame_rect:
             return  # the crop tool draws its own dimming
@@ -1135,7 +1138,11 @@ class VideoPlayer(ctk.CTkFrame):
 
     def set_crop(self, crop_rect):
         """Programmatic crop update; `crop_rect` is source-pixel dict or None."""
+        changed = crop_rect != self._crop_rect
         self._crop_rect = crop_rect
+        if changed and not self._playing:
+            # The crop reshapes the layout frame, so redraw the frame.
+            self.refresh_overlay()
         self._draw_crop_overlay()
 
     def get_crop(self):
@@ -1205,7 +1212,10 @@ class VideoPlayer(ctk.CTkFrame):
 
     def _draw_crop_overlay(self):
         self.canvas.delete("crop")
-        if not self._crop_rect or not self._last_frame_rect:
+        # Only the crop tool draws the rectangle. Outside it the frame
+        # itself shows the crop (dimmed edges, or the cropped output when
+        # rotated), and source coordinates no longer match the display.
+        if not self._crop_mode or not self._crop_rect or not self._last_frame_rect:
             return
         cr = self._crop_rect
         x1, y1 = self._source_to_canvas(cr["x"], cr["y"])

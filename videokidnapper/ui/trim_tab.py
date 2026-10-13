@@ -499,9 +499,12 @@ class TrimTab(ctk.CTkFrame):
     # Providers and change handlers
     # ------------------------------------------------------------------
     def _current_image_layers(self):
-        # Only layers whose path is a real file — the ffmpeg export path
-        # applies the same filter, so the preview matches.
-        return self.image_layers.get_all_layers()
+        # include_empty keeps the list index aligned with panel.layers,
+        # as for captions: the player's drag and click callbacks address
+        # rows by it. Filtering out missing files here made dragging one
+        # sticker move another. The player skips files it cannot load,
+        # so the preview still matches the export, which drops them too.
+        return self.image_layers.get_all_layers(include_empty=True)
 
     def _current_text_layers(self):
         # include_empty keeps the list index aligned with panel.layers so

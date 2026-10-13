@@ -19,6 +19,11 @@ All notable changes to this project are documented here. The format is based on 
 - **Pausing could close the app.** Pausing playback, or anything that stops it (clicking the timeline, stepping with J or L, opening another file), could crash the app without a word. Closing the window while a clip played left the sound running and crashed on the way out. Playback now stops cleanly.
 - **Videos without sound would not play.** Screen recordings, GIFs and other silent videos stopped a fraction of a second after pressing Play. They now play to the end, as does a clip whose sound ends before its picture.
 - **Playback ignored rotation, frame shape and stickers.** While a clip played, the preview showed the original video without the rotation, frame shape, crop, blur fill or image overlays, and stayed that way after pausing, so a caption dragged just after pausing landed in the wrong place. Playback now shows what the export will.
+- **Dragging the in or out point on a zoomed-in timeline went the wrong way.** The timeline scrolled under the mouse while you dragged, so the edge ran off, often towards the start of the video. The edge now follows the mouse.
+- **The preview ignored a finished crop.** After cropping by hand, the preview laid captions out on the whole picture while the export placed them inside the crop. The preview now shows the cropped frame, so captions land where they will be exported.
+- **Dragging a sticker could move a different one.** If an earlier image overlay's file had gone missing, dragging the visible sticker moved the missing one instead. The sticker you drag is now the one that moves.
+- **"Follow an object" reset the caption's look.** After tracking, the caption went back to the default size, color, box, outline and shadow. It now keeps its style.
+- **Dragging the in or out point lagged** once ranges were saved, up to a second per mouse movement with ten ranges, because the hidden Export page rebuilt its range list on every move. It now updates when you open it.
 
 ## [1.9.1] — 2026-10-07
 
