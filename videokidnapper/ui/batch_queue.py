@@ -182,7 +182,13 @@ class BatchPanel(ctk.CTkFrame):
                 continue
 
             self.after(0, self._set_row, row, "Downloading...", T.ACCENT)
-            result = download_video(row["url"], cookies=cookies, cancel_event=self._cancel)
+            try:
+                result = download_video(row["url"], cookies=cookies,
+                                        cancel_event=self._cancel)
+            except Exception as exc:  # noqa: BLE001 - shown on the row
+                # Uncaught, it ended this thread with _running still set:
+                # Download all stayed disabled until a restart.
+                result = {"path": None, "error": str(exc) or type(exc).__name__}
             if self._cancel.is_set():
                 self.after(0, self._set_row, row, "Cancelled", T.TEXT_DIM)
                 continue
