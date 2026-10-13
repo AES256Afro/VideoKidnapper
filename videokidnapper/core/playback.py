@@ -191,6 +191,8 @@ class AudioVideoPlayer:
         # "video"). The clip has ended when both have run out.
         self._pending = set()
         self._lock = threading.Lock()
+        # Held while a frame is handed to render_callback; see stop().
+        self._render_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     def is_running(self):
@@ -262,6 +264,10 @@ class AudioVideoPlayer:
         # calls stop() to tear down any prior session; on a fresh player
         # (nothing running) that must not spuriously notify the UI.
         if was_running:
+            # Let a frame being handed over right now finish; none starts
+            # after this (see _video_worker).
+            with self._render_lock:
+                pass
             self._fire_finished("stopped")
         if wait:
             for thread in (self._audio_thread, self._video_thread):
@@ -461,11 +467,17 @@ class AudioVideoPlayer:
                     img = Image.frombytes("RGB", (w, h), bytes(raw))
                 except Exception:
                     continue
-                try:
-                    self.render_callback(img, frame_t)
-                except Exception:
-                    # A single bad frame shouldn't end playback.
-                    pass
+                with self._render_lock:
+                    # Checked again under the lock stop() takes before it
+                    # reports "stopped", so no frame lands after that and
+                    # replaces the paused picture.
+                    if stop_event.is_set():
+                        break
+                    try:
+                        self.render_callback(img, frame_t)
+                    except Exception:
+                        # A single bad frame shouldn't end playback.
+                        pass
         except Exception:
             pass
         finally:
