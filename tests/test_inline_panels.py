@@ -245,7 +245,8 @@ def test_export_worker_reports_to_the_inline_panel(root, panel, tmp_path, monkey
     assert [c[:2] for c in calls] == [(0.0, 1.0), (2.0, 3.0)]
     assert all(c[2] is editor._export_cancel for c in calls)
     assert panel.output_path and panel.output_path.endswith(".mp4")
-    assert editor.history == [panel.output_path]
+    # Not joined, so both clips are kept and both go into History.
+    assert len(editor.history) == 2 and editor.history[-1] == panel.output_path
 
 
 def test_export_pressed_while_one_runs_starts_nothing(root, panel, tmp_path, monkeypatch):
@@ -425,19 +426,20 @@ def _captions_editor(root):
     page = SimpleNamespace(speech=None, opened=0)
     page.show_speech = lambda: setattr(page, "opened", page.opened + 1)
     editor = SimpleNamespace(
-        video_path="clip.mp4", notes=[], imported=[], selected=[],
+        video_path="clip.mp4", video_info={}, notes=[], imported=[], selected=[],
         timeline=SimpleNamespace(get_values=lambda: (2.0, 5.0)),
         captions_btn=SimpleNamespace(configure=lambda **_kw: None),
         inspector=SimpleNamespace(pages={"text": page}),
         after=root.after, page=page,
     )
-    editor.text_layers = SimpleNamespace(import_srt_layers=editor.imported.extend)
+    editor.text_layers = SimpleNamespace(import_srt_layers=editor.imported.extend,
+                                         layers=[])
     editor.select_layer = lambda kind, index: editor.selected.append((kind, index))
     editor._notify = lambda message, level="info": editor.notes.append((level, message))
     return _bind(editor, "generate_captions", "stop_captions", "captions_in_progress",
                  "_speech_box", "_run_whisper_in_background", "_on_captions_progress",
                  "_on_captions_done", "_on_captions_stopped", "_on_captions_failed",
-                 "_post")
+                 "_post", "_add_captions")
 
 
 def _speech_box(root, editor):

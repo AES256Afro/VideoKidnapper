@@ -670,12 +670,16 @@ class VideoPlayer(ctk.CTkFrame):
                 th = layout[2]
 
             keyframes = layer.get("keyframes") or []
+            path_xy = None
             if keyframes:
                 # Motion path: the SAME interpolation the export compiles
                 # into drawtext expressions, evaluated at this frame time.
+                # None when no keyframe is usable (a damaged project), and
+                # then the static position applies, as in the export.
                 from videokidnapper.utils.keyframes import position_at
-                kx, ky = position_at(keyframes, timestamp)
-                x, y = int(round(kx)), int(round(ky))
+                path_xy = position_at(keyframes, timestamp)
+            if path_xy is not None:
+                x, y = int(round(path_xy[0])), int(round(path_xy[1]))
             else:
                 x, y = _resolve_position(
                     layer.get("position", ""), w, h, tw, th, pad=20,
