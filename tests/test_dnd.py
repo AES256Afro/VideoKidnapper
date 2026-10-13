@@ -1,5 +1,9 @@
 # SPDX-FileCopyrightText: 2026 AES256Afro <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
+import tkinter
+
+import pytest
+
 from videokidnapper.utils.dnd import parse_dnd_files
 
 
@@ -30,8 +34,39 @@ def test_windows_backslashes_preserved():
 
 
 def test_braces_inside_name_survive():
-    # Edge case: a filename with unbalanced braces — current parser treats
-    # the first `{` as wrapper, then closes on the first `}`. Good enough
-    # for the real world.
-    out = parse_dnd_files("{C:/weird{name}.mp4}")
-    assert out[0] == "C:/weird{name"
+    assert parse_dnd_files("{C:/weird{name}.mp4}") == ["C:/weird{name}.mp4"]
+    assert parse_dnd_files("{C:/Videos/Take {2}.mp4} C:/b.mp4") == [
+        "C:/Videos/Take {2}.mp4", "C:/b.mp4"]
+
+
+def test_bare_word_escapes():
+    # Tcl escapes a lone brace in a bare word instead of bracing it.
+    assert parse_dnd_files("C:/odd\\{brace.mp4") == ["C:/odd{brace.mp4"]
+
+
+@pytest.fixture(scope="module")
+def tcl():
+    # One interpreter for the module. Starting one sometimes fails to read
+    # Tcl's own init.tcl on a busy Windows machine (several test runs at
+    # once); retry, then skip rather than report a product failure.
+    import time
+    for attempt in range(5):
+        try:
+            return tkinter.Tcl()
+        except tkinter.TclError as exc:
+            error = exc
+            time.sleep(0.2 * (attempt + 1))
+    pytest.skip(f"Tcl would not start: {error}")
+
+
+@pytest.mark.parametrize("name", [
+    "C:/Videos/Take {2}.mp4", "C:/odd{brace.mp4", "C:/a b/x}.mp4",
+    "C:/plain.mp4", "C:/my video.mp4", "D:/x/{nested {deep}} y.mov",
+])
+def test_fallback_matches_tcl(name, tcl):
+    # The string form Tcl gives a two-item list, as tkdnd builds its payload.
+    tcl.call("set", "files", (name, "C:/second file.mp4"))
+    payload = tcl.eval("string cat $files")
+    expected = [name, "C:/second file.mp4"]
+    assert parse_dnd_files(payload) == expected
+    assert parse_dnd_files(payload, splitlist=tcl.splitlist) == expected

@@ -52,18 +52,16 @@ def _build_crop_filter(crop, info):
     that don't fit inside the video. Stale crops (e.g. set on a previous
     video with different dimensions) would otherwise crash ffmpeg.
     """
-    if not crop:
+    # The same clamp the preview's frame geometry uses, so a crop the
+    # export drops (say a hand-edited "w": "wide") is one the preview
+    # drops too, and the aspect preset applies in both.
+    from videokidnapper.core.frame_geometry import _crop_box
+
+    box = _crop_box(crop, coerce_int(info.get("width", 0)),
+                    coerce_int(info.get("height", 0)))
+    if box is None:
         return None
-    vw = int(info.get("width", 0))
-    vh = int(info.get("height", 0))
-    if vw < 2 or vh < 2:
-        return None
-    w = int(max(2, min(crop.get("w", vw), vw)))
-    h = int(max(2, min(crop.get("h", vh), vh)))
-    x = int(max(0, min(crop.get("x", 0), vw - w)))
-    y = int(max(0, min(crop.get("y", 0), vh - h)))
-    if w < 2 or h < 2:
-        return None
+    x, y, w, h = box
     return f"crop={w}:{h}:{x}:{y}"
 
 
@@ -78,12 +76,25 @@ def _build_rotate_filter(rotate):
     return None
 
 
+def coerce_speed(speed):
+    """The playback rate an export uses: a positive float in 0.1–100.
+
+    One parser for the video ``setpts``, the audio ``atempo`` chain and
+    the output length, so the three can never disagree. Garbage, zero and
+    negative values mean normal speed.
+    """
+    try:
+        speed = float(speed if speed is not None else 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(speed) or speed <= 0:
+        return 1.0
+    return max(0.1, min(100.0, speed))
+
+
 def _build_speed_filter(speed):
     """Video-side setpts for speed change; see `_build_audio_speed` for audio."""
-    try:
-        speed = float(speed or 1.0)
-    except (TypeError, ValueError):
-        speed = 1.0
+    speed = coerce_speed(speed)
     if abs(speed - 1.0) < 0.001:
         return None
     pts_ratio = 1.0 / speed
@@ -139,14 +150,10 @@ def _build_eq_filter(options):
 
 def _build_audio_speed(speed):
     """Audio atempo supports 0.5–2.0; chain it for more extreme values."""
-    try:
-        speed = float(speed or 1.0)
-    except (TypeError, ValueError):
-        speed = 1.0
-    # Guard the chaining loops below: a non-positive speed would make
-    # ``remaining < 0.5`` forever (each ``/= 0.5`` doubles the magnitude),
-    # hanging the encode thread. Clamp to a sane positive range.
-    speed = max(0.1, min(100.0, speed))
+    # coerce_speed also guards the chaining loops below: a non-positive
+    # speed would make ``remaining < 0.5`` forever (each ``/= 0.5``
+    # doubles the magnitude), hanging the encode thread.
+    speed = coerce_speed(speed)
     if abs(speed - 1.0) < 0.001:
         return None
     stages = []
@@ -229,12 +236,15 @@ def _build_drawtext_filter(layer, fade=0.0, frame_w=None, frame_h=None):
     if keyframes:
         from videokidnapper.utils.keyframes import compile_axis_expr
         try:
-            x_expr = f"'{compile_axis_expr(keyframes, 'x')}'"
-            y_expr = f"'{compile_axis_expr(keyframes, 'y')}'"
+            x_axis = compile_axis_expr(keyframes, 'x')
+            y_axis = compile_axis_expr(keyframes, 'y')
         except (KeyError, TypeError, ValueError):
-            # Corrupt keyframe data (e.g. a hand-edited project) falls
-            # back to the static position instead of aborting the encode.
-            x_expr = y_expr = None
+            x_axis = y_axis = None
+        # Corrupt keyframe data (e.g. a hand-edited project) compiles to
+        # nothing and falls back to the static position instead of
+        # aborting the encode.
+        if x_axis is not None and y_axis is not None:
+            x_expr, y_expr = f"'{x_axis}'", f"'{y_axis}'"
     if x_expr is None:
         # Position is validated, not escaped: it is interpolated bare
         # into the filter spec, so anything that is not provably a
@@ -251,6 +261,10 @@ def _build_drawtext_filter(layer, fade=0.0, frame_w=None, frame_h=None):
 
     parts = [
         f"drawtext=text='{text}'",
+        # Captions are literal text. With expansion on, % starts a
+        # %{...} sequence, so "100% done" printed wrong (see the escape
+        # table in utils.ffmpeg_escape).
+        "expansion=none",
         f"fontfile='{font_path}'",
         f"fontsize={fontsize}",
         f"fontcolor={fontcolor}",
@@ -684,24 +698,25 @@ def _assemble_video_filters(preset_name, info, text_layers, options,
     options = options or {}
     color = build_normalize_filter(info)
     state = {"color": color}
+    manual_crop = _build_crop_filter(options.get("crop"), info)
 
     def add_aspect(frame_info):
         # Aspect preset is a second crop; `_build_aspect_crop` itself
-        # defers to any explicit crop. The "blur" fill mode swaps the
+        # defers to a manual crop. The "blur" fill mode swaps the
         # crop for a fit-over-blurred-background composite at the same
         # chain position.
         aspect = options.get("aspect_preset")
         if not aspect or aspect == "Source":
             return
         if options.get("aspect_fill_mode") == "blur":
-            f = _build_aspect_fill_blur(aspect, frame_info, options.get("crop"))
+            f = _build_aspect_fill_blur(aspect, frame_info, manual_crop)
             if f and state["color"]:
                 # Blur fill scales and composites; do that on frames
                 # that are already in the working colour space.
                 filters.append(state["color"])
                 state["color"] = None
         else:
-            f = _build_aspect_crop(aspect, frame_info, options.get("crop"))
+            f = _build_aspect_crop(aspect, frame_info, manual_crop)
         if f:
             filters.append(f)
 
@@ -711,9 +726,8 @@ def _assemble_video_filters(preset_name, info, text_layers, options,
     if not rotate_first:
         add_aspect(info)
 
-    f = _build_crop_filter(options.get("crop"), info)
-    if f:
-        filters.append(f)
+    if manual_crop:
+        filters.append(manual_crop)
 
     f = _build_rotate_filter(options.get("rotate"))
     if f:
@@ -768,21 +782,48 @@ def _build_final_scale(preset_name, info, options):
 
     With an aspect preset the output must be an exact box (see
     _build_aspect_scale); otherwise a width-only scale preserves whatever
-    ratio the source and any crop produced. The width compared against
-    the preset is the layout frame's, not the source's, so a crop is
-    never blown up past its own resolution.
+    ratio the source and any crop produced. A manual crop wins over the
+    aspect preset, as it does in the crop step, so its frame keeps its own
+    ratio instead of being stretched into the preset's box. The width
+    compared against the preset is the layout frame's, not the source's,
+    so a crop is never blown up past its own resolution.
     """
-    from videokidnapper.core.frame_geometry import export_geometry
-
-    from videokidnapper.core.frame_geometry import aspect_after_rotate
+    from videokidnapper.core.frame_geometry import (
+        aspect_after_rotate, export_geometry,
+    )
 
     options = options or {}
     aspect = options.get("aspect_preset")
-    if aspect and aspect != "Source":
+    manual_crop = _build_crop_filter(options.get("crop"), info)
+    if aspect and aspect != "Source" and not manual_crop:
         frame_info = _rotated_info(info) if aspect_after_rotate(options) else info
         return _build_aspect_scale(preset_name, aspect, frame_info)
     layout_w = export_geometry(info, options).size[0] or info.get("width")
     return _build_scale_filter(preset_name, layout_w)
+
+
+# Drops the last row or column of an odd-sized frame, a no-op otherwise.
+EVEN_SIZE_FILTER = "crop=trunc(iw/2)*2:trunc(ih/2)*2"
+
+
+def _build_even_size(preset_name, info, options):
+    """Make an MP4's frame even-sized when nothing else will.
+
+    yuv420p, the pixel format every MP4 here uses, needs even sides, and
+    libx264 refuses an odd frame outright. A manual crop can be any size,
+    and when the final scale does not run (the crop is already narrower
+    than the preset, or the preset is Ultra) that odd size reached the
+    encoder and the export failed. The final scale itself always lands on
+    even sizes, so this only returns a filter when there is no scale.
+    """
+    from videokidnapper.core.frame_geometry import export_geometry
+
+    if _build_final_scale(preset_name, info, options):
+        return None
+    w, h = export_geometry(info, options).size
+    if w % 2 == 0 and h % 2 == 0:
+        return None
+    return EVEN_SIZE_FILTER
 
 
 # ---------------------------------------------------------------------------

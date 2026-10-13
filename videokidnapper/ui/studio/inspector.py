@@ -7,33 +7,46 @@ Four tabs, each editing one thing at a time:
 - **Clip** — selection in/out, speed, rotate, frame shape, crop, mute.
 - **Text** — the selected caption. Controls re-bind to that caption's
   Tk variables, so all the existing caption logic (style presets,
-  colors, drag positions, motion paths) keeps working unchanged.
+  colors, drag positions, motion paths) keeps working unchanged. It also
+  holds "Captions from speech" (Whisper), which used to be a window.
 - **Image** — the selected image overlay, same approach.
 - **Color** — the color grade, which the preview now shows live.
 
-The caption and overlay rows that used to stack in the scrolling page
-still exist as the data model (``editor.text_layers.layers`` and
-``editor.image_layers.layers``); they just aren't packed anywhere.
+The data model is ``editor.text_layers.layers`` (captions: plain
+``TextLayer`` objects holding Tk variables, no widgets) and
+``editor.image_layers.layers`` (overlay rows that are never packed).
 """
 
 import os
 
 import customtkinter as ctk
 
-from videokidnapper.config import POSITION_MAP, TEXT_COLORS, TEXT_STYLES
+from videokidnapper.config import POSITION_MAP, TEXT_STYLES
+from videokidnapper.core.whisper_captions import MODEL_SIZES
 from videokidnapper.ui import theme as T
 from videokidnapper.ui.editor_options import (
     ASPECT_CHOICES, ASPECT_FILL_CHOICES, FADE_CHOICES, ROTATE_CHOICES,
 )
 from videokidnapper.ui.image_layers import POSITION_ANCHORS
 from videokidnapper.ui.studio import controls as C
+from videokidnapper.ui.studio.color_palette import ColorPalette
 from videokidnapper.ui.studio.icons import icon_button
 from videokidnapper.ui.theme import button
+from videokidnapper.utils import settings
 from videokidnapper.utils.time_format import hms_to_seconds, seconds_to_hms
 
 INSPECTOR_TABS = (("clip", "Clip"), ("text", "Text"), ("image", "Image"), ("color", "Color"))
 SPEED_SEGMENTS = ["0.25x", "0.5x", "1x", "1.5x", "2x", "4x"]
 _PAD = 14
+DEFAULT_WHISPER_MODEL = "base"
+# One line under the model menu, so the choice is an informed one.
+WHISPER_MODEL_NOTES = {
+    "tiny": "Fastest and roughest.",
+    "base": "Quick, and fine for clear speech.",
+    "small": "More accurate, about three times slower.",
+    "medium": "Very accurate, but slow.",
+    "large": "Most accurate, and slowest.",
+}
 
 
 def _group(parent, title):
@@ -176,8 +189,12 @@ class TextPage(ctk.CTkScrollableFrame):
                          scrollbar_button_hover_color=T.BG_ACTIVE)
         self.editor = editor
         self.layer = None
+        # Once there are captions the speech box shows only when asked
+        # for (the Captions menu) or after a run started from it.
+        self._speech_open = False
         self._build_empty()
         self._build_form()
+        self.speech = SpeechCaptions(self, editor, on_close=self.hide_speech)
         self.refresh()
 
     # -- layout -----------------------------------------------------------
@@ -194,8 +211,6 @@ class TextPage(ctk.CTkScrollableFrame):
                command=self.editor.add_text_layer).pack(fill="x")
         button(col, "Import SRT or VTT…", variant="secondary", height=32,
                command=self.editor._import_srt).pack(fill="x", pady=(6, 0))
-        button(col, "Captions from speech…", variant="secondary", height=32,
-               command=self.editor._auto_caption).pack(fill="x", pady=(6, 0))
 
     def _build_form(self):
         self.form = ctk.CTkFrame(self, fg_color="transparent")
@@ -240,11 +255,10 @@ class TextPage(ctk.CTkScrollableFrame):
         color_row = ctk.CTkFrame(style, fg_color="transparent")
         color_row.pack(fill="x", pady=(8, 0))
         ctk.CTkLabel(color_row, text="Color", font=T.font(T.SIZE_SM),
-                     text_color=T.TEXT_MUTED, width=44, anchor="w").pack(side="left")
-        self.color_menu = C.option_menu(
-            color_row, list(TEXT_COLORS.keys()) + ["Custom…"], width=130,
-            command=self._color_changed)
-        self.color_menu.pack(side="left")
+                     text_color=T.TEXT_MUTED, width=44, anchor="w").pack(
+            side="left", anchor="n", pady=(3, 0))
+        self.palette = ColorPalette(color_row, command=self._color_changed)
+        self.palette.pack(side="left")
         look_row = ctk.CTkFrame(style, fg_color="transparent")
         look_row.pack(fill="x", pady=(8, 0))
         self.outline_cb = C.checkbox(look_row, "Outline")
@@ -298,6 +312,7 @@ class TextPage(ctk.CTkScrollableFrame):
             self.layer = None
             self.form.pack_forget()
             self.empty.pack(fill="both", expand=True)
+            self._place_speech()
             return
         self.empty.pack_forget()
         self.form.pack(fill="both", expand=True)
@@ -308,7 +323,6 @@ class TextPage(ctk.CTkScrollableFrame):
             self.size_entry.configure(textvariable=layer.size_var)
             self.bold_cb.configure(variable=layer.bold_var)
             self.italic_cb.configure(variable=layer.italic_var)
-            self.color_menu.configure(variable=layer.color_var)
             self.outline_cb.configure(variable=layer.outline_var)
             self.shadow_cb.configure(variable=layer.shadow_var)
             self.box_cb.configure(variable=layer.box_var)
@@ -316,7 +330,8 @@ class TextPage(ctk.CTkScrollableFrame):
             self.motion_switch.configure(variable=layer.motion_var)
             self.style_seg.set(layer.style_var.get())
             self.textbox.delete("1.0", "end")
-            self.textbox.insert("1.0", layer.text_box.get("1.0", "end-1c"))
+            self.textbox.insert("1.0", layer.text_var.get())
+        self._place_speech()
         self.refresh_details()
 
     def refresh_details(self):
@@ -333,6 +348,31 @@ class TextPage(ctk.CTkScrollableFrame):
         self.start_field.set_value(seconds_to_hms(start))
         self.end_field.set_value(seconds_to_hms(end))
         self.motion_hint.configure(text=_motion_hint(self.layer))
+        self.palette.set(self.layer.color_value())
+
+    # -- captions from speech ---------------------------------------------
+    def show_speech(self):
+        """Open "Captions from speech" (the Captions menu sends people here)."""
+        self._speech_open = True
+        self.refresh()
+        try:
+            self._parent_canvas.yview_moveto(0)
+        except Exception:
+            pass
+
+    def hide_speech(self):
+        self._speech_open = False
+        self.refresh()
+
+    def _place_speech(self):
+        """Under the empty state's buttons, or above the caption form."""
+        self.speech.pack_forget()
+        if self.layer is None:
+            self.speech.set_closable(False)
+            self.speech.pack(fill="x", padx=_PAD, pady=(18, 0), after=self.empty)
+        elif self._speech_open:
+            self.speech.set_closable(True)
+            self.speech.pack(fill="x", padx=_PAD, pady=(10, 0), before=self.form)
 
     # -- events -------------------------------------------------------------
     def _text_changed(self, _event=None):
@@ -346,7 +386,7 @@ class TextPage(ctk.CTkScrollableFrame):
 
     def _color_changed(self, value):
         if self.layer is not None:
-            self.layer._on_color_choice(value)
+            self.layer.set_color(value)
 
     def _position_changed(self, value):
         if self.layer is not None:
@@ -389,6 +429,101 @@ class TextPage(ctk.CTkScrollableFrame):
     def _delete(self):
         if self.layer is not None:
             self.editor.delete_layer("text", self.editor.text_layers.layers.index(self.layer))
+
+
+def saved_whisper_model():
+    """The model size last used, or the default if that setting is off."""
+    model = settings.get("whisper_model", DEFAULT_WHISPER_MODEL)
+    return model if model in MODEL_SIZES else DEFAULT_WHISPER_MODEL
+
+
+class SpeechCaptions(ctk.CTkFrame):
+    """Write captions from the speech in the selection, with Whisper.
+
+    This used to be a small window that only asked for the model size.
+    Now the model menu and the button sit in the Text tab, and the editor
+    reports the run back here (see ``TrimTab.generate_captions``), so the
+    progress and the outcome show where it was started.
+    """
+
+    def __init__(self, master, editor, on_close=None):
+        super().__init__(master, fg_color="transparent")
+        self.editor = editor
+        self.running = False
+        self._model = None
+
+        head = ctk.CTkFrame(self, fg_color="transparent")
+        head.pack(fill="x")
+        C.section_label(head, "Captions from speech").pack(side="left")
+        self.close_btn = icon_button(head, "close", size=22, icon_size=9,
+                                     command=on_close)
+
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.pack(fill="x", pady=(4, 0))
+        self.model_var = ctk.StringVar(value=saved_whisper_model())
+        self.model_menu = C.option_menu(row, list(MODEL_SIZES), variable=self.model_var,
+                                        width=92, command=lambda _v: self._show_note())
+        self.model_menu.pack(side="left")
+        self.go_btn = button(row, "Generate captions", variant="secondary", height=30,
+                             font=T.font(T.SIZE_SM, "bold"), command=self._go_clicked)
+        self.go_btn.pack(side="left", fill="x", expand=True, padx=(6, 0))
+        self.bar = ctk.CTkProgressBar(self, height=6, progress_color=T.ACCENT,
+                                      fg_color=T.BG_RAISED, corner_radius=3)
+        self.status = C.hint(self, "")
+        self.status.pack(anchor="w", fill="x", pady=(4, 0))
+        self._show_note()
+
+    def set_closable(self, closable):
+        if closable:
+            self.close_btn.pack(side="right")
+        else:
+            self.close_btn.pack_forget()
+
+    # -- reports from the editor ----------------------------------------------
+    def set_running(self, model):
+        self.running = True
+        self._model = model
+        self.model_menu.configure(state="disabled")
+        self.go_btn.configure(text="Stop", state="normal")
+        self.bar.set(0)
+        self.bar.pack(fill="x", pady=(6, 0), before=self.status)
+        self._say(f"Transcribing with {model}… The first use of a model "
+                  "downloads it.", T.TEXT_MUTED)
+
+    def set_progress(self, fraction):
+        if not self.running:
+            return
+        fraction = max(0.0, min(1.0, float(fraction)))
+        self.bar.set(fraction)
+        self._say(f"Transcribing with {self._model}… {int(fraction * 100)}%", T.TEXT_MUTED)
+
+    def set_stopping(self):
+        if self.running:
+            self.go_btn.configure(text="Stopping…", state="disabled")
+
+    def set_result(self, message, level="info"):
+        """Back to ready, saying what happened (or why nothing could)."""
+        self.running = False
+        self.model_menu.configure(state="normal")
+        self.go_btn.configure(text="Generate captions", state="normal")
+        self.bar.pack_forget()
+        self._say(message, {"success": T.SUCCESS, "warn": T.WARN,
+                            "error": T.DANGER}.get(level, T.TEXT_MUTED))
+
+    # -- internals --------------------------------------------------------------
+    def _go_clicked(self):
+        if self.running:
+            self.editor.stop_captions()
+        else:
+            self.editor.generate_captions(self.model_var.get())
+
+    def _show_note(self):
+        if not self.running:
+            note = WHISPER_MODEL_NOTES.get(self.model_var.get(), "")
+            self._say(f"{note} Transcribes the selection.".strip(), T.TEXT_MUTED)
+
+    def _say(self, text, color):
+        self.status.configure(text=text, text_color=color)
 
 
 # ---------------------------------------------------------------------------

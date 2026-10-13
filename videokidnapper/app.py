@@ -11,6 +11,7 @@ import customtkinter as ctk
 
 from videokidnapper.config import APP_NAME, APP_VERSION, WINDOW_SIZE, MIN_WINDOW_SIZE
 from videokidnapper.ui import theme as T
+from videokidnapper.ui.studio.banner import InlineBanner
 from videokidnapper.ui.studio.chrome import WorkspaceHost, WorkspaceSwitcher
 from videokidnapper.ui.studio.icons import icon_button
 from videokidnapper.ui.theme import button
@@ -30,17 +31,31 @@ TAB_STUDIO = "edit"
 TAB_BATCH = "batch"
 TAB_HISTORY = "history"
 TAB_DEBUG = "log"
+# Pages opened from the settings menu. They take over the window, with
+# Back to return, instead of opening windows of their own, and are
+# built the first time they are shown.
+TAB_SETUP = "setup"
+TAB_SHORTCUTS = "shortcuts"
+PAGES = (TAB_SETUP, TAB_SHORTCUTS)
 # Shortcuts that only make sense while looking at the editor.
 _EDIT_ONLY = {
     "keyboard_play_pause", "keyboard_nudge", "keyboard_mark_in",
     "keyboard_mark_out", "keyboard_save_range", "keyboard_paste_url",
 }
+# How many recent projects the header's project menu lists.
+_MENU_RECENT = 8
+
+
+def _accel(keys):
+    """A shortcut as menus show it: "Ctrl+S" here, "⌘S" on a Mac."""
+    if sys.platform != "darwin":
+        return keys
+    return keys.replace("Ctrl+Shift+", "⌘⇧").replace("Ctrl+", "⌘")
 
 
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self._is_first_run = settings.is_first_run()
         T.configure_global()
 
         self.title(f"{APP_NAME} v{APP_VERSION}")
@@ -74,34 +89,15 @@ class App(ctk.CTk):
         self._load_plugins()
         self._note_version_change()
         self._maybe_check_for_update()
-        if not self._maybe_offer_recovery():
-            self._maybe_show_onboarding()
+        self._maybe_offer_recovery()
 
     def _maybe_offer_recovery(self):
-        recovery_file = project_files.autosave_path()
-        if not recovery_file.is_file():
+        """Offer last session's unsaved work in the banner, if there is any."""
+        recovery_file = project_files.recoverable_autosave()
+        if recovery_file is None:
             return False
-
-        def show():
-            if not self.winfo_exists():
-                return
-            from videokidnapper.ui.project_dialog import RecoveryDialog
-            self._recovery_dialog = RecoveryDialog(self, self.trim_tab)
-
-        self.after(250, show)
+        self.trim_tab.offer_recovery(recovery_file)
         return True
-
-    def _maybe_show_onboarding(self):
-        if not self._is_first_run or settings.get("onboarding_complete", False):
-            return
-
-        def show():
-            if not self.winfo_exists():
-                return
-            from videokidnapper.ui.onboarding_dialog import OnboardingDialog
-            self._onboarding_dialog = OnboardingDialog(self, self.trim_tab)
-
-        self.after(350, show)
 
     def _initial_geometry(self):
         """Studio wants room: up to 1440x900, centered, within the screen."""
@@ -164,6 +160,10 @@ class App(ctk.CTk):
         self._build_header()
         self._build_statusbar()
         self._build_workspaces()
+        # Questions are asked here, never in a popup. Made after the
+        # workspaces so it stacks above them: it floats over their top
+        # edge instead of pushing them down.
+        self.banner = InlineBanner(self, anchor=self.workspaces)
 
         # Only the eagerly-built tabs. Deferred tabs receive the toast
         # in their own constructor — reaching for them here would build
@@ -205,15 +205,15 @@ class App(ctk.CTk):
         self.quick_export_btn.pack(side="right", padx=(8, 0))
         self.settings_btn = icon_button(right, "settings", command=self._open_settings_menu)
         self.settings_btn.pack(side="right", padx=1)
-        icon_button(right, "help", command=self._open_shortcuts_dialog).pack(side="right", padx=1)
+        icon_button(right, "help", command=self._toggle_shortcuts_page).pack(side="right", padx=1)
         icon_button(right, "redo",
                     command=lambda: self.trim_tab.keyboard_redo()).pack(side="right", padx=1)
         icon_button(right, "undo",
                     command=lambda: self.trim_tab.keyboard_undo()).pack(side="right", padx=1)
         self.project_btn = button(
-            right, "Untitled project", variant="ghost", height=32,
+            right, "Untitled project  ▾", variant="ghost", height=32,
             font=T.font(T.SIZE_MD, "bold"), text_color=T.TEXT,
-            command=lambda: self.trim_tab.open_project_hub(),
+            command=self._open_project_menu,
         )
         self.project_btn.pack(side="right", padx=(0, 8))
 
@@ -229,6 +229,12 @@ class App(ctk.CTk):
         self._settings_menu = tk.Menu(
             self, tearoff=0, bg=T.BG_SURFACE, fg=T.TEXT,
             activebackground=T.ACCENT_SOFT, activeforeground=T.TEXT,
+            font=(T.FONT_FAMILY, 10), bd=1, relief="solid",
+        )
+        self._project_menu = tk.Menu(
+            self, tearoff=0, bg=T.BG_SURFACE, fg=T.TEXT,
+            activebackground=T.ACCENT_SOFT, activeforeground=T.TEXT,
+            disabledforeground=T.TEXT_DIM,
             font=(T.FONT_FAMILY, 10), bd=1, relief="solid",
         )
 
@@ -267,10 +273,14 @@ class App(ctk.CTk):
         # Constructing them up front cost about half the window build
         # (Batch 365 ms, History 93 ms, measured in situ), for two pages
         # most sessions never open. The Export workspace asks for them
-        # through _ensure_tab when one of its sub-tabs is picked.
+        # through _ensure_tab when one of its sub-tabs is picked. Setup
+        # and the shortcuts page are deferred the same way: Setup's
+        # checks import yt-dlp, which is slow.
         self._lazy_tabs = {
             TAB_BATCH: self._construct_batch_tab,
             TAB_HISTORY: self._construct_history_tab,
+            TAB_SETUP: self._construct_setup_page,
+            TAB_SHORTCUTS: self._construct_shortcuts_page,
         }
         self._built_tabs = {}
         self.export_workspace = ExportWorkspace(self.workspaces.add("export"), self, self.trim_tab)
@@ -282,6 +292,10 @@ class App(ctk.CTk):
         self.show_workspace("edit" if self.trim_tab.video_path else "import")
 
     def show_workspace(self, key):
+        # Pages are built on first view. One that fails to build is
+        # logged, and the window stays where it was.
+        if key in PAGES and self._on_tab_changed(key) is None:
+            return
         self.workspaces.set(key)
 
     def _on_workspace_switched(self, key):
@@ -356,6 +370,21 @@ class App(ctk.CTk):
             tab.set_toast(self.status_bar)
         return tab
 
+    def _construct_setup_page(self):
+        from videokidnapper.ui.setup_page import SetupPage
+
+        page = SetupPage(self.workspaces.add(TAB_SETUP), on_back=self._close_page,
+                         on_relaunch=self._restart_app)
+        page.pack(fill="both", expand=True)
+        return page
+
+    def _construct_shortcuts_page(self):
+        from videokidnapper.ui.shortcuts_page import ShortcutsPage
+
+        page = ShortcutsPage(self.workspaces.add(TAB_SHORTCUTS), on_back=self._close_page)
+        page.pack(fill="both", expand=True)
+        return page
+
     @property
     def batch_export_tab(self):
         return self._ensure_tab(TAB_BATCH)
@@ -387,9 +416,51 @@ class App(ctk.CTk):
         has_video = bool(editor is not None and editor.video_path)
         # "Saved" only means something once the project has a file.
         state = "Edited" if dirty else ("" if untitled else "Saved")
-        self.project_btn.configure(
-            text=f"{label}  ·  {state}" if has_video and state else label,
-        )
+        text = f"{label}  ·  {state}" if has_video and state else label
+        # The ▾ says the name opens the project menu.
+        self.project_btn.configure(text=f"{text}  ▾")
+
+    # ------------------------------------------------------------------
+    # Project menu (the project name in the header)
+    # ------------------------------------------------------------------
+    def _open_project_menu(self):
+        """Open, Save, Save as and the recent projects, under the name."""
+        menu = self._build_project_menu()
+        btn = self.project_btn
+        try:
+            menu.tk_popup(btn.winfo_rootx(), btn.winfo_rooty() + btn.winfo_height())
+        finally:
+            menu.grab_release()
+
+    def _build_project_menu(self):
+        """Refill the project menu for the editor's current state."""
+        menu = self._project_menu
+        menu.delete(0, "end")
+        editor = self.trim_tab
+        # Save needs something to save; it would only say so in the
+        # status bar, so the entries are greyed out instead.
+        can_save = "normal" if editor.video_path else "disabled"
+        menu.add_command(label="Open project…", accelerator=_accel("Ctrl+Shift+O"),
+                         command=editor.choose_and_open_project)
+        menu.add_command(label="Save", accelerator=_accel("Ctrl+S"), state=can_save,
+                         command=editor.save_project)
+        menu.add_command(label="Save as…", accelerator=_accel("Ctrl+Shift+S"),
+                         state=can_save,
+                         command=lambda: editor.save_project(save_as=True))
+        menu.add_separator()
+        recent = [Path(p) for p in settings.get_recent_projects()[:_MENU_RECENT]]
+        if not recent:
+            menu.add_command(label="No recent projects", state="disabled")
+            return menu
+        menu.add_command(label="Recent projects", state="disabled")
+        stems = [p.stem for p in recent]
+        for path in recent:
+            # Two projects with one name are told apart by their folder.
+            label = (f"{path.stem}  ({path.parent.name})"
+                     if stems.count(path.stem) > 1 else path.stem)
+            menu.add_command(label=f"   {label}",
+                             command=lambda p=str(path): editor.open_project(p))
+        return menu
 
     # ------------------------------------------------------------------
     # Settings menu (gear)
@@ -397,12 +468,13 @@ class App(ctk.CTk):
     def _open_settings_menu(self):
         menu = self._settings_menu
         menu.delete(0, "end")
-        menu.add_command(label="Setup and components…", command=self._open_setup_dialog)
+        menu.add_command(label="Setup and components…", command=self._open_setup_page)
         menu.add_command(label="Check for updates", command=self._check_updates_now)
         menu.add_separator()
         menu.add_cascade(label="Theme", menu=self._build_theme_menu(menu))
         menu.add_separator()
-        menu.add_command(label="Keyboard shortcuts", command=self._open_shortcuts_dialog)
+        menu.add_command(label="Keyboard shortcuts",
+                         command=lambda: self._open_page(TAB_SHORTCUTS))
         menu.add_command(label="Export history", command=self._show_history)
         menu.add_command(label="Debug log", command=lambda: self.show_workspace("log"))
         btn = self.settings_btn
@@ -422,12 +494,24 @@ class App(ctk.CTk):
             if self.winfo_exists():
                 self.after(0, self._show_update_chip, tag, link)
 
-        def report_if_current():
-            if not getattr(self, "_update_tag", None):
-                self.status_bar.show(f"You're up to date (v{APP_VERSION})", "success")
+        # The worker only drops the outcome here; the main thread picks it
+        # up. Tk calls from a worker thread fail unless mainloop is running.
+        result = {}
 
-        check_async(APP_VERSION, on_update)
-        self.after(5000, report_if_current)
+        def poll(waited=0):
+            outcome = result.get("outcome")
+            if outcome is None and waited < 30000:
+                self.after(200, poll, waited + 200)
+            elif outcome == "current":
+                self.status_bar.show(f"You're up to date (v{APP_VERSION})", "success")
+            elif outcome in ("failed", None):
+                self.status_bar.show(
+                    "Couldn't reach GitHub to check for updates. Try again later.",
+                    "warn")
+
+        check_async(APP_VERSION, on_update,
+                    on_done=lambda outcome: result.setdefault("outcome", outcome))
+        self.after(200, poll)
 
     # ------------------------------------------------------------------
     # Keyboard shortcuts
@@ -500,9 +584,12 @@ class App(ctk.CTk):
                          both_cases=False)
         self._bind_accel("Shift-z", lambda e: self._shortcut(e, "keyboard_redo"))
         self._bind_accel("y", lambda e: self._shortcut(e, "keyboard_redo"))
-        # `?` opens the shortcuts overlay. Not routed through _shortcut()
-        # because the target is the app itself, not the editor.
+        # `?` shows or hides the shortcuts page. Not routed through
+        # _shortcut() because the target is the app itself, not the editor.
         self.bind_all("<Key-question>", self._shortcut_shortcuts_overlay)
+        # Esc leaves Setup or the shortcuts page. Added alongside any
+        # other Esc binding rather than replacing it.
+        self.bind_all("<Escape>", self._escape_shortcut, add="+")
 
     def _editing_in_entry(self, event):
         widget = event.widget
@@ -514,8 +601,18 @@ class App(ctk.CTk):
             return False
         return cls in ("Entry", "Text", "TEntry", "TCombobox")
 
+    def _modal_open(self):
+        """True while a dialog holds the input grab (the export window,
+        say). Its grab blocks clicks but not ``bind_all`` shortcuts, so
+        Ctrl+O could open another video under a running export."""
+        try:
+            grab = self.grab_current()
+        except Exception:
+            return False
+        return grab is not None and grab.winfo_toplevel() is not self
+
     def _shortcut(self, event, method, *args):
-        if self._editing_in_entry(event):
+        if self._editing_in_entry(event) or self._modal_open():
             return None
         editor = getattr(self, "trim_tab", None)
         if editor is None:
@@ -536,7 +633,7 @@ class App(ctk.CTk):
         regardless of the current workspace. Everything else (images,
         plain text) defers to the editor's own paste handler.
         """
-        if self._editing_in_entry(event):
+        if self._editing_in_entry(event) or self._modal_open():
             return
         try:
             data = self.clipboard_get()
@@ -550,26 +647,116 @@ class App(ctk.CTk):
     def _shortcut_shortcuts_overlay(self, event):
         # `?` inside a text entry should still type a literal `?`.
         if self._editing_in_entry(event):
-            return
-        self._open_shortcuts_dialog()
+            return None
+        # One handler, one toggle per key press. The old shortcuts window
+        # closed itself on `?` and then this binding opened it again.
+        self._toggle_shortcuts_page()
+        return "break"
+
+    def _escape_shortcut(self, _event):
+        if self.workspaces.get() in PAGES:
+            self._close_page()
+            return "break"
+        return None
 
     def _save_project_shortcut(self, _event):
-        self.trim_tab.save_project()
+        if not self._modal_open():
+            self.trim_tab.save_project()
         return "break"
 
     def _save_project_as_shortcut(self, _event):
-        self.trim_tab.save_project(save_as=True)
+        if not self._modal_open():
+            self.trim_tab.save_project(save_as=True)
         return "break"
 
     def _open_project_shortcut(self, _event):
-        self.trim_tab.choose_and_open_project()
+        if not self._modal_open():
+            self.trim_tab.choose_and_open_project()
         return "break"
 
+    # ------------------------------------------------------------------
+    # Closing and restarting
+    # ------------------------------------------------------------------
     def _request_close(self):
-        editor = getattr(self, "trim_tab", None)
-        if editor is not None and not editor.request_close():
-            return
-        self.destroy()
+        """The window's close button."""
+        self.close_then(self.destroy)
+
+    def close_then(self, callback, verb="close", on_cancel=None):
+        """Make it safe to end the app, then call ``callback``.
+
+        The one way out for everything that ends the app: the window's
+        close button, the theme's "Restart now", Setup's relaunch and the
+        updater. ``callback`` does the ending: ``self.destroy``, a
+        relaunch, starting an installer. The restarts used to skip these
+        checks, so they dropped unsaved work and left ffmpeg running.
+
+        It never blocks. With no export running and nothing unsaved,
+        ``callback`` runs straight away. Otherwise the banner asks (stop
+        the export? save the project?) and this returns at once;
+        ``callback`` runs after the last answer, and only if the user let
+        the close go ahead. Saying no anywhere, or a save that fails,
+        leaves everything as it was and calls ``on_cancel`` if given.
+
+        A running export is stopped only once the user has agreed and
+        answered the save question, so backing out of either leaves it
+        running. ``verb`` words the questions: "close", "restart" or
+        "update" ("Stop and update", "Save your project before updating?").
+
+        The updater, for example, installs only once the app may end::
+
+            app.close_then(start_installer, verb="update",
+                           on_cancel=lambda: say("Update when you're ready"))
+        """
+        def settle(agreed):
+            editor = getattr(self, "trim_tab", None)
+            if editor is None:
+                finish(agreed)
+            else:
+                editor.request_close(lambda: finish(agreed), cancel=on_cancel, verb=verb)
+
+        def finish(agreed):
+            running = self._running_exports()
+            unasked = [tab for tab in running if tab not in agreed]
+            if unasked:
+                # Nothing is modal any more: an export started while the
+                # save question was up, and nobody agreed to stop that one.
+                self._ask_to_stop_exports(
+                    verb, lambda: finish(list(agreed) + unasked), on_cancel)
+                return
+            for tab in running:
+                tab.stop_export()
+            callback()
+
+        running = self._running_exports()
+        if running:
+            self._ask_to_stop_exports(verb, lambda: settle(running), on_cancel)
+        else:
+            settle([])
+
+    def _ask_to_stop_exports(self, verb, go_on, on_cancel):
+        """Ask whether to stop the running export; ``go_on`` if yes."""
+        def keep_running():
+            if on_cancel is not None:
+                on_cancel()
+
+        # Keyed "close" like the save question: a second close request
+        # replaces the first one's prompt instead of stacking another.
+        self.banner.ask(
+            f"An export is still running. Stop it and {verb} VideoKidnapper?",
+            buttons=[(f"Stop and {verb}", "primary", go_on),
+                     ("Keep exporting", "secondary", keep_running)],
+            dismiss=keep_running, tone="warn", key="close", urgent=True,
+        )
+
+    def _running_exports(self):
+        """The pages with an export in progress."""
+        # Either page may not exist yet: the setup landing has neither.
+        tabs = (getattr(self, "trim_tab", None),
+                getattr(self, "_built_tabs", {}).get(TAB_BATCH))
+        return [
+            tab for tab in tabs
+            if tab is not None and getattr(tab, "export_in_progress", lambda: False)()
+        ]
 
     # ------------------------------------------------------------------
     # Update check
@@ -698,7 +885,17 @@ class App(ctk.CTk):
         """
         from videokidnapper.plugins import discover_plugins
 
-        discovered = discover_plugins(app_version=APP_VERSION)
+        try:
+            discovered = discover_plugins(app_version=APP_VERSION)
+        except Exception as exc:
+            # Plugins are optional; a broken entry-point table is not a
+            # reason to stop the app from starting.
+            discovered = []
+            if hasattr(self, "debug_tab"):
+                try:
+                    self.debug_tab.add_log(f"Plugin discovery failed: {exc}", "ERROR")
+                except Exception:
+                    pass
         self.plugins = discovered
 
         loaded = 0
@@ -725,7 +922,11 @@ class App(ctk.CTk):
                         )
                     except Exception:
                         pass
-            except Exception as exc:
+            except KeyboardInterrupt:
+                raise
+            except BaseException as exc:
+                # BaseException: a plugin calling sys.exit() must not
+                # close the app.
                 if hasattr(self, "debug_tab"):
                     try:
                         self.debug_tab.add_log(
@@ -741,18 +942,60 @@ class App(ctk.CTk):
             )
 
     # ------------------------------------------------------------------
-    # Setup dialog
+    # Pages shown in place of the workspaces
     # ------------------------------------------------------------------
-    def _open_setup_dialog(self):
-        from videokidnapper.ui.setup_dialog import SetupDialog
-        SetupDialog(self, on_relaunch=self._restart_app)
+    def _open_page(self, key):
+        """Show one of the PAGES in place of the workspace.
 
-    # ------------------------------------------------------------------
-    # Shortcuts overlay (? key / header chip)
-    # ------------------------------------------------------------------
-    def _open_shortcuts_dialog(self):
-        from videokidnapper.ui.shortcuts_dialog import ShortcutsDialog
-        ShortcutsDialog(self)
+        Remembers where the user was, so Back returns there rather than
+        to a fixed place. Going from one page to another keeps the
+        original place, so pages never send Back to each other.
+        """
+        current = self.workspaces.get()
+        if current not in PAGES:
+            self._page_return = current
+        fresh = key not in self._built_tabs
+        self.show_workspace(key)
+        page = self._tab_if_built(key)
+        if page is None:
+            return
+        page.set_back_label(self._workspace_title(self._return_target()))
+        if not fresh and hasattr(page, "refresh"):
+            page.refresh()  # Setup looks again at what is installed
+
+    def _close_page(self):
+        self.show_workspace(self._return_target())
+
+    def _return_target(self):
+        target = getattr(self, "_page_return", None)
+        return target if target in self.workspaces.keys() else "edit"
+
+    @staticmethod
+    def _workspace_title(key):
+        """The name Back shows: "Import", or a plugin workspace's own name."""
+        if key.startswith("plugin:"):
+            return key.split(":", 1)[1]
+        if key == TAB_DEBUG:
+            return "Debug log"
+        return dict(WORKSPACES).get(key, key).split()[-1]
+
+    def _open_setup_page(self):
+        # The first-run landing has no workspaces yet, so there Setup
+        # takes the landing's place instead.
+        if getattr(self, "workspaces", None) is None:
+            self._show_setup_over_landing()
+        else:
+            self._open_page(TAB_SETUP)
+
+    def _toggle_shortcuts_page(self):
+        if self.workspaces.get() == TAB_SHORTCUTS:
+            self._close_page()
+        else:
+            self._open_page(TAB_SHORTCUTS)
+
+    # Older names, kept for anything still calling them.
+    _open_setup_dialog = _open_setup_page
+    _open_shortcuts_dialog = _toggle_shortcuts_page
 
     # ------------------------------------------------------------------
     # Theme picker
@@ -763,8 +1006,8 @@ class App(ctk.CTk):
     # widget-construction time. Hundreds of widgets, brittle, and the
     # status-bar "restart to apply" toast was easy to miss and made the
     # button feel broken (issue from user feedback: "This button does
-    # nothing"). Trade: confirm-to-restart, which makes the click
-    # visibly do *something* every time.
+    # nothing"). Trade: offer the restart in the banner, which makes the
+    # click visibly do *something* every time.
     def _build_theme_menu(self, parent):
         """Submenu of every theme, the current one checked."""
         if getattr(self, "_theme_menu", None) is None:
@@ -789,84 +1032,33 @@ class App(ctk.CTk):
             return
         T.set_theme(key)
         label = T.THEME_LABELS.get(key, key)
-        if self._confirm_theme_restart(label):
-            self._restart_app()
-            return
-        if self.status_bar:
-            self.status_bar.show(
-                f"Theme set to {label} — restart VideoKidnapper to apply.",
-                "info",
-            )
 
-    def _confirm_theme_restart(self, mode):
-        """Modal yes/no for the restart prompt. Returns True if the user
-        chose Restart, False for Later. Falls through to False if a Tk
-        error swallows the dialog (extremely unlikely but would rather
-        skip the restart than crash)."""
-        dialog = ctk.CTkToplevel(self)
-        dialog.title("Restart to apply theme")
-        dialog.geometry("380x170")
-        dialog.resizable(False, False)
-        dialog.transient(self)
-        dialog.grab_set()
-        dialog.configure(fg_color=T.BG_BASE)
+        def later():
+            if self.status_bar:
+                self.status_bar.show(
+                    f"Theme set to {label} — restart VideoKidnapper to apply.",
+                    "info",
+                )
 
-        # Center on the main window.
-        dialog.update_idletasks()
-        x = self.winfo_x() + (self.winfo_width() - 380) // 2
-        y = self.winfo_y() + (self.winfo_height() - 170) // 2
-        dialog.geometry(f"+{x}+{y}")
-
-        card = ctk.CTkFrame(
-            dialog, fg_color=T.BG_SURFACE,
-            border_width=1, border_color=T.BORDER,
-            corner_radius=T.RADIUS_LG,
+        # Keyed, so picking another theme rewords this prompt rather
+        # than queueing a second one behind it.
+        self.banner.ask(
+            f"Theme set to {label}. Restart to apply it.",
+            buttons=[("Restart now", "primary", self._restart_app),
+                     ("Later", "ghost", later)],
+            dismiss=later, key="theme",
         )
-        card.pack(fill="both", expand=True, padx=12, pady=12)
-
-        ctk.CTkLabel(
-            card, text=f"Theme set to {mode}.",
-            font=T.font(T.SIZE_LG, "bold"),
-            text_color=T.TEXT,
-        ).pack(pady=(18, 4))
-        ctk.CTkLabel(
-            card,
-            text="VideoKidnapper needs a restart to re-theme every panel.",
-            font=T.font(T.SIZE_SM), text_color=T.TEXT_MUTED,
-        ).pack(pady=(0, 14))
-
-        choice = {"restart": False}
-
-        btn_row = ctk.CTkFrame(card, fg_color="transparent")
-        btn_row.pack(pady=(0, 14))
-
-        def pick(restart):
-            choice["restart"] = restart
-            dialog.grab_release()
-            dialog.destroy()
-
-        ctk.CTkButton(
-            btn_row, text="Later",
-            fg_color=T.BG_RAISED, hover_color=T.BG_HOVER,
-            text_color=T.TEXT, font=T.font(T.SIZE_MD, "bold"),
-            corner_radius=T.RADIUS_SM, width=110, height=34,
-            command=lambda: pick(False),
-        ).pack(side="left", padx=(0, 6))
-        ctk.CTkButton(
-            btn_row, text="Restart now",
-            fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
-            text_color=T.TEXT_ON_ACCENT, font=T.font(T.SIZE_MD, "bold"),
-            corner_radius=T.RADIUS_SM, width=130, height=34,
-            command=lambda: pick(True),
-        ).pack(side="left")
-
-        dialog.protocol("WM_DELETE_WINDOW", lambda: pick(False))
-        # Block until the user picks.
-        self.wait_window(dialog)
-        return choice["restart"]
 
     def _restart_app(self):
-        """Relaunch the current process cleanly.
+        """Relaunch the app, once a running export and unsaved work are dealt with.
+
+        Goes through close_then, so it asks exactly what closing asks.
+        Returns at once; the relaunch happens when the user lets it.
+        """
+        self.close_then(self._relaunch, verb="restart")
+
+    def _relaunch(self):
+        """Start a fresh copy of this process and close this one.
 
         Works for three launch shapes: ``python main.py`` (dev),
         ``python -m videokidnapper`` (module), and the PyInstaller
@@ -1001,7 +1193,7 @@ class App(ctk.CTk):
             ).pack(side="left", padx=4)
         button(
             self._setup_btnrow, "Review details", variant="secondary",
-            width=140, command=self._open_setup_dialog,
+            width=140, command=self._open_setup_page,
         ).pack(side="left", padx=4)
         button(
             self._setup_btnrow, "Exit", variant="ghost",
@@ -1018,6 +1210,30 @@ class App(ctk.CTk):
         self._setup_frame = None
         self._show_setup_landing()
 
+    def _show_setup_over_landing(self):
+        """The landing's "Review details": the Setup page, in its place."""
+        from videokidnapper.ui.setup_page import SetupPage
+        if getattr(self, "_landing_setup_page", None) is not None:
+            return
+        self._setup_frame.place_forget()
+        page = SetupPage(self, on_back=self._close_setup_over_landing,
+                         on_relaunch=self._restart_app)
+        page.pack(fill="both", expand=True)
+        self._landing_setup_page = page
+
+    def _close_setup_over_landing(self):
+        page = self._landing_setup_page
+        if page.installing:
+            # The landing is rebuilt from what is installed, so it has to
+            # wait for the answer.
+            page.set_status("Still installing. Back works once it finishes.", T.WARN)
+            return
+        page.destroy()
+        self._landing_setup_page = None
+        # Something may have been installed on the page: look again
+        # rather than asking for it a second time.
+        self._recheck_setup()
+
     def _confirm_setup_install(self, missing):
         for widget in self._setup_btnrow.winfo_children():
             widget.destroy()
@@ -1027,49 +1243,22 @@ class App(ctk.CTk):
         self._auto_install_prereqs(missing)
 
     def _auto_install_prereqs(self, missing):
-        from videokidnapper.utils import prereq_check
+        from videokidnapper.ui.setup_page import install_in_background
         if not missing:
             # Nothing actually missing (e.g. a probe false-negative that
             # the detection fix already resolved) — just go.
             self._finish_setup_and_launch()
             return
 
-        # Worker thread NEVER touches Tk. It writes progress into a plain
-        # dict; a main-thread poller (after-loop) reads it and updates the
-        # UI. This is the only thread-safe way to drive Tk from a worker.
-        self._install_state = {
-            "frac": 0.0, "note": "", "done": False,
-            "installed": None, "failures": None,
-        }
-
         def progress(frac, note):
-            self._install_state["frac"] = max(0.0, min(1.0, frac))
+            self._setup_progress.set(max(0.0, min(1.0, frac)))
             if note:
-                self._install_state["note"] = note
+                self._setup_msg.configure(text=note)
 
-        def worker():
-            installed, failures = prereq_check.install_missing(
-                missing, progress_cb=progress,
-            )
-            self._install_state["installed"] = installed
-            self._install_state["failures"] = failures
-            self._install_state["done"] = True
-
-        import threading
-        threading.Thread(target=worker, daemon=True).start()
-        self._poll_install()
-
-    def _poll_install(self):
-        st = getattr(self, "_install_state", None)
-        if st is None or not self.winfo_exists():
-            return
-        self._setup_progress.set(st["frac"])
-        if st["note"]:
-            self._setup_msg.configure(text=st["note"])
-        if st["done"]:
-            self._on_auto_install_done(st["installed"], st["failures"])
-            return
-        self.after(120, self._poll_install)
+        # The same runner as the Setup page: the worker never touches Tk,
+        # and progress and the result arrive here on the main thread.
+        install_in_background(self, missing, on_progress=progress,
+                              on_done=self._on_auto_install_done, poll_ms=120)
 
     def _on_auto_install_done(self, installed, failures):
         from videokidnapper.utils import prereq_check
@@ -1138,7 +1327,7 @@ class App(ctk.CTk):
             w.destroy()
         button(
             self._setup_btnrow, "  Open Setup", variant="primary",
-            width=150, command=self._open_setup_dialog,
+            width=150, command=self._open_setup_page,
         ).pack(side="left", padx=4)
         button(
             self._setup_btnrow, "Retry", variant="secondary",

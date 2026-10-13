@@ -11,6 +11,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,13 @@ _CURRENT_SCHEMA = 8
 # _write(data)` — with no coordination, whichever wrote last stomped
 # the other's update, and if the OS crashed mid-write the JSON file
 # could be left truncated. The lock + atomic rename below fix both.
-_WRITE_LOCK = threading.Lock()
+# Plain reads take it too: on Windows a reader holding the file open
+# makes the writer's rename fail, which silently dropped the write.
+_WRITE_LOCK = threading.RLock()
+
+# Back-off for a rename or read that another process (a second copy of
+# the app, an antivirus scan) blocks for a moment. About 0.4 s in all.
+_RETRY_DELAYS = (0.01, 0.02, 0.05, 0.1, 0.2)
 
 _DEFAULTS = {
     "_version":         _CURRENT_SCHEMA,
@@ -83,6 +90,10 @@ def _migrate(data):
     new schema bump so future readers can see the transition.
     """
     version = data.get("_version", 0)
+    if isinstance(version, bool) or not isinstance(version, int):
+        # A hand-edited "8" or null: run every migration. They only fill
+        # in missing keys, so that is safe for any real schema.
+        version = 0
     if version < 1:
         # Schema 1: introduced. Nothing to migrate from 0 (empty or brand-new).
         version = 1
@@ -144,14 +155,47 @@ def _migrate(data):
 def _read():
     if not _SETTINGS_PATH.exists():
         return {}
-    try:
-        with open(_SETTINGS_PATH, encoding="utf-8") as fh:
-            data = json.load(fh)
-            if isinstance(data, dict):
-                return _migrate(data)
-    except (OSError, json.JSONDecodeError):
-        pass
+    for delay in (*_RETRY_DELAYS, None):
+        try:
+            with open(_SETTINGS_PATH, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except PermissionError:
+            if delay is None:
+                return {}
+            time.sleep(delay)
+            continue
+        except (OSError, ValueError, TypeError):
+            # ValueError covers bad JSON and a file that is not UTF-8.
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return _drop_mistyped(_migrate(data))
     return {}
+
+
+def _drop_mistyped(data):
+    """Forget values whose type does not match the default's.
+
+    The file is plain JSON that people edit by hand, and the UI trusts
+    these types: ``"theme": ["dark"]`` or ``"history": 5`` stopped the app
+    from starting. A dropped value falls back to its default. Whole
+    numbers are fine where a decimal is expected.
+    """
+    for key, default in _DEFAULTS.items():
+        if key not in data or default is None:
+            continue
+        value = data[key]
+        if isinstance(default, bool):
+            ok = isinstance(value, bool)
+        elif isinstance(default, float):
+            ok = isinstance(value, (int, float)) and not isinstance(value, bool)
+        elif isinstance(default, int):
+            ok = isinstance(value, int) and not isinstance(value, bool)
+        else:
+            ok = isinstance(value, type(default))
+        if not ok:
+            del data[key]
+    return data
 
 
 def _write(data):
@@ -174,7 +218,7 @@ def _write(data):
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=2)
-            os.replace(tmp_path, _SETTINGS_PATH)
+            _replace_with_retry(tmp_path, _SETTINGS_PATH)
         except OSError:
             # Clean the temp file so we don't leak .tmp droppings in $HOME
             # if the rename fails (read-only FS, permission error, etc.).
@@ -186,8 +230,25 @@ def _write(data):
         pass
 
 
+def _replace_with_retry(source, target):
+    """``os.replace``, retried while another process holds ``target`` open.
+
+    Windows refuses to replace a file that anything has open, and a
+    second copy of the app reading its settings is enough. The write used
+    to be dropped silently, losing the newest history entry.
+    """
+    for delay in _RETRY_DELAYS:
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            time.sleep(delay)
+    os.replace(source, target)
+
+
 def get(key: str, default: "Any" = None) -> "Any":
-    data = _read()
+    with _WRITE_LOCK:
+        data = _read()
     if key in data:
         return data[key]
     if key in _DEFAULTS:
@@ -213,7 +274,8 @@ def update(mapping):
 
 def all_settings():
     merged = dict(_DEFAULTS)
-    merged.update(_read())
+    with _WRITE_LOCK:
+        merged.update(_read())
     return merged
 
 

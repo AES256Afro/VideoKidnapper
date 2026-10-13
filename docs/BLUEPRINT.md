@@ -70,17 +70,13 @@ videokidnapper/
 │   ├── waveform.py          # live-extract + selection overlay
 │   ├── multi_range.py       # queue of trim ranges + concat toggle
 │   ├── export_options.py    # speed / rotate / aspect / color / transitions
-│   ├── export_dialog.py     # modal progress + share-to-platform panel
-│   ├── setup_dialog.py      # FFmpeg + pip-packages auto-installer
-│   ├── onboarding_dialog.py # first-run workflow introduction
-│   ├── project_dialog.py    # save/open/recent project hub + recovery
+│   ├── setup_page.py        # FFmpeg + pip-packages auto-installer
 │   ├── update_dialog.py     # install-aware app update action
-│   ├── shortcuts_dialog.py  # discoverable keyboard reference
+│   ├── shortcuts_page.py    # discoverable keyboard reference
 │   ├── batch_queue.py       # batch URL download panel
 │   ├── share_panel.py       # clipboard + platform-compose-page share
 │   ├── widgets.py           # RangeSlider, TimestampEntry, PlatformChip, Toast
-│   ├── theme.py             # dark/light design tokens
-│   └── color_picker.py      # custom-color dialog
+│   └── theme.py             # dark/light design tokens
 └── utils/
     ├── settings.py          # JSON persistence with schema migration + write lock
     ├── project_files.py     # versioned .vidkid JSON + atomic autosave
@@ -360,7 +356,7 @@ Two paths:
 
 ### "I want to support a new video platform in URL Download"
 
-1. Add platform regex to `SUPPORTED_PLATFORMS` in `config.py`.
+1. Add the platform's domains to `SUPPORTED_PLATFORMS` in `config.py` (subdomains match automatically).
 2. Add format-selector branch to `core/downloader.py::_build_ydl_opts` (yt-dlp-format-selector docs: https://github.com/yt-dlp/yt-dlp#format-selection).
 3. Add brand color + glyph to `theme.PLATFORM_COLORS` + `PLATFORM_GLYPHS` in `ui/theme.py`.
 4. Add share-compose URL in `utils/share.py` if the platform accepts prefilled captions.

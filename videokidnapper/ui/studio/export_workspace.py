@@ -25,6 +25,7 @@ from videokidnapper.ui.editor_options import (
 )
 from videokidnapper.ui.platform_presets import PLATFORM_CHOICES
 from videokidnapper.ui.studio import controls as C
+from videokidnapper.ui.studio.export_progress import ExportProgress
 from videokidnapper.ui.theme import button
 from videokidnapper.utils.file_naming import NAMING_STYLES
 from videokidnapper.utils.time_format import seconds_to_hms
@@ -229,10 +230,12 @@ class ExportWorkspace(ctk.CTkFrame):
         self.summary_label = ctk.CTkLabel(go, text="", font=T.font(T.SIZE_LG),
                                           text_color=T.TEXT, justify="left", anchor="w")
         self.summary_label.pack(fill="x", padx=18)
-        self.export_btn = button(go, "Export", variant="primary", height=44,
-                                 font=T.font(T.SIZE_LG, "bold"),
-                                 command=self.editor._export)
-        self.export_btn.pack(fill="x", padx=18, pady=(14, 18))
+        # The button and the run's progress and result, right under it.
+        # The editor reports each export here (see TrimTab._export).
+        self.progress = ExportProgress(go, on_export=self.editor._export)
+        self.progress.pack(fill="x", padx=18, pady=(14, 18))
+        self.export_btn = self.progress.button
+        self.editor.export_progress = self.progress
         return page
 
     def _more_row(self, parent, label, widget):
@@ -290,6 +293,14 @@ class ExportWorkspace(ctk.CTkFrame):
     # ------------------------------------------------------------------
     def refresh(self):
         if self.current != "project" or not self.winfo_exists():
+            return
+        # The editor calls this on every selection change, including each
+        # motion event of an in/out drag, and the range list is rebuilt
+        # from new widgets every time: about 0.1 s per saved range, per
+        # event, while nobody could see the page. Switching to Export
+        # refreshes it (App._on_workspace_switched).
+        workspaces = getattr(self.app, "workspaces", None)
+        if workspaces is not None and workspaces.get() != "export":
             return
         ed = self.editor
         opts = ed.options
@@ -366,7 +377,6 @@ class ExportWorkspace(ctk.CTkFrame):
             lines.append(color)
         self.summary_label.configure(text="\n".join(lines) if has_video
                                      else "Open a video to export.")
-        self.export_btn.configure(
-            state="normal" if has_video else "disabled",
-            text=f"Export {files}" if has_video else "Export",
-        )
+        # While an export runs the button is Stop; this is what it says
+        # again afterwards.
+        self.progress.set_ready(f"Export {files}" if has_video else "Export", has_video)

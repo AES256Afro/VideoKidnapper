@@ -35,13 +35,16 @@ SUPPORTED_VIDEO_EXTENSIONS = (
 
 EXPORT_FORMATS = ["GIF", "MP4"]
 
+# Each platform's domains. A link belongs to a platform when its host is
+# one of these or a subdomain of one (www., m., music., old., v., ...);
+# see downloader.detect_platform.
 SUPPORTED_PLATFORMS = {
-    "YouTube":   [r"(?:www\.|m\.|music\.)?youtube\.com/", r"youtu\.be/"],
-    "Instagram": [r"(?:www\.)?instagram\.com/"],
-    "Bluesky":   [r"(?:www\.)?bsky\.app/", r"(?:www\.)?bsky\.social/"],
-    "Twitter/X": [r"(?:www\.|mobile\.)?twitter\.com/", r"(?:www\.|mobile\.)?x\.com/"],
-    "Reddit":    [r"(?:www\.|old\.|new\.|np\.)?reddit\.com/", r"redd\.it/", r"v\.redd\.it/"],
-    "Facebook":  [r"(?:www\.|m\.|web\.)?facebook\.com/", r"fb\.watch/", r"(?:www\.)?fb\.com/"],
+    "YouTube":   ["youtube.com", "youtu.be", "youtube-nocookie.com"],
+    "Instagram": ["instagram.com"],
+    "Bluesky":   ["bsky.app", "bsky.social"],
+    "Twitter/X": ["twitter.com", "x.com"],
+    "Reddit":    ["reddit.com", "redd.it"],
+    "Facebook":  ["facebook.com", "fb.watch", "fb.com"],
 }
 
 APP_NAME = "VideoKidnapper"
@@ -54,7 +57,18 @@ APP_VERSION = __version__
 WINDOW_SIZE = "1440x900"
 MIN_WINDOW_SIZE = (1024, 640)
 
+# Scratch space: partial downloads and screen-recording frames. What is
+# left here is cleared on exit (see downloader.cleanup_temp), so nothing
+# a project might point at may stay here.
 TEMP_DIR = Path.home() / ".videokidnapper_temp"
+
+# Media the app makes for you and keeps: finished downloads, and images
+# pasted from the clipboard as stickers. Projects point at these files,
+# so the app never deletes anything here. It lives in Downloads, beside
+# where exports go by default, because a downloaded video is the user's
+# own file: they should be able to find it, keep it or delete it. An
+# app-data folder would hide it, and an uninstall would take it along.
+MEDIA_DIR = DOWNLOADS_DIR / "VideoKidnapper"
 
 THEME_COLOR = "#1a73e8"
 

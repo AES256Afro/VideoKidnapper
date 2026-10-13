@@ -110,7 +110,7 @@ def detect_hardware_encoders():
     try:
         result = subprocess.run(
             [_get_ffmpeg(), "-hide_banner", "-encoders"],
-            capture_output=True, text=True, timeout=8,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8,
         )
         out = result.stdout + result.stderr
     except Exception:
@@ -231,6 +231,16 @@ def _parse_progress(process, duration, callback, cancel_event):
             elif stripped:
                 tail.append(stripped)
         return "\n".join(tail)
+    except BaseException:
+        # A progress callback that raises (its dialog already gone, say)
+        # would otherwise leave ffmpeg running with nobody draining its
+        # stderr; once the pipe fills it blocks forever, holding the
+        # output file open.
+        try:
+            process.kill()
+        except OSError:
+            pass
+        raise
     finally:
         done.set()
         if watchdog is not None:
@@ -271,7 +281,7 @@ def drawtext_is_modern():
     try:
         result = subprocess.run(
             [_get_ffmpeg(), "-hide_banner", "-h", "filter=drawtext"],
-            capture_output=True, text=True, timeout=8, **_run_kwargs(),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8, **_run_kwargs(),
         )
         out = (result.stdout or "") + (result.stderr or "")
         modern = "y_align" in out if "drawtext" in out.lower() else True

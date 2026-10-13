@@ -5,6 +5,9 @@
 Paste a link (the existing :class:`DownloadBar`, including its batch
 list and browser-cookie picker), open a file, record the screen, or
 reopen a recent project. Whatever loads lands in Edit.
+
+Screen recording is set up and stopped right here (:class:`RecordPanel`);
+it used to open a small window of its own.
 """
 
 from pathlib import Path
@@ -18,9 +21,117 @@ from videokidnapper.ui.theme import button
 from videokidnapper.utils import settings
 
 
+RECORD_MIN_SECONDS = 1
+RECORD_MAX_SECONDS = 120
+RECORD_DEFAULT_SECONDS = 10
+
+
 def _card(parent, **kwargs):
     return ctk.CTkFrame(parent, fg_color=T.BG_SURFACE, corner_radius=T.RADIUS_LG,
                         border_width=1, border_color=T.BORDER, **kwargs)
+
+
+def record_seconds(text, default=RECORD_DEFAULT_SECONDS):
+    """The recording length typed in the box, kept within 1 to 120 s."""
+    try:
+        seconds = int(float(str(text).strip()))
+    except (TypeError, ValueError):
+        return default
+    return max(RECORD_MIN_SECONDS, min(RECORD_MAX_SECONDS, seconds))
+
+
+class RecordPanel(ctk.CTkFrame):
+    """Length, Start / Stop and what the recording is doing.
+
+    The editor runs the recording (``TrimTab.start_screen_recording``)
+    and reports back here, so the state is waiting in the window when it
+    comes back from being minimized.
+    """
+
+    def __init__(self, master, editor, **kwargs):
+        super().__init__(master, fg_color="transparent", **kwargs)
+        self.editor = editor
+        self.running = False
+        self._total = 0
+
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.pack(fill="x")
+        ctk.CTkLabel(row, text="Seconds", font=T.font(T.SIZE_MD),
+                     text_color=T.TEXT_MUTED).pack(side="left")
+        self.seconds_var = ctk.StringVar(
+            value=str(record_seconds(settings.get("record_seconds",
+                                                  RECORD_DEFAULT_SECONDS))))
+        self.seconds_entry = C.entry(row, textvariable=self.seconds_var, width=52,
+                                     mono=True, justify="center")
+        self.seconds_entry.pack(side="left", padx=(8, 10))
+        self.seconds_entry.bind("<Return>", lambda _e: self._clicked())
+        self.start_btn = button(row, "Start recording", variant="secondary", height=34,
+                                command=self._clicked)
+        self.start_btn.pack(side="left", fill="x", expand=True)
+
+        self.bar = ctk.CTkProgressBar(self, height=6, progress_color=T.ACCENT,
+                                      fg_color=T.BG_RAISED, corner_radius=3)
+        self.status = C.hint(self, "1 to 120 seconds.", wrap=300)
+        self.status.pack(anchor="w", fill="x", pady=(6, 0))
+
+    def seconds(self):
+        """The length to record, written back so the box shows what's used."""
+        seconds = record_seconds(self.seconds_var.get())
+        self.seconds_var.set(str(seconds))
+        return seconds
+
+    def focus_seconds(self):
+        try:
+            self.seconds_entry.focus_set()
+        except Exception:
+            pass
+
+    # -- reports from the editor ----------------------------------------------
+    def set_recording(self, total):
+        self.running = True
+        self._total = max(1, int(total))
+        self.seconds_entry.configure(state="disabled")
+        self.start_btn.configure(text="Stop recording", state="normal", border_width=0,
+                                 **T.BUTTON_VARIANTS["danger"])
+        self.bar.set(0)
+        self.bar.pack(fill="x", pady=(8, 0), before=self.status)
+        self._say(f"Recording… 0 of {self._total} s", T.DANGER)
+
+    def set_elapsed(self, seconds):
+        if not self.running:
+            return
+        seconds = max(0, min(self._total, int(seconds)))
+        self.bar.set(seconds / self._total)
+        self._say(f"Recording… {seconds} of {self._total} s", T.DANGER)
+
+    def set_stopping(self):
+        if self.running:
+            self.start_btn.configure(text="Stopping…", state="disabled")
+
+    def set_encoding(self):
+        if self.running:
+            self.start_btn.configure(text="Saving…", state="disabled")
+            self.bar.set(1.0)
+            self._say("Saving the recording as an MP4…", T.TEXT_MUTED)
+
+    def set_result(self, message, level="info"):
+        self.running = False
+        self.seconds_entry.configure(state="normal")
+        self.start_btn.configure(text="Start recording", state="normal",
+                                 **T.BUTTON_VARIANTS["secondary"])
+        self.bar.pack_forget()
+        self._say(message, {"success": T.SUCCESS, "warn": T.WARN,
+                            "error": T.DANGER}.get(level, T.TEXT_MUTED))
+
+    # -- internals ----------------------------------------------------------------
+    def _clicked(self):
+        if self.running:
+            self.editor.stop_screen_recording()
+        else:
+            self.editor.start_screen_recording(self.seconds())
+
+    def _say(self, text, color):
+        self.status.configure(text=text, text_color=color)
 
 
 class ImportWorkspace(ctk.CTkScrollableFrame):
@@ -79,11 +190,12 @@ class ImportWorkspace(ctk.CTkScrollableFrame):
         rec_card.grid(row=0, column=1, sticky="nsew", padx=(9, 0))
         ctk.CTkLabel(rec_card, text="Record your screen", font=T.font(T.SIZE_XL, "bold"),
                      text_color=T.TEXT).pack(anchor="w", padx=20, pady=(18, 4))
-        C.hint(rec_card, "Captures the main monitor at 15 fps, for up to two "
-                         "minutes. The window hides while it records.",
+        C.hint(rec_card, "Captures the main monitor at 15 fps. This window "
+                         "hides while it records; open it again to stop early.",
                wrap=300).pack(anchor="w", padx=20)
-        button(rec_card, "Set up recording…", variant="secondary", height=34,
-               command=editor._record_screen).pack(anchor="w", padx=20, pady=(14, 18))
+        self.record_panel = RecordPanel(rec_card, editor)
+        self.record_panel.pack(fill="x", padx=20, pady=(14, 18))
+        editor.record_panel = self.record_panel
 
         right = _card(page)
         right.grid(row=1, column=1, sticky="new")

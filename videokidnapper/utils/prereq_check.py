@@ -384,7 +384,7 @@ def pip_install_streaming(package, line_cb=None, user=True, upgrade=False, timeo
     try:
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, errors="replace",
+            text=True, encoding="utf-8", errors="replace",
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         for line in proc.stdout:
@@ -491,7 +491,7 @@ def pip_install(package, user=True, upgrade=False, timeout=240):
     cmd.append(package)
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout,
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         ok = result.returncode == 0

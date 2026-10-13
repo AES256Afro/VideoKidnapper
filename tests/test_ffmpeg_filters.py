@@ -42,9 +42,11 @@ def test_audio_speed_chains_beyond_range():
 def test_audio_speed_negative_does_not_hang():
     # Regression: a non-positive speed used to spin the chaining loop
     # forever (each ``remaining /= 0.5`` doubled the magnitude, never
-    # reaching >= 0.5). It must terminate and produce a valid filter.
-    f = _build_audio_speed(-1.0)
-    assert "atempo=" in f
+    # reaching >= 0.5). It must terminate; a speed that makes no sense
+    # means normal speed, the same as the video side and the length.
+    assert _build_audio_speed(-1.0) is None
+    assert _build_audio_speed(0) is None
+    assert _build_audio_speed(float("nan")) is None
 
 
 def test_audio_speed_zeroish_clamps():
@@ -90,3 +92,19 @@ def test_drawtext_runs_before_scale():
         f"drawtext@{drawtext_idx} must come before scale@{scale_idx} — "
         "custom positions are in source-pixel coords."
     )
+
+
+def test_waveform_peaks_match_a_plain_scan():
+    import random
+    import struct
+    from videokidnapper.core.ffmpeg.probe import _peaks
+
+    rng = random.Random(7)
+    values = [rng.randint(-32768, 32767) for _ in range(4000)]
+    raw = struct.pack(f"<{len(values)}h", *values)
+    window = len(values) // 40
+    expected = [min(1.0, max(abs(v) for v in values[i * window:(i + 1) * window]) / 32767.0)
+                for i in range(40)]
+    assert _peaks(raw, 40) == expected
+    assert _peaks(raw[:10], 40) == []
+    assert _peaks(raw + b"\x01", 40) == expected   # a stray odd byte is ignored

@@ -211,21 +211,6 @@ def shot_studio_export():
     app.destroy()
 
 
-def shot_onboarding():
-    """The first-run welcome, over the Import workspace."""
-    from videokidnapper.utils import settings
-    settings.set("onboarding_complete", False)
-    # is_first_run() keys off the settings file not existing yet.
-    settings._SETTINGS_PATH.unlink(missing_ok=True)
-    app = new_app()
-    pump(app, 0.8)
-    dialog = app._onboarding_dialog
-    dialog.update()
-    grab(dialog, "onboarding.png")
-    dialog._finish()
-    app.destroy()
-
-
 def shot_history():
     from videokidnapper.utils import settings
     from datetime import datetime, timedelta
@@ -259,35 +244,29 @@ def shot_debug():
     app.destroy()
 
 
-def shot_setup_dialog():
-    from videokidnapper.ui.setup_dialog import SetupDialog
+def shot_setup():
+    """Setup and components, a page inside the window."""
     app = new_app()
-    dlg = SetupDialog(app, on_relaunch=app._restart_app)
-    dlg.geometry("+160+120")
+    app._open_setup_page()
     pump(app, 0.4)
-    grab(dlg, "setup.png")
-    dlg.destroy()
+    grab(app, "setup.png")
     app.destroy()
 
 
-def shot_project_dialog():
-    """Project save, open, and recent-file hub."""
-    from videokidnapper.utils import settings
+def shot_projects():
+    """Import's recent projects, with the bar offering to recover an autosave."""
+    from videokidnapper.utils import project_files, settings
+    state = {"range": [1.0, 4.0], "queued": [], "layers": [], "images": []}
+    saved = settings._SETTINGS_PATH.with_name("Summer cut.vidkid")
+    document = project_files.build_document(DEMO_VIDEO, state, {}, saved)
+    project_files.save_document(saved, document)
+    settings.add_recent_project(saved)
+    # An autosave left behind is what makes the app offer recovery at start.
+    project_files.save_document(project_files.autosave_path(), document)
     app = new_app()
-    editor = load_demo(app)
-    editor._apply_selection(1.0, 4.0)
-    editor._flush_pending_snapshot()
-    editor.save_project(target=settings._SETTINGS_PATH.with_name("Summer cut.vidkid"))
-    editor._apply_selection(1.5, 3.8)
-    editor._request_snapshot(immediate=True)
-    editor.open_project_hub()
-    dialog = next(
-        child for child in app.winfo_children()
-        if child.winfo_class() == "Toplevel"
-    )
+    app.show_workspace("import")
     pump(app, 0.4)
-    grab(dialog, "projects.png")
-    dialog.destroy()
+    grab(app, "projects.png")
     app.destroy()
 
 
@@ -324,11 +303,10 @@ def _shots():
         "studio_text": shot_text_tools,
         "studio_link": shot_studio_link,
         "studio_export": shot_studio_export,
-        "onboarding": shot_onboarding,
         "history": shot_history,
         "debug": shot_debug,
-        "setup": shot_setup_dialog,
-        "projects": shot_project_dialog,
+        "setup": shot_setup,
+        "projects": shot_projects,
         "updates": shot_update_dialog,
     }
 
