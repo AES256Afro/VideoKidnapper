@@ -9,6 +9,7 @@ import customtkinter as ctk
 
 from videokidnapper.config import APP_NAME, APP_VERSION, WINDOW_SIZE, MIN_WINDOW_SIZE
 from videokidnapper.ui import theme as T
+from videokidnapper.ui.studio.banner import InlineBanner
 from videokidnapper.ui.studio.chrome import WorkspaceHost, WorkspaceSwitcher
 from videokidnapper.ui.studio.icons import icon_button
 from videokidnapper.ui.theme import button
@@ -73,21 +74,11 @@ class App(ctk.CTk):
         self._maybe_offer_recovery()
 
     def _maybe_offer_recovery(self):
+        """Offer last session's unsaved work in the banner, if there is any."""
         recovery_file = project_files.recoverable_autosave()
         if recovery_file is None:
             return False
-        # Pending from now, not from when the prompt appears: closing the
-        # window in the next 250 ms must not delete the autosave either.
-        self.trim_tab._recovery_pending = True
-
-        def show():
-            if not self.winfo_exists():
-                return
-            from videokidnapper.ui.project_dialog import RecoveryDialog
-            self._recovery_dialog = RecoveryDialog(
-                self, self.trim_tab, path=recovery_file)
-
-        self.after(250, show)
+        self.trim_tab.offer_recovery(recovery_file)
         return True
 
     def _initial_geometry(self):
@@ -151,6 +142,10 @@ class App(ctk.CTk):
         self._build_header()
         self._build_statusbar()
         self._build_workspaces()
+        # Questions are asked here, never in a popup. Made after the
+        # workspaces so it stacks above them: it floats over their top
+        # edge instead of pushing them down.
+        self.banner = InlineBanner(self, anchor=self.workspaces)
 
         # Only the eagerly-built tabs. Deferred tabs receive the toast
         # in their own constructor — reaching for them here would build
@@ -564,39 +559,89 @@ class App(ctk.CTk):
         self.trim_tab.choose_and_open_project()
         return "break"
 
+    # ------------------------------------------------------------------
+    # Closing and restarting
+    # ------------------------------------------------------------------
     def _request_close(self):
-        if self._confirm_close():
-            self.destroy()
+        """The window's close button."""
+        self.close_then(self.destroy)
 
-    def _confirm_close(self):
-        """True when the app may close: nothing running, nothing unsaved.
+    def close_then(self, callback, verb="close", on_cancel=None):
+        """Make it safe to end the app, then call ``callback``.
 
-        Shared by the window's close button, the theme's "Restart now" and
-        Setup's relaunch. The restarts used to skip it, so they dropped
-        unsaved work and left ffmpeg running in the background.
+        The one way out for everything that ends the app: the window's
+        close button, the theme's "Restart now", Setup's relaunch and the
+        updater. ``callback`` does the ending: ``self.destroy``, a
+        relaunch, starting an installer. The restarts used to skip these
+        checks, so they dropped unsaved work and left ffmpeg running.
+
+        It never blocks. With no export running and nothing unsaved,
+        ``callback`` runs straight away. Otherwise the banner asks (stop
+        the export? save the project?) and this returns at once;
+        ``callback`` runs after the last answer, and only if the user let
+        the close go ahead. Saying no anywhere, or a save that fails,
+        leaves everything as it was and calls ``on_cancel`` if given.
+
+        A running export is stopped only once the user has agreed and
+        answered the save question, so backing out of either leaves it
+        running. ``verb`` words the questions: "close", "restart" or
+        "update" ("Stop and update", "Save your project before updating?").
+
+        The updater, for example, installs only once the app may end::
+
+            app.close_then(start_installer, verb="update",
+                           on_cancel=lambda: say("Update when you're ready"))
         """
+        def settle(agreed):
+            editor = getattr(self, "trim_tab", None)
+            if editor is None:
+                finish(agreed)
+            else:
+                editor.request_close(lambda: finish(agreed), cancel=on_cancel, verb=verb)
+
+        def finish(agreed):
+            running = self._running_exports()
+            unasked = [tab for tab in running if tab not in agreed]
+            if unasked:
+                # Nothing is modal any more: an export started while the
+                # save question was up, and nobody agreed to stop that one.
+                self._ask_to_stop_exports(
+                    verb, lambda: finish(list(agreed) + unasked), on_cancel)
+                return
+            for tab in running:
+                tab.stop_export()
+            callback()
+
+        running = self._running_exports()
+        if running:
+            self._ask_to_stop_exports(verb, lambda: settle(running), on_cancel)
+        else:
+            settle([])
+
+    def _ask_to_stop_exports(self, verb, go_on, on_cancel):
+        """Ask whether to stop the running export; ``go_on`` if yes."""
+        def keep_running():
+            if on_cancel is not None:
+                on_cancel()
+
+        # Keyed "close" like the save question: a second close request
+        # replaces the first one's prompt instead of stacking another.
+        self.banner.ask(
+            f"An export is still running. Stop it and {verb} VideoKidnapper?",
+            buttons=[(f"Stop and {verb}", "primary", go_on),
+                     ("Keep exporting", "secondary", keep_running)],
+            dismiss=keep_running, tone="warn", key="close", urgent=True,
+        )
+
+    def _running_exports(self):
+        """The pages with an export in progress."""
         # Either page may not exist yet: the setup landing has neither.
         tabs = (getattr(self, "trim_tab", None),
                 getattr(self, "_built_tabs", {}).get(TAB_BATCH))
-        running = [
+        return [
             tab for tab in tabs
             if tab is not None and getattr(tab, "export_in_progress", lambda: False)()
         ]
-        if running:
-            from tkinter import messagebox
-            if not messagebox.askyesno(
-                "Export in progress",
-                "An export is still running. Stop it and close VideoKidnapper?",
-                parent=self,
-            ):
-                return False
-        editor = getattr(self, "trim_tab", None)
-        if editor is not None and not editor.request_close():
-            return False
-        # Stopped last, so cancelling the save prompt leaves it running.
-        for tab in running:
-            tab.stop_export()
-        return True
 
     # ------------------------------------------------------------------
     # Update check
@@ -756,8 +801,8 @@ class App(ctk.CTk):
     # widget-construction time. Hundreds of widgets, brittle, and the
     # status-bar "restart to apply" toast was easy to miss and made the
     # button feel broken (issue from user feedback: "This button does
-    # nothing"). Trade: confirm-to-restart, which makes the click
-    # visibly do *something* every time.
+    # nothing"). Trade: offer the restart in the banner, which makes the
+    # click visibly do *something* every time.
     def _build_theme_menu(self, parent):
         """Submenu of every theme, the current one checked."""
         if getattr(self, "_theme_menu", None) is None:
@@ -782,84 +827,33 @@ class App(ctk.CTk):
             return
         T.set_theme(key)
         label = T.THEME_LABELS.get(key, key)
-        if self._confirm_theme_restart(label):
-            self._restart_app()
-            return
-        if self.status_bar:
-            self.status_bar.show(
-                f"Theme set to {label} — restart VideoKidnapper to apply.",
-                "info",
-            )
 
-    def _confirm_theme_restart(self, mode):
-        """Modal yes/no for the restart prompt. Returns True if the user
-        chose Restart, False for Later. Falls through to False if a Tk
-        error swallows the dialog (extremely unlikely but would rather
-        skip the restart than crash)."""
-        dialog = ctk.CTkToplevel(self)
-        dialog.title("Restart to apply theme")
-        dialog.geometry("380x170")
-        dialog.resizable(False, False)
-        dialog.transient(self)
-        dialog.grab_set()
-        dialog.configure(fg_color=T.BG_BASE)
+        def later():
+            if self.status_bar:
+                self.status_bar.show(
+                    f"Theme set to {label} — restart VideoKidnapper to apply.",
+                    "info",
+                )
 
-        # Center on the main window.
-        dialog.update_idletasks()
-        x = self.winfo_x() + (self.winfo_width() - 380) // 2
-        y = self.winfo_y() + (self.winfo_height() - 170) // 2
-        dialog.geometry(f"+{x}+{y}")
-
-        card = ctk.CTkFrame(
-            dialog, fg_color=T.BG_SURFACE,
-            border_width=1, border_color=T.BORDER,
-            corner_radius=T.RADIUS_LG,
+        # Keyed, so picking another theme rewords this prompt rather
+        # than queueing a second one behind it.
+        self.banner.ask(
+            f"Theme set to {label}. Restart to apply it.",
+            buttons=[("Restart now", "primary", self._restart_app),
+                     ("Later", "ghost", later)],
+            dismiss=later, key="theme",
         )
-        card.pack(fill="both", expand=True, padx=12, pady=12)
-
-        ctk.CTkLabel(
-            card, text=f"Theme set to {mode}.",
-            font=T.font(T.SIZE_LG, "bold"),
-            text_color=T.TEXT,
-        ).pack(pady=(18, 4))
-        ctk.CTkLabel(
-            card,
-            text="VideoKidnapper needs a restart to re-theme every panel.",
-            font=T.font(T.SIZE_SM), text_color=T.TEXT_MUTED,
-        ).pack(pady=(0, 14))
-
-        choice = {"restart": False}
-
-        btn_row = ctk.CTkFrame(card, fg_color="transparent")
-        btn_row.pack(pady=(0, 14))
-
-        def pick(restart):
-            choice["restart"] = restart
-            dialog.grab_release()
-            dialog.destroy()
-
-        ctk.CTkButton(
-            btn_row, text="Later",
-            fg_color=T.BG_RAISED, hover_color=T.BG_HOVER,
-            text_color=T.TEXT, font=T.font(T.SIZE_MD, "bold"),
-            corner_radius=T.RADIUS_SM, width=110, height=34,
-            command=lambda: pick(False),
-        ).pack(side="left", padx=(0, 6))
-        ctk.CTkButton(
-            btn_row, text="Restart now",
-            fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
-            text_color=T.TEXT_ON_ACCENT, font=T.font(T.SIZE_MD, "bold"),
-            corner_radius=T.RADIUS_SM, width=130, height=34,
-            command=lambda: pick(True),
-        ).pack(side="left")
-
-        dialog.protocol("WM_DELETE_WINDOW", lambda: pick(False))
-        # Block until the user picks.
-        self.wait_window(dialog)
-        return choice["restart"]
 
     def _restart_app(self):
-        """Relaunch the current process cleanly.
+        """Relaunch the app, once a running export and unsaved work are dealt with.
+
+        Goes through close_then, so it asks exactly what closing asks.
+        Returns at once; the relaunch happens when the user lets it.
+        """
+        self.close_then(self._relaunch, verb="restart")
+
+    def _relaunch(self):
+        """Start a fresh copy of this process and close this one.
 
         Works for three launch shapes: ``python main.py`` (dev),
         ``python -m videokidnapper`` (module), and the PyInstaller
@@ -868,8 +862,6 @@ class App(ctk.CTk):
         prepending sys.executable would pass it twice.
         """
         import subprocess
-        if not self._confirm_close():
-            return
         if getattr(sys, "frozen", False):
             args = [sys.executable, *sys.argv[1:]]
         else:

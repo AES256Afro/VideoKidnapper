@@ -29,7 +29,7 @@ import time
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, messagebox
+from tkinter import filedialog
 
 import customtkinter as ctk
 
@@ -68,6 +68,8 @@ INSPECTOR_W = 340
 _FRAME_COALESCE_MS = 15
 _PREVIEW_REFRESH_MS = 40
 _PLAY_POLL_MS = 80
+# How the save question before closing names what is about to happen.
+_ENDING = {"close": "closing", "restart": "restarting", "update": "updating"}
 
 
 def short_duration(seconds):
@@ -160,6 +162,8 @@ class TrimTab(ctk.CTkFrame):
         # Set while the startup recovery prompt is unanswered, so closing
         # the app then leaves the autosave alone (see request_close).
         self._recovery_pending = False
+        self._recovery_path = None
+        self._recovery_prompt = None
 
         self.playhead = 0.0
         self.selected_text_index = None
@@ -953,14 +957,15 @@ class TrimTab(ctk.CTkFrame):
 
     def _on_downloaded_video(self, path, platform=None, title=None):
         """A download (single or batch) lands in the editor."""
-        if not self._load_path(path):
-            return
-        # After _load_path, which seeds the title from the filename —
-        # the reported title is better, being untruncated.
-        if title:
-            self.source_title = title
-        if platform:
-            self._notify(f"Kidnapped from {platform} — trim away", "success")
+        def loaded():
+            # After the load, which seeds the title from the filename —
+            # the reported title is better, being untruncated.
+            if title:
+                self.source_title = title
+            if platform:
+                self._notify(f"Kidnapped from {platform} — trim away", "success")
+
+        self._load_path(path, then=loaded)
 
     def receive_url(self, url):
         """App-level Ctrl+V router hands pasted links to the downloader."""
@@ -996,14 +1001,41 @@ class TrimTab(ctk.CTkFrame):
         except Exception:
             pass
 
-    def _load_path(self, path, preserve_project=False):
-        if not preserve_project and not self._prepare_to_replace_project():
-            return False
+    def _load_path(self, path, preserve_project=False, then=None):
+        """Load the video at ``path`` into the editor.
+
+        A new video replaces the project, so unsaved changes are offered
+        for saving first (see _prepare_to_replace_project). That question
+        is asked in the banner without blocking: this returns True only
+        when the video loaded straight away, and ``then()`` runs after a
+        successful load, now or once the user has answered.
+        ``preserve_project`` is for opening a project file, which keeps
+        the project and has already asked.
+        """
+        loaded = []
+
+        def load():
+            if self._load_video(path, preserve_project):
+                loaded.append(path)
+                if then is not None:
+                    then()
+
+        if preserve_project:
+            load()
+        else:
+            self._prepare_to_replace_project(load)
+        return bool(loaded)
+
+    def _load_video(self, path, preserve_project=False):
         try:
             new_video_info = get_video_info(path)
         except Exception as e:
             self._notify(f"Could not read video: {e}", "error")
             return False
+        if not preserve_project:
+            # Before the autosave is deleted below: a new video while the
+            # recovery prompt waits must not cost the unrecovered work.
+            self._set_aside_recovery()
         # _restoring suppresses undo/redo recording during the flurry of
         # callbacks that fires as we reset every widget below. The stack
         # is re-baselined at the end.
@@ -1703,6 +1735,13 @@ class TrimTab(ctk.CTkFrame):
         return self.open_project(path) if path else False
 
     def open_project(self, path, recovery=False):
+        """Open the project file at ``path``; ``recovery=True`` restores an autosave.
+
+        Opening over unsaved changes asks about saving them first, in the
+        banner and without blocking (see _prepare_to_replace_project), so
+        this returns True only when the project opened straight away.
+        Recovery never asks: it is offered before anything else is open.
+        """
         try:
             document = project_files.load_document(path)
         except project_files.ProjectFileError as exc:
@@ -1720,8 +1759,21 @@ class TrimTab(ctk.CTkFrame):
                 return False
             source = Path(replacement)
 
-        if not recovery and not self._prepare_to_replace_project():
-            return False
+        if recovery:
+            return self._apply_project(path, document, source, recovery=True)
+        opened = []
+
+        def apply():
+            # Before the autosave is deleted: another project while the
+            # recovery prompt waits must not cost the unrecovered work.
+            self._set_aside_recovery()
+            opened.append(self._apply_project(path, document, source))
+
+        self._prepare_to_replace_project(apply)
+        return bool(opened and opened[0])
+
+    def _apply_project(self, path, document, source, recovery=False):
+        """Load a project's video and state; open_project has checked both."""
         if not self._load_path(str(source), preserve_project=True):
             return False
         # From here the editor already shows the new video. Until the
@@ -1791,34 +1843,113 @@ class TrimTab(ctk.CTkFrame):
         )
         return True
 
+    def offer_recovery(self, path):
+        """Ask in the banner whether to recover the autosave at ``path``.
+
+        Recover reopens it, Discard deletes it, and the ✕ means "later":
+        it is kept and offered again at the next launch. Until one of
+        those happens the autosave is safe whatever else the user does:
+        closing the app keeps it (see request_close), and opening
+        something else first counts as "later" (_set_aside_recovery).
+        Returns the banner prompt.
+        """
+        self._recovery_pending = True
+        self._recovery_path = path
+
+        def recover():
+            # The prompt stays up if this fails (a damaged file, a source
+            # video that could not be found), so Discard and ✕ still work.
+            if self.open_project(path, recovery=True):
+                prompt.close()
+
+        prompt = self.app.banner.ask(
+            "Recover unsaved work from your last session?",
+            detail="Recover reopens it, Discard deletes it, ✕ asks again next time.",
+            buttons=[("Recover", "primary", recover, False),
+                     ("Discard", "secondary", lambda: self.discard_recovery(path))],
+            dismiss=lambda: self.postpone_recovery(path),
+            tone="warn", key="recovery",
+        )
+        self._recovery_prompt = prompt
+        return prompt
+
     def discard_recovery(self, path=None):
         self._recovery_pending = False
         project_files.delete_autosave(path)
 
-    def postpone_recovery(self):
-        """The recovery prompt was closed without a choice: ask next time."""
+    def postpone_recovery(self, path=None):
+        """The recovery prompt was closed without a choice: ask next time.
+
+        ``path`` is the file that was offered. The current autosave moves
+        aside, so this session's autosaves cannot replace it; one that was
+        postponed before simply stays where it is.
+        """
         self._recovery_pending = False
-        project_files.postpone_autosave()
+        current = project_files.autosave_path()
+        if path is None or Path(path).expanduser().resolve() == current.resolve():
+            project_files.postpone_autosave()
 
-    def _prepare_to_replace_project(self):
+    def _set_aside_recovery(self):
+        """Something else is opening while the recovery prompt waits.
+
+        The prompt used to be modal, so this could not happen. Now the
+        user can ignore the bar and open a video, which counts as "later":
+        the autosave moves aside, out of reach of this session's
+        autosaves and of the delete that loading a video does, and is
+        offered again at the next launch.
+        """
+        if not self._recovery_pending:
+            return
+        self.postpone_recovery(self._recovery_path)
+        if self._recovery_prompt is not None:
+            self._recovery_prompt.close()
+
+    def _prepare_to_replace_project(self, proceed):
+        """Offer to save unsaved work before something else replaces it.
+
+        Calls ``proceed`` straight away when nothing is unsaved. Otherwise
+        the banner asks and this returns at once: Save goes on after a
+        successful save (a cancelled or failed one stops there), Don't
+        save goes straight on, and Cancel or ✕ leave everything as it is.
+        """
         if not self._project_dirty:
-            return True
-        choice = messagebox.askyesnocancel(
-            "Save current project?",
-            "Save the current project before opening something else?",
-            parent=self.app,
-        )
-        if choice is None:
-            return False
-        if choice and not self.save_project():
-            return False
-        return True
+            proceed()
+            return
 
-    def request_close(self):
+        def save():
+            if self.save_project():
+                proceed()
+
+        # Keyed, so a second open while this waits replaces the question
+        # and only the newest open goes ahead.
+        self.app.banner.ask(
+            "Save the current project before opening something else?",
+            buttons=[("Save", "primary", save),
+                     ("Don't save", "secondary", proceed),
+                     ("Cancel", "ghost", None)],
+            dismiss=True, tone="warn", key="replace-project", urgent=True,
+        )
+
+    def request_close(self, proceed, cancel=None, verb="close"):
+        """Settle the project before the app ends, then call ``proceed``.
+
+        The project half of ``App.close_then``, which is the entry point
+        and also deals with running exports. It never blocks: with unsaved
+        changes the banner asks Save / Don't save / Cancel and this
+        returns at once. ``proceed`` runs once the work is saved or
+        deliberately left; Cancel, the ✕, or a save that fails or is
+        cancelled call ``cancel`` instead and the app stays open.
+        ``verb`` ("close", "restart", "update") words the question.
+        """
+        def stay_open():
+            if cancel is not None:
+                cancel()
+
         if self._recovery_pending:
             # Closing while the recovery prompt is still up: nothing was
             # chosen, so keep the autosave for the next launch.
-            return True
+            proceed()
+            return
         self._flush_pending_snapshot()
         if self._autosave_after_id is not None:
             try:
@@ -1827,21 +1958,32 @@ class TrimTab(ctk.CTkFrame):
                 pass
             self._autosave_after_id = None
         if self._project_dirty:
+            # Written before asking, so the work survives even if the
+            # question is never answered (the process killed, a crash).
             self._write_autosave()
         if not self._project_dirty:
             project_files.delete_autosave()
-            return True
-        choice = messagebox.askyesnocancel(
-            "Save project?",
-            "Save your VideoKidnapper project before closing?",
-            parent=self.app,
+            proceed()
+            return
+
+        def save():
+            if not self.save_project():
+                stay_open()
+                return
+            project_files.delete_autosave()
+            proceed()
+
+        def dont_save():
+            project_files.delete_autosave()
+            proceed()
+
+        self.app.banner.ask(
+            f"Save your project before {_ENDING.get(verb, 'closing')}?",
+            buttons=[("Save", "primary", save),
+                     ("Don't save", "secondary", dont_save),
+                     ("Cancel", "ghost", stay_open)],
+            dismiss=stay_open, tone="warn", key="close", urgent=True,
         )
-        if choice is None:
-            return False
-        if choice and not self.save_project():
-            return False
-        project_files.delete_autosave()
-        return True
 
     # ------------------------------------------------------------------
     # Export

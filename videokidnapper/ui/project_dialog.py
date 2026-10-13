@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
-"""Project actions and crash-recovery prompts."""
+"""Save, open and recent projects."""
 
 from pathlib import Path
 
@@ -8,7 +8,7 @@ import customtkinter as ctk
 
 from videokidnapper.ui import theme as T
 from videokidnapper.ui.theme import button
-from videokidnapper.utils import project_files, settings
+from videokidnapper.utils import settings
 
 
 class ProjectDialog(ctk.CTkToplevel):
@@ -114,71 +114,3 @@ class ProjectDialog(ctk.CTkToplevel):
         if self.editor.save_project(save_as=save_as):
             self.destroy()
 
-
-class RecoveryDialog(ctk.CTkToplevel):
-    def __init__(self, master, editor, path=None, **kwargs):
-        super().__init__(master, **kwargs)
-        self.editor = editor
-        self.path = path or project_files.autosave_path()
-        editor._recovery_pending = True
-        self.title("Recover VideoKidnapper Project")
-        self.geometry("500x250")
-        self.resizable(False, False)
-        self.configure(fg_color=T.BG_BASE)
-        self.transient(master)
-        self.grab_set()
-        # Closing the window is not "discard": nothing was chosen, so the
-        # autosave is kept and offered again next time.
-        self.protocol("WM_DELETE_WINDOW", self._later)
-
-        card = ctk.CTkFrame(
-            self, fg_color=T.BG_SURFACE,
-            border_width=1, border_color=T.BORDER,
-            corner_radius=T.RADIUS_LG,
-        )
-        card.pack(fill="both", expand=True, padx=14, pady=14)
-        ctk.CTkLabel(
-            card, text="Recover unsaved work?",
-            font=T.font(T.SIZE_XL, "bold"), text_color=T.TEXT,
-        ).pack(anchor="w", padx=20, pady=(20, 6))
-        ctk.CTkLabel(
-            card,
-            text="VideoKidnapper found an autosave from a session that did not "
-                 "close normally. Recover it, or discard it and start clean.",
-            font=T.font(T.SIZE_MD), text_color=T.TEXT_MUTED,
-            justify="left", wraplength=430,
-        ).pack(anchor="w", padx=20)
-        actions = ctk.CTkFrame(card, fg_color="transparent")
-        actions.pack(fill="x", padx=20, pady=(22, 18))
-        button(
-            actions, "Recover project", variant="primary", width=160,
-            command=self._recover,
-        ).pack(side="left")
-        button(
-            actions, "Discard autosave", variant="ghost", width=150,
-            command=self._discard,
-        ).pack(side="right")
-        self.after(50, self._center)
-
-    def _center(self):
-        self.update_idletasks()
-        owner = self.master.winfo_toplevel()
-        x = owner.winfo_rootx() + max(0, (owner.winfo_width() - self.winfo_width()) // 2)
-        y = owner.winfo_rooty() + max(0, (owner.winfo_height() - self.winfo_height()) // 2)
-        self.geometry(f"+{x}+{y}")
-
-    def _recover(self):
-        if self.editor.open_project(self.path, recovery=True):
-            self.destroy()
-
-    def _discard(self):
-        self.editor.discard_recovery(self.path)
-        self.destroy()
-
-    def _later(self):
-        if self.path == project_files.autosave_path():
-            self.editor.postpone_recovery()
-        else:
-            # Already the postponed file; it simply stays where it is.
-            self.editor._recovery_pending = False
-        self.destroy()
