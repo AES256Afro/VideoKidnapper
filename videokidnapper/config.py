@@ -35,13 +35,16 @@ SUPPORTED_VIDEO_EXTENSIONS = (
 
 EXPORT_FORMATS = ["GIF", "MP4"]
 
+# Each platform's domains. A link belongs to a platform when its host is
+# one of these or a subdomain of one (www., m., music., old., v., ...);
+# see downloader.detect_platform.
 SUPPORTED_PLATFORMS = {
-    "YouTube":   [r"(?:www\.|m\.|music\.)?youtube\.com/", r"youtu\.be/"],
-    "Instagram": [r"(?:www\.)?instagram\.com/"],
-    "Bluesky":   [r"(?:www\.)?bsky\.app/", r"(?:www\.)?bsky\.social/"],
-    "Twitter/X": [r"(?:www\.|mobile\.)?twitter\.com/", r"(?:www\.|mobile\.)?x\.com/"],
-    "Reddit":    [r"(?:www\.|old\.|new\.|np\.)?reddit\.com/", r"redd\.it/", r"v\.redd\.it/"],
-    "Facebook":  [r"(?:www\.|m\.|web\.)?facebook\.com/", r"fb\.watch/", r"(?:www\.)?fb\.com/"],
+    "YouTube":   ["youtube.com", "youtu.be", "youtube-nocookie.com"],
+    "Instagram": ["instagram.com"],
+    "Bluesky":   ["bsky.app", "bsky.social"],
+    "Twitter/X": ["twitter.com", "x.com"],
+    "Reddit":    ["reddit.com", "redd.it"],
+    "Facebook":  ["facebook.com", "fb.watch", "fb.com"],
 }
 
 APP_NAME = "VideoKidnapper"
