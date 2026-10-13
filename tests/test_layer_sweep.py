@@ -389,3 +389,43 @@ def test_closing_the_app_still_stops_now(root, batch_tab):
     assert not batch_tab.export_in_progress()
     root.update()
     assert first.status == STATUS_CANCELLED
+
+
+def test_batch_rows_follow_save_to_and_format(root, batch_tab, tmp_path):
+    """Output paths were fixed when files were added: changing "Save to"
+    afterwards still exported to the old folder, and switching the format
+    just swapped the extension, overwriting a file already there."""
+    from pathlib import Path
+
+    first, second = batch_tab.get_jobs()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "first_batch.mp3").write_bytes(b"keep me")
+
+    batch_tab.export_options.output_folder_var.set(str(elsewhere))
+    root.update()
+    assert Path(first.output_path).parent == elsewhere
+    assert Path(second.output_path).parent == elsewhere
+
+    batch_tab.format_var.set("MP3")
+    batch_tab._format_changed("MP3")
+    assert Path(first.output_path) == elsewhere / "first_batch_1.mp3"
+    assert Path(second.output_path) == elsewhere / "second_batch.mp3"
+    assert batch_tab._job_rows[0]["out"].cget("text").endswith("first_batch_1.mp3")
+
+
+def test_batch_run_replans_before_starting(root, batch_tab, tmp_path):
+    """A file that appeared since the rows were planned is not overwritten."""
+    from pathlib import Path
+
+    first, _second = batch_tab.get_jobs()
+    Path(first.output_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(first.output_path).write_bytes(b"someone else's file")
+    planned = first.output_path
+
+    batch_tab._start_batch()
+    _run_until(root, lambda: batch_tab.encoder.started)
+    assert first.output_path != planned
+    assert open(planned, "rb").read() == b"someone else's file"
+    batch_tab.encoder.release.set()
+    _run_until(root, lambda: not batch_tab._running())
