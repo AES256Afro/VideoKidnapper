@@ -227,7 +227,7 @@ class TextLayer:
         self.on_duplicate = on_duplicate
         self.on_move = on_move
         self._fonts = None
-        self._custom_color = None  # hex string if user picked a custom color
+        self._custom_color = None  # "#RRGGBB" when the colour isn't a preset
         # When the user drags the layer on the preview we store the source-
         # pixel coords here. Selecting a preset from the dropdown clears it.
         self._custom_position = None  # {"x": int, "y": int} or None
@@ -364,15 +364,6 @@ class TextLayer:
     def _on_time_change(self, start, end):
         """Hook for a new visible window; the panel wraps it to notify."""
 
-    def _on_color_choice(self, value):
-        if value == "Custom…":
-            self.pick_custom_color()
-            # Revert dropdown label; custom color is applied via get_layer_data.
-            if self._custom_color:
-                self.color_var.set(f"Custom {self._custom_color}")
-            else:
-                self.color_var.set("White")
-
     def _on_position_choice(self, value):
         # Picking any preset clears the drag-custom override. Selecting
         # "Custom (drag)" directly is a hint to drag — leave state alone.
@@ -400,12 +391,36 @@ class TextLayer:
         if self.on_move:
             self.on_move(self, delta)
 
-    def pick_custom_color(self):
-        from videokidnapper.ui.color_picker import ask_color
-        current = self._custom_color or "#FFFFFF"
-        new = ask_color(self.master, initial=current, title="Pick text color")
-        if new:
-            self._custom_color = new
+    def color_value(self):
+        """The colour as the layer data stores it: a preset's value
+        (``white``, ``#FF0000``...) or a custom ``#RRGGBB``."""
+        color_name = self.color_var.get()
+        if color_name.startswith("Custom ") and self._custom_color:
+            return self._custom_color
+        return TEXT_COLORS.get(color_name, "white")
+
+    def set_color(self, value):
+        """Use the colour picked in the Inspector's palette.
+
+        A preset's colour selects that preset, so it's stored exactly as
+        if it had been picked by name; any other colour is kept as a
+        custom ``#RRGGBB``. Returns False, changing nothing, when
+        ``value`` isn't a colour.
+        """
+        from videokidnapper.ui.studio.color_palette import normalize_hex, preset_name
+
+        hex_value = normalize_hex(value)
+        if hex_value is None:
+            return False
+        name = preset_name(hex_value)
+        if name is None:
+            self._custom_color = hex_value
+            name = f"Custom {hex_value}"
+        # Setting the same value would still fire the change trace and
+        # record an undo step for nothing.
+        if self.color_var.get() != name:
+            self.color_var.set(name)
+        return True
 
     def update_duration(self, duration):
         self.video_duration = duration
@@ -413,11 +428,7 @@ class TextLayer:
 
     def get_layer_data(self):
         start, end = self.time_slider.get_values()
-        color_name = self.color_var.get()
-        if color_name.startswith("Custom ") and self._custom_color:
-            fontcolor = self._custom_color
-        else:
-            fontcolor = TEXT_COLORS.get(color_name, "white")
+        fontcolor = self.color_value()
 
         # Custom-drag overrides every preset. We emit the position as the
         # raw "<x>:<y>" pair ffmpeg accepts as numeric coordinates; the

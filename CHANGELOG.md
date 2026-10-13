@@ -6,7 +6,17 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Changed
 
+- **One window.** Recovering unsaved work, saving before you close or open another project, stopping an export that is still running, and restarting after a theme change are now asked in a bar at the top of the window instead of separate popups. The bar floats over the top edge, so nothing else moves, and you can keep working while it waits. Closing the recovery bar with ✕, or opening another video first, keeps the unsaved work for next time.
+- **Projects are in the main window.** Click the project's name in the header for Open project, Save, Save as and your recent projects. Import lists recent projects too, each with an Open button. The separate Projects window is gone.
+- **No welcome window on first start.** The app opens on Import, which already shows the ways to bring a clip in.
+- **Exporting no longer opens a separate window.** Progress, Stop and the finished file now appear right under the Export button: open the file, show it in its folder, or share it from there. While an export runs the button turns into Stop, so pressing it again can't start a second export. Quick export and `Ctrl+E` take you to Export so you can watch it.
+- **Captions from speech is now in the Text tab.** Pick the Whisper model and press **Generate captions**; progress, Stop and the result show in the same place, and the model you chose is remembered. **Captions ▾ ▸ Captions from speech** opens it.
+- **Screen recording is set up on the Import page.** Type how many seconds and press **Start recording**. The window still hides while it records; open it again to stop early, and what was recorded so far is kept. The Record buttons in Edit take you there.
+- **Text colour no longer opens the system colour picker.** The Text tab shows the eight preset swatches and a box for any hex code, such as `#FF8800`, next to the current colour.
+- **Setup and components opens inside the window.** It used to open a second window. It is now a page in the main window, like the debug log: the prerequisites on the left, the install output on the right, all without scrolling. **Back** or **Esc** returns to the step you were on. An install keeps going if you leave the page, and the page shows how it went when you come back. On first run, **Review details** opens the same page in place of the setup screen.
+- **Keyboard shortcuts open inside the window.** Press **?**, or the **?** button in the header, to see every shortcut on one page. Press **?** again, **Esc** or **Back** to return to where you were. A **?** typed into a caption or any other text box is still just a question mark.
 - **Smooth scrubbing.** Dragging the playhead no longer freezes the window while each frame is fetched: frames load in the background and show as they arrive. In a test drag across a 1080p clip the window was unresponsive for 3.7 seconds in total before, and 0.2 seconds now. Loading a clip also shows the window sooner.
+- **Faster start.** The window is ready about a third sooner (2.6 s to 1.7 s on the test machine): the Export page and the Inspector's Text and Image tabs are built the first time they are used instead of at startup.
 - **Faster timeline and much less memory.** The filmstrip under the timeline loads about twice as fast and uses a few hundred kilobytes instead of up to 800 MB for 4K video, because it now fetches small frames several at a time instead of full-size frames one by one. The preview's frame cache is now capped by memory as well as by count. The waveform for an hour-long video is drawn in a fraction of a second instead of several seconds. Loading a clip no longer asks ffprobe about the same file eight times.
 
 ### Fixed
@@ -30,6 +40,7 @@ All notable changes to this project are documented here. The format is based on 
 - **Closing or restarting during an export left ffmpeg running in the background.** You are now asked first, and the export is stopped cleanly. "Restart now" after a theme change and Setup's Relaunch now ask about unsaved work like closing does.
 - **Check for updates said "You're up to date" when it could not reach GitHub.** It now says the check failed. A pip install inside another git folder is no longer mistaken for a source checkout.
 - **Dropping a file with braces in its name**, such as "Take {2}.mp4", now works.
+- **Pressing ? to close the shortcuts list opened it again.** It now closes.
 - **Command line:** `--audio-only` now writes an `.mp3`, `--audio-only` with `--format GIF` and a speed outside 0.25–4 are refused, and an unreadable file prints an error instead of a traceback.
 - **Pausing could close the app.** Pausing playback, or anything that stops it (clicking the timeline, stepping with J or L, opening another file), could crash the app without a word. Closing the window while a clip played left the sound running and crashed on the way out. Playback now stops cleanly.
 - **Videos without sound would not play.** Screen recordings, GIFs and other silent videos stopped a fraction of a second after pressing Play. They now play to the end, as does a clip whose sound ends before its picture.

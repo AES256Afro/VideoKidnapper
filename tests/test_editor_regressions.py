@@ -373,7 +373,7 @@ def test_an_empty_export_is_a_failure(clip, tmp_path):
 
 
 class _Dialog:
-    """Stand-in for the modal ExportDialog: no window and no grab."""
+    """Stand-in for the export progress job the Export page hands out."""
 
     def __init__(self, *_a, **_k):
         self.cancel_event = threading.Event()
@@ -407,7 +407,8 @@ def test_export_keeps_to_the_video_it_started_with(root, editor, clip, tmp_path,
         return output_path
 
     dialogs = []
-    monkeypatch.setattr(tt, "ExportDialog", lambda *a, **k: dialogs.append(_Dialog()) or dialogs[-1])
+    monkeypatch.setattr(editor.export_progress, "begin",
+                        lambda *a, **k: dialogs.append(_Dialog()) or dialogs[-1])
     monkeypatch.setattr(tt, "trim_to_video", fake_trim)
     notified_from = []
     monkeypatch.setattr(editor, "_notify",
@@ -434,7 +435,7 @@ def test_captions_for_another_video_are_dropped(editor):
     old video's captions to the new one."""
     before = len(editor.text_layers.layers)
     editor._on_captions_done([{"start": 1.0, "end": 2.0, "text": "old words"}],
-                             video_path="C:/elsewhere/old.mp4")
+                             "C:/elsewhere/old.mp4")
     assert len(editor.text_layers.layers) == before
     assert str(editor.captions_btn.cget("state")) == "normal"
 

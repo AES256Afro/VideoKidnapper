@@ -54,6 +54,8 @@ ICONS = {
     "open_new":   ("", "↗"),
     "more":       ("", "…"),
     "bug":        ("", "!"),
+    "info":       ("", "i"),
+    "warning":    ("", "!"),
 }
 
 _ICON_FAMILY = None

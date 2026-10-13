@@ -602,8 +602,11 @@ def test_every_exported_clip_is_in_history(root, editor, tmp_path, monkeypatch):
         return output_path
 
     dialogs = []
-    monkeypatch.setattr(tt, "ExportDialog",
-                        lambda *a, **k: dialogs.append(_QuietExportDialog()) or dialogs[-1])
+    # Progress shows on the Export page, which this editor has none of.
+    from types import SimpleNamespace
+    monkeypatch.setattr(editor, "export_progress", SimpleNamespace(
+        running=False,
+        begin=lambda *a, **k: dialogs.append(_QuietExportDialog()) or dialogs[-1]))
     monkeypatch.setattr(tt, "trim_to_video", fake_encode)
     monkeypatch.setattr(tt, "export_output_ok", lambda *_a, **_k: True)
     settings.clear_history()

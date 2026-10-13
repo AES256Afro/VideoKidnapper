@@ -29,7 +29,7 @@ import time
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, messagebox
+from tkinter import filedialog
 
 import customtkinter as ctk
 
@@ -42,7 +42,6 @@ from videokidnapper.core.preview import clear_cache
 from videokidnapper.core.screen_capture import record_screen
 from videokidnapper.ui import theme as T
 from videokidnapper.ui.editor_options import EditorOptions
-from videokidnapper.ui.export_dialog import ExportDialog
 from videokidnapper.ui.image_layers import SUPPORTED_IMAGE_EXTS, ImageLayersPanel
 from videokidnapper.ui.platform_presets import PLATFORM_CHOICES, get_preset
 from videokidnapper.ui.studio import controls as C
@@ -68,6 +67,8 @@ INSPECTOR_W = 340
 _FRAME_COALESCE_MS = 15
 _PREVIEW_REFRESH_MS = 40
 _PLAY_POLL_MS = 80
+# How the save question before closing names what is about to happen.
+_ENDING = {"close": "closing", "restart": "restarting", "update": "updating"}
 # Shortest selection or saved range: the gap the timeline keeps between
 # the in and out edges, and RangeStore's minimum.
 MIN_SELECTION_S = 0.05
@@ -196,12 +197,16 @@ class TrimTab(ctk.CTkFrame):
         # Set while the startup recovery prompt is unanswered, so closing
         # the app then leaves the autosave alone (see request_close).
         self._recovery_pending = False
+        self._recovery_path = None
+        self._recovery_prompt = None
 
         self.playhead = 0.0
         self.selected_text_index = None
         self.selected_image_index = None
         self.size_estimate_text = ""
         self.download_bar = None          # set by the Import workspace
+        self.export_progress = None       # set by the Export workspace
+        self.record_panel = None          # set by the Import workspace
         self._state_listeners = []
         self._frame_after_id = None
         self._pending_frame_t = None
@@ -568,13 +573,25 @@ class TrimTab(ctk.CTkFrame):
 
         self._preview_after_id = self.after(_PREVIEW_REFRESH_MS, run)
 
+    def _refresh_inspector_pages(self, *kinds, details=False):
+        """Bring the named Inspector pages up to date, if they exist yet.
+
+        The Text and Image pages are built on first use; one that has not
+        been built reads the current state when it is.
+        """
+        inspector = getattr(self, "inspector", None)
+        if inspector is None:
+            return
+        for kind in kinds:
+            page = inspector.pages.get(kind)
+            if page is not None:
+                (page.refresh_details if details else page.refresh)()
+
     def _on_text_layers_changed(self):
         self._schedule_preview_refresh()
         self._sync_timeline_clips()
         self._clamp_selection_indices()
-        page = getattr(self, "inspector", None)
-        if page is not None:
-            page.pages["text"].refresh_details()
+        self._refresh_inspector_pages("text", details=True)
         self._request_snapshot(immediate=False)
 
     def _on_image_layers_changed(self):
@@ -584,9 +601,7 @@ class TrimTab(ctk.CTkFrame):
         self._schedule_preview_refresh()
         self._sync_timeline_clips()
         self._clamp_selection_indices()
-        page = getattr(self, "inspector", None)
-        if page is not None:
-            page.pages["image"].refresh_details()
+        self._refresh_inspector_pages("image", details=True)
         # Debounce: typing into a text entry fires on every keystroke —
         # we only want one undo entry per "pause".
         self._request_snapshot(immediate=False)
@@ -706,7 +721,7 @@ class TrimTab(ctk.CTkFrame):
             self.selected_image_index = new_index
         self.timeline.set_selected(kind if new_index is not None else None,
                                    new_index if new_index is not None else 0)
-        self.inspector.pages[kind].refresh()
+        self._refresh_inspector_pages(kind)
         self._request_snapshot(immediate=True)
 
     def set_layer_time(self, kind, index, start, end, final=True):
@@ -726,7 +741,7 @@ class TrimTab(ctk.CTkFrame):
             self._request_snapshot(immediate=True)
         else:
             self._schedule_preview_refresh()
-            self.inspector.pages[kind].refresh_details()
+            self._refresh_inspector_pages(kind, details=True)
 
     def _on_text_dragged(self, index, source_x, source_y):
         """Preview drag: motion-armed layers record a keyframe at the
@@ -1006,14 +1021,15 @@ class TrimTab(ctk.CTkFrame):
 
     def _on_downloaded_video(self, path, platform=None, title=None):
         """A download (single or batch) lands in the editor."""
-        if not self._load_path(path):
-            return
-        # After _load_path, which seeds the title from the filename —
-        # the reported title is better, being untruncated.
-        if title:
-            self.source_title = title
-        if platform:
-            self._notify(f"Kidnapped from {platform} — trim away", "success")
+        def loaded():
+            # After the load, which seeds the title from the filename —
+            # the reported title is better, being untruncated.
+            if title:
+                self.source_title = title
+            if platform:
+                self._notify(f"Kidnapped from {platform} — trim away", "success")
+
+        self._load_path(path, then=loaded)
 
     def receive_url(self, url):
         """App-level Ctrl+V router hands pasted links to the downloader."""
@@ -1062,14 +1078,41 @@ class TrimTab(ctk.CTkFrame):
 
         threading.Thread(target=fetch, daemon=True, name="media-card-thumb").start()
 
-    def _load_path(self, path, preserve_project=False):
-        if not preserve_project and not self._prepare_to_replace_project():
-            return False
+    def _load_path(self, path, preserve_project=False, then=None):
+        """Load the video at ``path`` into the editor.
+
+        A new video replaces the project, so unsaved changes are offered
+        for saving first (see _prepare_to_replace_project). That question
+        is asked in the banner without blocking: this returns True only
+        when the video loaded straight away, and ``then()`` runs after a
+        successful load, now or once the user has answered.
+        ``preserve_project`` is for opening a project file, which keeps
+        the project and has already asked.
+        """
+        loaded = []
+
+        def load():
+            if self._load_video(path, preserve_project):
+                loaded.append(path)
+                if then is not None:
+                    then()
+
+        if preserve_project:
+            load()
+        else:
+            self._prepare_to_replace_project(load)
+        return bool(loaded)
+
+    def _load_video(self, path, preserve_project=False):
         try:
             new_video_info = get_video_info(path)
         except Exception as e:
             self._notify(f"Could not read video: {e}", "error")
             return False
+        if not preserve_project:
+            # Before the autosave is deleted below: a new video while the
+            # recovery prompt waits must not cost the unrecovered work.
+            self._set_aside_recovery()
         # _restoring suppresses undo/redo recording during the flurry of
         # callbacks that fires as we reset every widget below. The stack
         # is re-baselined at the end.
@@ -1102,8 +1145,7 @@ class TrimTab(ctk.CTkFrame):
             self.image_layers.set_duration(dur)
             self.range_queue.clear()
             self._sync_timeline_clips()
-            self.inspector.pages["text"].refresh()
-            self.inspector.pages["image"].refresh()
+            self._refresh_inspector_pages("text", "image")
 
             self.player.load_video(path, dur)
             self.preview_name.configure(text=name)
@@ -1247,9 +1289,33 @@ class TrimTab(ctk.CTkFrame):
 
     # ------------------------------------------------------------------
     def _auto_caption(self):
+        """Open "Captions from speech" in the Inspector's Text tab.
+
+        The model choice used to be a small window; it now sits inline,
+        with its own Generate button (see ``generate_captions``).
+        """
+        self._show_workspace("edit")
+        self.inspector.show("text")
+        self.inspector.pages["text"].show_speech()
+
+    def _speech_box(self):
+        inspector = getattr(self, "inspector", None)
+        page = inspector.pages.get("text") if inspector is not None else None
+        return getattr(page, "speech", None)
+
+    def captions_in_progress(self):
+        thread = getattr(self, "_captions_thread", None)
+        return bool(thread and thread.is_alive())
+
+    def generate_captions(self, model_size):
         """Run Whisper over the selection and import the result as captions."""
+        if self.captions_in_progress():
+            return
+        box = self._speech_box()
         if not self.video_path:
             self._notify("Load a video first", "warn")
+            if box is not None:
+                box.set_result("Open a video first.", "warn")
             return
         # Late-import so the app still runs when faster-whisper isn't installed.
         from videokidnapper.core import whisper_captions
@@ -1260,101 +1326,106 @@ class TrimTab(ctk.CTkFrame):
                 "Install with:  pip install faster-whisper",
                 "error",
             )
+            if box is not None:
+                box.set_result("This needs faster-whisper. Install it with:  "
+                               "pip install faster-whisper", "error")
             return
+        if model_size not in whisper_captions.MODEL_SIZES:
+            model_size = "base"
+        settings.set("whisper_model", model_size)
+        self._run_whisper_in_background(model_size)
 
-        # Small dialog: pick model size. Larger = slower + more accurate.
-        dialog = ctk.CTkToplevel(self)
-        dialog.title("Captions from speech")
-        dialog.geometry("380x220")
-        dialog.resizable(False, False)
-        dialog.configure(fg_color=T.BG_BASE)
-        dialog.transient(self.winfo_toplevel())
-        dialog.grab_set()
-
-        card = ctk.CTkFrame(
-            dialog, fg_color=T.BG_SURFACE,
-            border_width=1, border_color=T.BORDER,
-            corner_radius=T.RADIUS_LG,
-        )
-        card.pack(fill="both", expand=True, padx=14, pady=14)
-
-        ctk.CTkLabel(
-            card, text="Write captions from the speech",
-            font=T.font(T.SIZE_LG, "bold"), text_color=T.TEXT,
-        ).pack(pady=(16, 8))
-
-        model_var = ctk.StringVar(value="base")
-        row = ctk.CTkFrame(card, fg_color="transparent")
-        row.pack(pady=4)
-        ctk.CTkLabel(
-            row, text="Accuracy model", font=T.font(T.SIZE_MD),
-            text_color=T.TEXT_MUTED,
-        ).pack(side="left", padx=(0, 8))
-        C.option_menu(row, list(whisper_captions.MODEL_SIZES),
-                      variable=model_var, width=110).pack(side="left")
-
-        ctk.CTkLabel(
-            card,
-            text=(
-                "Transcribes the selection only.\n"
-                "The first run downloads the model (~75 MB for base)."
-            ),
-            font=T.font(T.SIZE_SM), text_color=T.TEXT_MUTED,
-            justify="center",
-        ).pack(pady=(8, 4))
-
-        def start():
-            model_size = model_var.get()
-            dialog.destroy()
-            self._run_whisper_in_background(model_size)
-
-        btns = ctk.CTkFrame(card, fg_color="transparent")
-        btns.pack(pady=10)
-        button(btns, "Start", variant="primary", width=120,
-               command=start).pack(side="left", padx=4)
-        button(btns, "Cancel", variant="secondary", width=120,
-               command=dialog.destroy).pack(side="left", padx=4)
+    def stop_captions(self):
+        cancel = getattr(self, "_captions_cancel", None)
+        if cancel is None or not self.captions_in_progress():
+            return
+        cancel.set()
+        box = self._speech_box()
+        if box is not None:
+            box.set_stopping()
 
     def _run_whisper_in_background(self, model_size):
         """Worker thread: transcribe then marshal the result back to Tk."""
         from videokidnapper.core import whisper_captions
 
+        video = self.video_path
         start, end = self.timeline.get_values()
-        video_path = self.video_path
         self._notify(f"Transcribing with Whisper ({model_size})…", "info")
         self.captions_btn.configure(state="disabled")
+        cancel = threading.Event()
+        self._captions_cancel = cancel
+        page = self.inspector.pages.get("text")
+        if page is not None:
+            # Keep it open for the outcome, even once captions arrive.
+            page.show_speech()
+            page.speech.set_running(model_size)
+
+        def progress(fraction):
+            self._post(self._on_captions_progress, fraction)
 
         def worker():
             try:
                 entries = whisper_captions.transcribe(
-                    video_path,
+                    video,
                     model_size=model_size,
                     start=start, end=end,
+                    progress_callback=progress,
+                    cancel_event=cancel,
                 )
             except Exception as exc:
                 self._post(self._on_captions_failed, str(exc))
                 return
-            self._post(self._on_captions_done, entries, video_path)
+            if cancel.is_set():
+                self._post(self._on_captions_stopped)
+            else:
+                self._post(self._on_captions_done, entries, video)
 
-        threading.Thread(target=worker, daemon=True).start()
+        self._captions_thread = threading.Thread(target=worker, daemon=True)
+        self._captions_thread.start()
 
-    def _on_captions_done(self, entries, video_path=None):
+    def _on_captions_progress(self, fraction):
+        box = self._speech_box()
+        if box is not None:
+            box.set_progress(fraction)
+
+    def _on_captions_done(self, entries, video=None):
         self.captions_btn.configure(state="normal")
-        if video_path is not None and video_path != self.video_path:
-            # Transcription takes a while. If another video was opened
-            # meanwhile, these captions belong to the old one.
-            self._notify(
-                f"Captions for {os.path.basename(video_path)} were not added: "
-                "a different video is open now", "warn")
+        box = self._speech_box()
+        if video is not None and video != self.video_path:
+            # Another video was opened mid-run; these lines belong to the
+            # old one.
+            message = ("A different video was opened while transcribing, "
+                       "so the captions were dropped.")
+            self._notify(message, "warn")
+            if box is not None:
+                box.set_result(message, "warn")
             return
         if not entries:
             self._notify("Whisper produced no text (silent clip?)", "warn")
+            if box is not None:
+                box.set_result("No speech found in the selection.", "warn")
             return
-        self._add_captions(entries, "caption line(s)")
+        added = self._add_captions(entries, "caption line(s)")
+        if box is not None:
+            if added:
+                box.set_result(f"Added {added} caption"
+                               f"{'s' if added != 1 else ''}.", "success")
+            else:
+                box.set_result("All of it starts after the end of this video.", "warn")
+
+    def _on_captions_stopped(self):
+        self.captions_btn.configure(state="normal")
+        self._notify("Captions from speech stopped", "info")
+        box = self._speech_box()
+        if box is not None:
+            box.set_result("Stopped. No captions were added.")
 
     def _on_captions_failed(self, error):
         self.captions_btn.configure(state="normal")
         self._notify(f"Auto-captions failed: {error}", "error")
+        box = self._speech_box()
+        if box is not None:
+            box.set_result(f"Couldn't transcribe: {error}", "error")
 
     def _import_srt(self):
         if not self.video_path:
@@ -1388,7 +1459,7 @@ class TrimTab(ctk.CTkFrame):
         if not inside:
             self._notify(f"All {len(entries)} {what} start after the end of "
                          "this video; nothing was added", "warn")
-            return
+            return 0
         first = len(self.text_layers.layers)
         self.text_layers.import_srt_layers(srt_to_text_layers(inside))
         self.select_layer("text", first)
@@ -1396,71 +1467,76 @@ class TrimTab(ctk.CTkFrame):
         if late:
             message += f"; {late} after the end of the video left out"
         self._notify(message, "success")
+        return len(inside)
 
     # ------------------------------------------------------------------
     def _record_screen(self):
-        dialog = ctk.CTkToplevel(self)
-        dialog.title("Record your screen")
-        dialog.geometry("360x200")
-        dialog.resizable(False, False)
-        dialog.configure(fg_color=T.BG_BASE)
-        dialog.transient(self.winfo_toplevel())
-        dialog.grab_set()
+        """Go to "Record your screen" in the Import workspace.
 
-        card = ctk.CTkFrame(
-            dialog, fg_color=T.BG_SURFACE,
-            border_width=1, border_color=T.BORDER,
-            corner_radius=T.RADIUS_LG,
-        )
-        card.pack(fill="both", expand=True, padx=14, pady=14)
+        Its options and Start / Stop used to be a small window; they now
+        live on that page (``RecordPanel``).
+        """
+        self._show_workspace("import")
+        if self.record_panel is not None:
+            self.record_panel.focus_seconds()
 
-        ctk.CTkLabel(
-            card, text="Record the main monitor",
-            font=T.font(T.SIZE_LG, "bold"), text_color=T.TEXT,
-        ).pack(pady=(18, 8))
+    def screen_recording_in_progress(self):
+        thread = getattr(self, "_record_thread", None)
+        return bool(thread and thread.is_alive())
 
-        dur_var = ctk.StringVar(value="10")
-        row = ctk.CTkFrame(card, fg_color="transparent")
-        row.pack(pady=4)
-        ctk.CTkLabel(row, text="Seconds (1–120)",
-                     font=T.font(T.SIZE_MD), text_color=T.TEXT_MUTED).pack(side="left")
-        C.entry(row, textvariable=dur_var, width=70, mono=True).pack(side="left", padx=8)
-
-        def start():
-            try:
-                seconds = max(1, min(120, int(dur_var.get())))
-            except ValueError:
-                seconds = 10
-            dialog.destroy()
-            self._run_screen_recording(seconds)
-
-        btns = ctk.CTkFrame(card, fg_color="transparent")
-        btns.pack(pady=14)
-        button(btns, "Start recording", variant="primary", width=130,
-               command=start).pack(side="left", padx=4)
-        button(btns, "Cancel", variant="secondary", width=100,
-               command=dialog.destroy).pack(side="left", padx=4)
-
-    def _run_screen_recording(self, duration_seconds):
-        self._notify(f"Recording {duration_seconds}s — window will minimize...", "info")
+    def start_screen_recording(self, duration_seconds):
+        if self.screen_recording_in_progress():
+            return
+        try:
+            seconds = max(1, min(120, int(duration_seconds)))
+        except (TypeError, ValueError):
+            seconds = 10
+        settings.set("record_seconds", seconds)
+        cancel = threading.Event()
+        self._record_cancel = cancel
+        if self.record_panel is not None:
+            self.record_panel.set_recording(seconds)
+        self._notify(f"Recording {seconds}s — window will minimize...", "info")
+        # The window gets out of the way so the recording shows what's
+        # behind it. There is deliberately no floating Stop button: the
+        # recording ends by itself after the chosen time, and bringing
+        # the window back from the taskbar shows Stop right on this page.
         self.winfo_toplevel().iconify()
-        time.sleep(0.4)  # let the window minimize before capture begins
         # Tk variables are read here, not on the worker thread.
         output_folder = self.export_options.get_output_folder()
         preset = self.quality_var.get()
 
+        shown = -1
+
+        def elapsed(seconds_in):
+            # The recorder reports every frame; the page only shows seconds.
+            nonlocal shown
+            whole = int(seconds_in)
+            if whole != shown:
+                shown = whole
+                self._post(self._on_record_elapsed, whole)
+
         def worker():
+            # Let the window finish minimizing before capture begins. In
+            # the worker, where the old main-thread sleep froze the window.
+            time.sleep(0.4)
             try:
                 frame_dir, fps, count = record_screen(
-                    duration_seconds, fps=15,
-                    progress_callback=None,
+                    seconds, fps=15,
+                    cancel_event=cancel,
+                    progress_callback=elapsed,
                 )
             except Exception as e:
                 self._post(self._on_record_failed, str(e))
                 return
             if count < 2:
-                self._post(self._on_record_failed, "No frames captured")
+                if cancel.is_set():
+                    self._post(self._on_record_stopped)
+                else:
+                    self._post(self._on_record_failed, "No frames captured")
                 return
+            # Stop ends the recording early; what was captured is kept.
+            self._post(self._on_record_encoding)
             # A screen recording has no source video, so the title
             # styles fall back to "clip" — which is the honest answer.
             output = generate_export_path(
@@ -1468,22 +1544,57 @@ class TrimTab(ctk.CTkFrame):
                 base_dir=output_folder,
                 source_name="screen recording",
             )
-            result = frames_to_video(str(frame_dir), fps, preset, str(output))
+            try:
+                result = frames_to_video(str(frame_dir), fps, preset, str(output))
+            except Exception as e:
+                self._post(self._on_record_failed, str(e))
+                return
             self._post(self._on_record_done, str(result) if result else None)
 
-        threading.Thread(target=worker, daemon=True).start()
+        self._record_thread = threading.Thread(target=worker, daemon=True)
+        self._record_thread.start()
+
+    def stop_screen_recording(self):
+        cancel = getattr(self, "_record_cancel", None)
+        if cancel is None or not self.screen_recording_in_progress():
+            return
+        cancel.set()
+        if self.record_panel is not None:
+            self.record_panel.set_stopping()
+
+    def _on_record_elapsed(self, seconds):
+        if self.record_panel is not None:
+            self.record_panel.set_elapsed(seconds)
+
+    def _on_record_encoding(self):
+        if self.record_panel is not None:
+            self.record_panel.set_encoding()
 
     def _on_record_done(self, path):
         self.winfo_toplevel().deiconify()
         if not path:
             self._notify("Recording failed during encoding", "error")
+            if self.record_panel is not None:
+                self.record_panel.set_result("Couldn't save the recording.", "error")
             return
-        self._notify(f"Recorded {os.path.basename(path)}", "success")
-        self._load_path(path)
+        name = os.path.basename(path)
+        self._notify(f"Recorded {name}", "success")
+        loaded = self._load_path(path)
+        if self.record_panel is not None:
+            self.record_panel.set_result(
+                f"Recorded {name}." + (" It's open in Edit." if loaded else ""), "success")
+
+    def _on_record_stopped(self):
+        self.winfo_toplevel().deiconify()
+        self._notify("Recording stopped", "info")
+        if self.record_panel is not None:
+            self.record_panel.set_result("Stopped before anything was recorded.")
 
     def _on_record_failed(self, error):
         self.winfo_toplevel().deiconify()
         self._notify(f"Recording failed: {error}", "error")
+        if self.record_panel is not None:
+            self.record_panel.set_result(f"Recording failed: {error}", "error")
 
     # ------------------------------------------------------------------
     # Playback
@@ -1700,8 +1811,10 @@ class TrimTab(ctk.CTkFrame):
             self._clamp_selection_indices()
             self._sync_timeline_clips()
             for kind in ("text", "image"):
-                self.inspector.pages[kind].layer = None
-                self.inspector.pages[kind].refresh()
+                page = self.inspector.pages.get(kind)
+                if page is not None:
+                    page.layer = None
+            self._refresh_inspector_pages("text", "image")
 
             # Show the frame at the playhead and refresh the overlay.
             self.player.show_frame(self.playhead)
@@ -1765,8 +1878,12 @@ class TrimTab(ctk.CTkFrame):
         setter(name, self._project_dirty)
 
     def open_project_hub(self):
-        from videokidnapper.ui.project_dialog import ProjectDialog
-        ProjectDialog(self.app, self)
+        """Show Import, which lists recent projects and has Open project.
+
+        There used to be a Projects window. Save and Save as are now in
+        the menu under the project's name in the header.
+        """
+        self._show_workspace("import")
 
     def save_project(self, save_as=False, target=None):
         if not self.video_path:
@@ -1813,6 +1930,13 @@ class TrimTab(ctk.CTkFrame):
         return self.open_project(path) if path else False
 
     def open_project(self, path, recovery=False):
+        """Open the project file at ``path``; ``recovery=True`` restores an autosave.
+
+        Opening over unsaved changes asks about saving them first, in the
+        banner and without blocking (see _prepare_to_replace_project), so
+        this returns True only when the project opened straight away.
+        Recovery never asks: it is offered before anything else is open.
+        """
         try:
             document = project_files.load_document(path)
         except project_files.ProjectFileError as exc:
@@ -1830,8 +1954,21 @@ class TrimTab(ctk.CTkFrame):
                 return False
             source = Path(replacement)
 
-        if not recovery and not self._prepare_to_replace_project():
-            return False
+        if recovery:
+            return self._apply_project(path, document, source, recovery=True)
+        opened = []
+
+        def apply():
+            # Before the autosave is deleted: another project while the
+            # recovery prompt waits must not cost the unrecovered work.
+            self._set_aside_recovery()
+            opened.append(self._apply_project(path, document, source))
+
+        self._prepare_to_replace_project(apply)
+        return bool(opened and opened[0])
+
+    def _apply_project(self, path, document, source, recovery=False):
+        """Load a project's video and state; open_project has checked both."""
         if not self._load_path(str(source), preserve_project=True):
             return False
         # From here the editor already shows the new video. Until the
@@ -1901,34 +2038,113 @@ class TrimTab(ctk.CTkFrame):
         )
         return True
 
+    def offer_recovery(self, path):
+        """Ask in the banner whether to recover the autosave at ``path``.
+
+        Recover reopens it, Discard deletes it, and the ✕ means "later":
+        it is kept and offered again at the next launch. Until one of
+        those happens the autosave is safe whatever else the user does:
+        closing the app keeps it (see request_close), and opening
+        something else first counts as "later" (_set_aside_recovery).
+        Returns the banner prompt.
+        """
+        self._recovery_pending = True
+        self._recovery_path = path
+
+        def recover():
+            # The prompt stays up if this fails (a damaged file, a source
+            # video that could not be found), so Discard and ✕ still work.
+            if self.open_project(path, recovery=True):
+                prompt.close()
+
+        prompt = self.app.banner.ask(
+            "Recover unsaved work from your last session?",
+            detail="Recover reopens it, Discard deletes it, ✕ asks again next time.",
+            buttons=[("Recover", "primary", recover, False),
+                     ("Discard", "secondary", lambda: self.discard_recovery(path))],
+            dismiss=lambda: self.postpone_recovery(path),
+            tone="warn", key="recovery",
+        )
+        self._recovery_prompt = prompt
+        return prompt
+
     def discard_recovery(self, path=None):
         self._recovery_pending = False
         project_files.delete_autosave(path)
 
-    def postpone_recovery(self):
-        """The recovery prompt was closed without a choice: ask next time."""
+    def postpone_recovery(self, path=None):
+        """The recovery prompt was closed without a choice: ask next time.
+
+        ``path`` is the file that was offered. The current autosave moves
+        aside, so this session's autosaves cannot replace it; one that was
+        postponed before simply stays where it is.
+        """
         self._recovery_pending = False
-        project_files.postpone_autosave()
+        current = project_files.autosave_path()
+        if path is None or Path(path).expanduser().resolve() == current.resolve():
+            project_files.postpone_autosave()
 
-    def _prepare_to_replace_project(self):
+    def _set_aside_recovery(self):
+        """Something else is opening while the recovery prompt waits.
+
+        The prompt used to be modal, so this could not happen. Now the
+        user can ignore the bar and open a video, which counts as "later":
+        the autosave moves aside, out of reach of this session's
+        autosaves and of the delete that loading a video does, and is
+        offered again at the next launch.
+        """
+        if not self._recovery_pending:
+            return
+        self.postpone_recovery(self._recovery_path)
+        if self._recovery_prompt is not None:
+            self._recovery_prompt.close()
+
+    def _prepare_to_replace_project(self, proceed):
+        """Offer to save unsaved work before something else replaces it.
+
+        Calls ``proceed`` straight away when nothing is unsaved. Otherwise
+        the banner asks and this returns at once: Save goes on after a
+        successful save (a cancelled or failed one stops there), Don't
+        save goes straight on, and Cancel or ✕ leave everything as it is.
+        """
         if not self._project_dirty:
-            return True
-        choice = messagebox.askyesnocancel(
-            "Save current project?",
-            "Save the current project before opening something else?",
-            parent=self.app,
-        )
-        if choice is None:
-            return False
-        if choice and not self.save_project():
-            return False
-        return True
+            proceed()
+            return
 
-    def request_close(self):
+        def save():
+            if self.save_project():
+                proceed()
+
+        # Keyed, so a second open while this waits replaces the question
+        # and only the newest open goes ahead.
+        self.app.banner.ask(
+            "Save the current project before opening something else?",
+            buttons=[("Save", "primary", save),
+                     ("Don't save", "secondary", proceed),
+                     ("Cancel", "ghost", None)],
+            dismiss=True, tone="warn", key="replace-project", urgent=True,
+        )
+
+    def request_close(self, proceed, cancel=None, verb="close"):
+        """Settle the project before the app ends, then call ``proceed``.
+
+        The project half of ``App.close_then``, which is the entry point
+        and also deals with running exports. It never blocks: with unsaved
+        changes the banner asks Save / Don't save / Cancel and this
+        returns at once. ``proceed`` runs once the work is saved or
+        deliberately left; Cancel, the ✕, or a save that fails or is
+        cancelled call ``cancel`` instead and the app stays open.
+        ``verb`` ("close", "restart", "update") words the question.
+        """
+        def stay_open():
+            if cancel is not None:
+                cancel()
+
         if self._recovery_pending:
             # Closing while the recovery prompt is still up: nothing was
             # chosen, so keep the autosave for the next launch.
-            return True
+            proceed()
+            return
         self._flush_pending_snapshot()
         if self._autosave_after_id is not None:
             try:
@@ -1937,21 +2153,32 @@ class TrimTab(ctk.CTkFrame):
                 pass
             self._autosave_after_id = None
         if self._project_dirty:
+            # Written before asking, so the work survives even if the
+            # question is never answered (the process killed, a crash).
             self._write_autosave()
         if not self._project_dirty:
             project_files.delete_autosave()
-            return True
-        choice = messagebox.askyesnocancel(
-            "Save project?",
-            "Save your VideoKidnapper project before closing?",
-            parent=self.app,
+            proceed()
+            return
+
+        def save():
+            if not self.save_project():
+                stay_open()
+                return
+            project_files.delete_autosave()
+            proceed()
+
+        def dont_save():
+            project_files.delete_autosave()
+            proceed()
+
+        self.app.banner.ask(
+            f"Save your project before {_ENDING.get(verb, 'closing')}?",
+            buttons=[("Save", "primary", save),
+                     ("Don't save", "secondary", dont_save),
+                     ("Cancel", "ghost", stay_open)],
+            dismiss=stay_open, tone="warn", key="close", urgent=True,
         )
-        if choice is None:
-            return False
-        if choice and not self.save_project():
-            return False
-        project_files.delete_autosave()
-        return True
 
     # ------------------------------------------------------------------
     # Export
@@ -1963,8 +2190,27 @@ class TrimTab(ctk.CTkFrame):
         ranges.append((start, end))
         return ranges
 
+    def _show_export_progress(self):
+        """Bring the Export workspace's "This project" page into view."""
+        self._show_workspace("export")
+        workspace = getattr(self.app, "export_workspace", None)
+        if workspace is not None:
+            workspace.show("project")
+
     def _export(self):
         if not self.video_path:
+            return
+        # Progress shows under the Export button, so go there: an export
+        # started from Edit (Ctrl+E, Quick export) is then in view too.
+        # Showing it also builds the Export workspace, and its progress
+        # panel with it, the first time.
+        self._show_export_progress()
+        panel = self.export_progress
+        if panel is None:
+            self._notify("Export isn't ready yet", "warn")
+            return
+        if panel.running or self.export_in_progress():
+            self._notify("An export is already running. Stop it first.", "warn")
             return
 
         preset = self.quality_var.get()
@@ -1988,9 +2234,10 @@ class TrimTab(ctk.CTkFrame):
         source_title = self.source_title
 
         title_suffix = " (joined)" if concat else ""
-        dialog = ExportDialog(
-            self,
-            title=f"Exporting {len(ranges)} clip{'s' if len(ranges) != 1 else ''}{title_suffix}...",
+        # The job answers what the old progress window did, so the worker
+        # below still calls it ``dialog``.
+        dialog = panel.begin(
+            f"Exporting {len(ranges)} clip{'s' if len(ranges) != 1 else ''}{title_suffix}…",
         )
         self._notify(f"Exporting {len(ranges)} clip(s) [{preset}]{title_suffix}...", "info")
 
@@ -2051,11 +2298,20 @@ class TrimTab(ctk.CTkFrame):
                     if result:
                         produced.append(str(result))
                     else:
-                        self._post(failed, f"Clip {i} failed — aborting")
+                        if dialog.cancel_event.is_set():
+                            break  # Stopped; reported below.
+                        self._post(failed, f"Clip {i} failed — aborting",
+                                   f"Export failed on clip {i}")
                         return
                 except Exception as e:
                     self._post(failed, f"Error: {e}", f"Export error: {e}")
                     return
+
+            if dialog.cancel_event.is_set():
+                # Clips that finished before Stop stay on disk, but they
+                # aren't the export that was asked for: not recorded.
+                self._post(stopped)
+                return
 
             final_path = None
             if concat and len(produced) > 1:
@@ -2085,6 +2341,11 @@ class TrimTab(ctk.CTkFrame):
             if not final_path:
                 final_path = produced[-1] if produced else None
             self._post(finished, final_path, saved)
+
+        def stopped():
+            if dialog.winfo_exists():
+                dialog.export_failed("Cancelled")
+            self._notify("Export stopped", "warn")
 
         def finished(final_path, saved=()):
             if not dialog.winfo_exists():
