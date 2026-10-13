@@ -21,16 +21,39 @@ source-time), so whatever holds for ``enable=between(t,...)`` holds for
 the motion path identically.
 """
 
+from videokidnapper.utils.coerce import coerce_float
+
+
+def _valid_keyframes(keyframes):
+    """The well-formed entries of ``keyframes``, as float dicts.
+
+    Paths come from project files, which are shared and may be damaged:
+    an entry that is not a dict, lacks ``t``/``x``/``y`` or holds a
+    non-number (or NaN / infinity) is skipped, never raised on. The
+    preview calls this for every frame it draws.
+    """
+    if not isinstance(keyframes, (list, tuple)):
+        return []
+    valid = []
+    for kf in keyframes:
+        if not isinstance(kf, dict):
+            continue
+        values = [coerce_float(kf.get(key), None) for key in ("t", "x", "y")]
+        if None in values:
+            continue
+        valid.append(dict(zip(("t", "x", "y"), values)))
+    return valid
+
 
 def normalize_keyframes(keyframes):
     """Sorted-by-time copy with near-duplicate times (< 10 ms) collapsed.
 
     Later entries win a collision, which makes "drag again at the same
-    frame" mean "replace", the intuitive editing behavior.
+    frame" mean "replace", the intuitive editing behavior. Malformed
+    entries are dropped (see :func:`_valid_keyframes`).
     """
     cleaned = []
-    for kf in sorted(keyframes or [], key=lambda k: float(k["t"])):
-        entry = {"t": float(kf["t"]), "x": float(kf["x"]), "y": float(kf["y"])}
+    for entry in sorted(_valid_keyframes(keyframes), key=lambda k: k["t"]):
         if cleaned and abs(entry["t"] - cleaned[-1]["t"]) < 0.01:
             cleaned[-1] = entry
         else:

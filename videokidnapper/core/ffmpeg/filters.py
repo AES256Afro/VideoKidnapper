@@ -236,12 +236,15 @@ def _build_drawtext_filter(layer, fade=0.0, frame_w=None, frame_h=None):
     if keyframes:
         from videokidnapper.utils.keyframes import compile_axis_expr
         try:
-            x_expr = f"'{compile_axis_expr(keyframes, 'x')}'"
-            y_expr = f"'{compile_axis_expr(keyframes, 'y')}'"
+            x_axis = compile_axis_expr(keyframes, 'x')
+            y_axis = compile_axis_expr(keyframes, 'y')
         except (KeyError, TypeError, ValueError):
-            # Corrupt keyframe data (e.g. a hand-edited project) falls
-            # back to the static position instead of aborting the encode.
-            x_expr = y_expr = None
+            x_axis = y_axis = None
+        # Corrupt keyframe data (e.g. a hand-edited project) compiles to
+        # nothing and falls back to the static position instead of
+        # aborting the encode.
+        if x_axis is not None and y_axis is not None:
+            x_expr, y_expr = f"'{x_axis}'", f"'{y_axis}'"
     if x_expr is None:
         # Position is validated, not escaped: it is interpolated bare
         # into the filter spec, so anything that is not provably a
