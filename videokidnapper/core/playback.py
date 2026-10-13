@@ -83,6 +83,9 @@ class AudioClock:
         self._sample_rate = sample_rate
         self._samples = 0
         self._wall_start = None
+        # Set by finish(): where the audio left off, and when.
+        self._finished_at = None
+        self._finished_time = 0.0
         self._lock = threading.Lock()
 
     def reset(self, base_time):
@@ -90,23 +93,42 @@ class AudioClock:
             self._base_time = float(base_time)
             self._samples = 0
             self._wall_start = time.monotonic()
+            self._finished_at = None
 
     def mark(self, sample_count):
         """Record ``sample_count`` more samples written to the audio device."""
         with self._lock:
             self._samples += int(sample_count)
 
+    def finish(self):
+        """The audio is done; keep time moving on the wall clock from here.
+
+        The sample count stops growing when the audio ends. If the
+        picture runs longer than the sound, or there is no sound at all,
+        the video thread would otherwise wait forever for a frame time
+        the clock never reaches.
+        """
+        with self._lock:
+            if self._finished_at is None:
+                self._finished_time = self._time_locked()
+                self._finished_at = time.monotonic()
+
     def time_now(self):
         """Return the current playback timestamp in clip-space seconds."""
         with self._lock:
-            if self._sample_rate and self._samples > 0:
-                return self._base_time + self._samples / self._sample_rate
-            # No audio data yet — fall back to wall clock so video still
-            # plays at real-time (used for silent clips and the first
-            # few ms before the audio thread has written anything).
-            if self._wall_start is None:
-                return self._base_time
-            return self._base_time + (time.monotonic() - self._wall_start)
+            if self._finished_at is not None:
+                return self._finished_time + (time.monotonic() - self._finished_at)
+            return self._time_locked()
+
+    def _time_locked(self):
+        if self._sample_rate and self._samples > 0:
+            return self._base_time + self._samples / self._sample_rate
+        # No audio data yet — fall back to wall clock so video still
+        # plays at real-time (used for silent clips and the first
+        # few ms before the audio thread has written anything).
+        if self._wall_start is None:
+            return self._base_time
+        return self._base_time + (time.monotonic() - self._wall_start)
 
 
 # ---------------------------------------------------------------------------
@@ -141,11 +163,13 @@ class AudioVideoPlayer:
             Path to the source video.
         render_callback : callable
             ``cb(pil_image, timestamp_seconds)`` — called from the video
-            thread. The UI side must marshal back to the Tk main
-            thread via ``widget.after(0, ...)``.
+            thread. It must not call into Tk (not even ``after``); hand
+            the frame over and let the Tk thread pick it up.
         on_finished : callable, optional
-            ``cb(reason)`` where ``reason`` is ``"end"`` on natural end
-            or ``"stopped"`` on user stop. Fired once per ``play()``.
+            ``cb(reason)`` where ``reason`` is ``"end"`` once both the
+            sound and the picture have run out, or ``"stopped"`` on user
+            stop. Fired once per ``play()``, from a worker thread on a
+            natural end, so the same rule applies.
         ffmpeg_path : str, optional
             Path to ffmpeg binary. Defaults to the system ``ffmpeg`` —
             callers that already resolved a portable copy should pass
@@ -161,9 +185,12 @@ class AudioVideoPlayer:
         self._audio_thread = None
         self._video_thread = None
         self._audio_proc = None
-        self._audio_stream = None
         self._running = False
         self._finished_fired = False
+        # Workers of the current session still playing ("audio" and
+        # "video"). The clip has ended when both have run out.
+        self._pending = set()
+        self._lock = threading.Lock()
 
     # ------------------------------------------------------------------
     def is_running(self):
@@ -180,64 +207,74 @@ class AudioVideoPlayer:
         If a previous play is still running, it's stopped first.
         """
         self.stop()
-        self._stop_event.clear()
-        self._finished_fired = False
-        self._clock.reset(base_time=float(start))
+        # Each session gets its own stop event and clock. A worker from
+        # the previous session may still be closing its stream; it must
+        # not see a cleared event and carry on, or tick the new clock.
+        stop_event = threading.Event()
+        clock = AudioClock(sample_rate=self.SAMPLE_RATE)
+        clock.reset(base_time=float(start))
+        with self._lock:
+            self._stop_event = stop_event
+            self._clock = clock
+            self._finished_fired = False
+            self._pending = {"audio", "video"}
         self._running = True
 
         self._audio_thread = threading.Thread(
             target=self._audio_worker,
-            args=(start, end),
+            args=(start, end, stop_event, clock),
             name="AudioVideoPlayer-audio",
             daemon=True,
         )
         self._video_thread = threading.Thread(
             target=self._video_worker,
-            args=(start, end),
+            args=(start, end, stop_event, clock),
             name="AudioVideoPlayer-video",
             daemon=True,
         )
         self._audio_thread.start()
         self._video_thread.start()
 
-    def stop(self):
-        """Signal both threads to exit and release audio resources.
+    def stop(self, wait=0.0):
+        """Signal both threads to exit.
 
-        Safe to call repeatedly. Does not block on thread join to keep
-        the Tk event loop responsive; the daemon threads die on their
-        own once they see the stop event.
+        Safe to call repeatedly. This only signals: the audio thread owns
+        its sound stream and closes it itself. Stopping or closing the
+        stream from this thread as well raced the worker's own cleanup
+        inside PortAudio, and pausing playback crashed the app.
+
+        ``wait`` is how long to wait for the threads to finish, for a
+        caller about to exit the process: the sound library's own
+        shutdown must not run while a stream is still closing. By
+        default nothing blocks, which keeps the Tk event loop responsive.
         """
         was_running = self._running
         self._stop_event.set()
         self._running = False
-        # Tear down audio first — the OS stream holds real hardware.
-        stream = self._audio_stream
-        if stream is not None:
-            try:
-                stream.stop()
-                stream.close()
-            except Exception:
-                pass
-            self._audio_stream = None
+        # Killing the decoder ends the audio thread's pipe read at once.
         proc = self._audio_proc
         if proc is not None:
             try:
                 proc.terminate()
             except Exception:
                 pass
-            self._audio_proc = None
         # Only fire "stopped" if something was actually playing. play()
         # calls stop() to tear down any prior session; on a fresh player
         # (nothing running) that must not spuriously notify the UI.
         if was_running:
             self._fire_finished("stopped")
+        if wait:
+            for thread in (self._audio_thread, self._video_thread):
+                if thread is not None and thread is not threading.current_thread():
+                    thread.join(wait)
 
     # ------------------------------------------------------------------
     def _fire_finished(self, reason):
         """Dispatch on_finished exactly once per play() cycle."""
-        if self._finished_fired:
-            return
-        self._finished_fired = True
+        with self._lock:
+            if self._finished_fired:
+                return
+            self._finished_fired = True
         cb = self.on_finished
         if cb:
             try:
@@ -245,160 +282,179 @@ class AudioVideoPlayer:
             except Exception:
                 pass
 
+    def _worker_done(self, name, stop_event):
+        """A worker ran out of input. The clip ends when both have."""
+        with self._lock:
+            # A stop, or a worker from a session that has since been
+            # replaced, is not the end of the clip.
+            if stop_event.is_set() or stop_event is not self._stop_event:
+                return
+            self._pending.discard(name)
+            finished = not self._pending
+        if finished:
+            self._running = False
+            self._fire_finished("end")
+
     # ------------------------------------------------------------------
-    def _audio_worker(self, start, end):
-        """Pipe PCM from ffmpeg into the sound device, ticking the clock."""
-        try:
-            import numpy as np
-            import sounddevice as sd
-        except Exception:
-            # Deps gone at runtime — bail; video thread will use wall clock.
-            return
+    def _audio_worker(self, start, end, stop_event, clock):
+        """Pipe PCM from ffmpeg into the sound device, ticking the clock.
 
-        cmd = [
-            self.ffmpeg_path, "-hide_banner", "-loglevel", "error",
-            "-ss", str(max(0.0, float(start))),
-            "-i", self.video_path,
-        ]
-        if end is not None:
-            cmd += ["-t", str(max(0.01, float(end) - float(start)))]
-        cmd += [
-            "-vn",
-            "-f", "s16le",
-            "-ac", str(self.CHANNELS),
-            "-ar", str(self.SAMPLE_RATE),
-            "pipe:",
-        ]
+        Returns early, silently, when the deps or the sound device are
+        missing or the file has no audio track. The video thread then
+        plays on the wall clock and decides when the clip is over. This
+        thread used to end the clip itself, which stopped silent videos
+        (screen recordings, GIFs) a quarter of a second in.
+        """
+        proc = None
+        stream = None
         try:
-            self._audio_proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                bufsize=0,
-            )
-        except Exception:
-            return
-
-        try:
-            self._audio_stream = sd.OutputStream(
-                samplerate=self.SAMPLE_RATE,
-                channels=self.CHANNELS,
-                dtype="int16",
-            )
-            self._audio_stream.start()
-        except Exception:
-            # Audio device not available (headless CI, no speakers).
-            # Silent fallback — video thread will still play via wall clock.
-            self._audio_stream = None
             try:
-                self._audio_proc.terminate()
+                import numpy as np
+                import sounddevice as sd
             except Exception:
-                pass
-            return
+                return
 
-        bytes_per_sample = 2 * self.CHANNELS
-        chunk_bytes = self.CHUNK_SAMPLES * bytes_per_sample
+            cmd = [
+                self.ffmpeg_path, "-hide_banner", "-loglevel", "error",
+                "-ss", str(max(0.0, float(start))),
+                "-i", self.video_path,
+            ]
+            if end is not None:
+                cmd += ["-t", str(max(0.01, float(end) - float(start)))]
+            cmd += [
+                "-vn",
+                "-f", "s16le",
+                "-ac", str(self.CHANNELS),
+                "-ar", str(self.SAMPLE_RATE),
+                "pipe:",
+            ]
+            try:
+                proc = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                    bufsize=0,
+                )
+            except Exception:
+                return
+            self._audio_proc = proc
+            if stop_event.is_set():
+                return  # stopped before stop() could see the process
 
-        try:
-            while not self._stop_event.is_set():
-                raw = self._audio_proc.stdout.read(chunk_bytes)
+            bytes_per_sample = 2 * self.CHANNELS
+            chunk_bytes = self.CHUNK_SAMPLES * bytes_per_sample
+
+            while not stop_event.is_set():
+                raw = proc.stdout.read(chunk_bytes)
                 if not raw:
                     break
                 # If the last read was short, respect that many samples.
                 samples_this_chunk = len(raw) // bytes_per_sample
                 if samples_this_chunk == 0:
                     break
+                if stream is None:
+                    # Opened on the first audio, so a file without an
+                    # audio track never takes the sound device.
+                    try:
+                        stream = sd.OutputStream(
+                            samplerate=self.SAMPLE_RATE,
+                            channels=self.CHANNELS,
+                            dtype="int16",
+                        )
+                        stream.start()
+                    except Exception:
+                        # Audio device not available (headless CI, no
+                        # speakers). Silent fallback — the video thread
+                        # still plays via the wall clock.
+                        stream = None
+                        return
                 arr = np.frombuffer(
                     raw[: samples_this_chunk * bytes_per_sample],
                     dtype=np.int16,
                 ).reshape(-1, self.CHANNELS)
                 try:
-                    self._audio_stream.write(arr)
+                    stream.write(arr)
                 except Exception:
                     break
-                self._clock.mark(samples_this_chunk)
+                clock.mark(samples_this_chunk)
+        except Exception:
+            pass
         finally:
-            # Release the hardware stream and ffmpeg process. On a user
-            # stop() these are already torn down (both teardowns are
-            # idempotent); on a *natural* end stop() never runs, so
-            # without this the OutputStream would leak until the next
-            # play() — accumulating open device handles across clips.
-            stream = self._audio_stream
+            # This thread is the only one that touches the stream. A stop
+            # drops what is still queued, so the sound cuts at once; a
+            # natural end lets the last of it play out.
             if stream is not None:
                 try:
-                    stream.stop()
+                    if stop_event.is_set():
+                        stream.abort()
+                    else:
+                        stream.stop()
                     stream.close()
                 except Exception:
                     pass
-                self._audio_stream = None
-            proc = self._audio_proc
             if proc is not None:
                 try:
                     proc.terminate()
                 except Exception:
                     pass
-                self._audio_proc = None
-            # Audio EOF means natural end of clip — fire finished so
-            # the UI can update the play-button label.
-            if not self._stop_event.is_set():
-                self._fire_finished("end")
+                if self._audio_proc is proc:
+                    self._audio_proc = None
+            clock.finish()
+            self._worker_done("audio", stop_event)
 
-    def _video_worker(self, start, end):
+    def _video_worker(self, start, end, stop_event, clock):
         """Pull decoded frames, wait for audio clock, hand off to Tk."""
+        reader = None
         try:
-            import imageio_ffmpeg
-            from PIL import Image
-        except Exception:
-            return
-
-        input_params = ["-ss", str(max(0.0, float(start)))]
-        output_params = []
-        if end is not None:
-            output_params += ["-t", str(max(0.01, float(end) - float(start)))]
-        # Same colour chain as the export and the still preview, so HDR
-        # footage plays back with the colours it will export with.
-        try:
-            from videokidnapper.core.ffmpeg.probe import preview_color_filter
-            vf = preview_color_filter(self.video_path)
-        except Exception:
-            vf = None
-        if vf:
-            output_params += ["-vf", vf]
-
-        try:
-            reader = imageio_ffmpeg.read_frames(
-                self.video_path,
-                input_params=input_params,
-                output_params=output_params,
-                pix_fmt="rgb24",
-            )
-            meta = next(reader)
-        except Exception:
-            return
-
-        w, h = meta.get("size", (0, 0))
-        src_fps = meta.get("fps") or 30.0
-        if w <= 0 or h <= 0:
             try:
-                reader.close()
+                import imageio_ffmpeg
+                from PIL import Image
             except Exception:
-                pass
-            return
+                return
 
-        try:
+            input_params = ["-ss", str(max(0.0, float(start)))]
+            output_params = []
+            if end is not None:
+                output_params += ["-t", str(max(0.01, float(end) - float(start)))]
+            # Same colour chain as the export and the still preview, so HDR
+            # footage plays back with the colours it will export with.
+            try:
+                from videokidnapper.core.ffmpeg.probe import preview_color_filter
+                vf = preview_color_filter(self.video_path)
+            except Exception:
+                vf = None
+            if vf:
+                output_params += ["-vf", vf]
+
+            try:
+                reader = imageio_ffmpeg.read_frames(
+                    self.video_path,
+                    input_params=input_params,
+                    output_params=output_params,
+                    pix_fmt="rgb24",
+                )
+                meta = next(reader)
+            except Exception:
+                return
+
+            w, h = meta.get("size", (0, 0))
+            src_fps = meta.get("fps") or 30.0
+            if w <= 0 or h <= 0:
+                return
+
             for i, raw in enumerate(reader):
-                if self._stop_event.is_set():
+                if stop_event.is_set():
                     break
                 frame_t = float(start) + i / src_fps
 
                 # Wait for the audio clock to catch up. Poll with a
                 # small sleep so we don't hot-spin the CPU.
-                while not self._stop_event.is_set():
-                    now = self._clock.time_now()
+                while not stop_event.is_set():
+                    now = clock.time_now()
                     lag = frame_t - now
                     if lag <= self.VIDEO_LOOKAHEAD_S:
                         break
                     time.sleep(min(0.030, max(0.001, lag / 2)))
 
-                if self._stop_event.is_set():
+                if stop_event.is_set():
                     break
 
                 try:
@@ -410,8 +466,12 @@ class AudioVideoPlayer:
                 except Exception:
                     # A single bad frame shouldn't end playback.
                     pass
+        except Exception:
+            pass
         finally:
-            try:
-                reader.close()
-            except Exception:
-                pass
+            if reader is not None:
+                try:
+                    reader.close()
+                except Exception:
+                    pass
+            self._worker_done("video", stop_event)
