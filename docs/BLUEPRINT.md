@@ -72,7 +72,6 @@ videokidnapper/
 │   ├── export_options.py    # speed / rotate / aspect / color / transitions
 │   ├── export_dialog.py     # modal progress + share-to-platform panel
 │   ├── setup_dialog.py      # FFmpeg + pip-packages auto-installer
-│   ├── project_dialog.py    # save/open/recent project hub + recovery
 │   ├── update_dialog.py     # install-aware app update action
 │   ├── shortcuts_dialog.py  # discoverable keyboard reference
 │   ├── batch_queue.py       # batch URL download panel

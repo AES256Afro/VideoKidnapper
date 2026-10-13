@@ -255,24 +255,20 @@ def shot_setup_dialog():
     app.destroy()
 
 
-def shot_project_dialog():
-    """Project save, open, and recent-file hub."""
-    from videokidnapper.utils import settings
+def shot_projects():
+    """Import's recent projects, with the bar offering to recover an autosave."""
+    from videokidnapper.utils import project_files, settings
+    state = {"range": [1.0, 4.0], "queued": [], "layers": [], "images": []}
+    saved = settings._SETTINGS_PATH.with_name("Summer cut.vidkid")
+    document = project_files.build_document(DEMO_VIDEO, state, {}, saved)
+    project_files.save_document(saved, document)
+    settings.add_recent_project(saved)
+    # An autosave left behind is what makes the app offer recovery at start.
+    project_files.save_document(project_files.autosave_path(), document)
     app = new_app()
-    editor = load_demo(app)
-    editor._apply_selection(1.0, 4.0)
-    editor._flush_pending_snapshot()
-    editor.save_project(target=settings._SETTINGS_PATH.with_name("Summer cut.vidkid"))
-    editor._apply_selection(1.5, 3.8)
-    editor._request_snapshot(immediate=True)
-    editor.open_project_hub()
-    dialog = next(
-        child for child in app.winfo_children()
-        if child.winfo_class() == "Toplevel"
-    )
+    app.show_workspace("import")
     pump(app, 0.4)
-    grab(dialog, "projects.png")
-    dialog.destroy()
+    grab(app, "projects.png")
     app.destroy()
 
 
@@ -312,7 +308,7 @@ def _shots():
         "history": shot_history,
         "debug": shot_debug,
         "setup": shot_setup_dialog,
-        "projects": shot_project_dialog,
+        "projects": shot_projects,
         "updates": shot_update_dialog,
     }
 
