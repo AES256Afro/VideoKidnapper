@@ -293,8 +293,11 @@ class TimelineView(ctk.CTkFrame):
             with _THUMB_LOCK:
                 if gen == self._media_gen:
                     try:
+                        # Fetched at lane height: full frames cost about a
+                        # second per ten and up to 25 MB each in the cache.
                         frames = extract_thumbnail_strip(
-                            video_path, duration, count=_THUMB_COUNT)
+                            video_path, duration, count=_THUMB_COUNT,
+                            height=lane_h)
                     except Exception:
                         frames = []
                     for frame in frames:

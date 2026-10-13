@@ -148,3 +148,28 @@ def test_subprocess_text_is_read_as_utf8():
 
 def test_unused_subprocess_import_kept_for_monkeypatching():
     assert probe.subprocess is subprocess
+
+
+def test_probe_is_cached_per_file_version(tmp_path, monkeypatch):
+    import os
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"one")
+    runs = []
+
+    def run(cmd, **kwargs):
+        runs.append(cmd)
+        return SimpleNamespace(returncode=0, stderr="", stdout=(
+            '{"streams": [{"codec_type": "video", "width": 640, "height": 360}],'
+            ' "format": {"duration": "2.5"}}'))
+
+    monkeypatch.setattr(probe.subprocess, "run", run)
+    monkeypatch.setattr(probe, "_get_ffprobe", lambda: "ffprobe")
+    monkeypatch.setattr(probe, "_info_cache", {})
+    first = probe.get_video_info(clip)
+    first["width"] = 1   # a caller scribbling on its copy
+    assert probe.get_video_info(str(clip))["width"] == 640
+    assert len(runs) == 1
+    clip.write_bytes(b"changed")
+    os.utime(clip, ns=(1, 1))
+    probe.get_video_info(clip)
+    assert len(runs) == 2, "a changed file is probed again"

@@ -14,6 +14,8 @@ Tk is needed for a real widget, so the module skips without a display —
 the same reason the rest of ``ui/`` is untested on CI.
 """
 
+import sys
+
 import pytest
 
 
@@ -32,7 +34,12 @@ def root():
         instance = ctk.CTk()
     except Exception as exc:  # pragma: no cover - headless CI
         pytest.skip(f"no usable display: {type(exc).__name__}: {exc}")
-    instance.geometry("1000x700")
+    # Mapped, so widgets get real sizes, but invisible: transparent, off
+    # screen and off the taskbar. Running the tests must not flash windows.
+    instance.attributes("-alpha", 0.0)
+    if sys.platform == "win32":
+        instance.attributes("-toolwindow", True)
+    instance.geometry("1000x700+-4000+-4000")
     yield instance
     try:
         instance.destroy()
