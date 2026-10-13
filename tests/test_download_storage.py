@@ -83,3 +83,20 @@ def test_reddit_direct_media_is_kept(dirs, monkeypatch):
     assert (media / "cat (2).gif").read_bytes() == b"GIF89a..."
     assert (media / "cat.gif").read_bytes() == b"an earlier download"
     assert list(temp.iterdir()) == []
+
+
+def test_same_title_downloads_get_different_files(dirs):
+    """Two reels from one Instagram account are both titled "Video by
+    <user>". The second download found the first one's file, and yt-dlp
+    handed it back as already downloaded."""
+    yt_dlp = pytest.importorskip("yt_dlp")
+
+    opts, _platform = downloader._build_ydl_opts(
+        "https://www.instagram.com/reel/A1/", None, lambda d: None)
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        first = ydl.prepare_filename(
+            {"title": "Video by someone", "id": "A1", "ext": "mp4"})
+        second = ydl.prepare_filename(
+            {"title": "Video by someone", "id": "B2", "ext": "mp4"})
+    assert first != second
+    assert "A1" in first and "B2" in second

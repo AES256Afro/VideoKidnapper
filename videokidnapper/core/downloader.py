@@ -105,7 +105,11 @@ def _build_ydl_opts(url, ffmpeg_dir, progress_hook, cookies=None):
         # former is cleared on exit: the editor and saved projects use the
         # finished file where it lands.
         "paths": {"home": str(config.MEDIA_DIR), "temp": str(config.TEMP_DIR)},
-        "outtmpl": "%(title).80s.%(ext)s",
+        # The id keeps two videos with the same title apart. Instagram
+        # titles every reel "Video by <user>"; without it the second reel
+        # from an account found the first one's file, yt-dlp reported it
+        # "already downloaded", and the editor opened the wrong video.
+        "outtmpl": "%(title).80s [%(id)s].%(ext)s",
         "merge_output_format": "mp4",
         "progress_hooks": [progress_hook],
         "quiet": True,
