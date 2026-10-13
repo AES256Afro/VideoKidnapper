@@ -41,7 +41,7 @@ videokidnapper/
 │   ├── trim_tab.py / url_tab.py / history_tab.py / debug_tab.py
 │   ├── video_player.py     # canvas preview + text overlay + crop overlay + DnD + play
 │   ├── widgets.py          # range slider, toast, platform chip, timestamp entry
-│   ├── export_options.py / export_dialog.py / share_panel.py
+│   ├── export_options.py / share_panel.py
 │   ├── text_layers.py / multi_range.py / batch_queue.py / waveform.py
 │   ├── setup_dialog.py     # prereq checklist
 │   └── theme.py            # design tokens; dark + light palettes

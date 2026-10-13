@@ -109,9 +109,9 @@ Opened from **Setup and components…** in the settings (gear) menu. When FFmpeg
 - **Open Admin Terminal** launches an elevated shell pre-populated with the right commands for your OS: `winget install Gyan.FFmpeg` on Windows (via PowerShell `Start-Process -Verb RunAs`), `brew install ffmpeg` on macOS (via Terminal + `osascript`), `sudo apt-get install ffmpeg` on Linux. If no terminal is available, commands are copied to the clipboard as a fallback.
 - **Relaunch** restarts the current process so newly-installed prerequisites are picked up.
 
-### Share (inside the Export dialog)
+### Share (under the Export button)
 
-After a successful export, the Export dialog reveals a share panel with a caption entry and one button per supported platform. Clicking a button:
+After a successful export, the Export workspace shows the result right under the Export button: **Open file**, **Show in folder**, and a share panel with a caption entry and one button per supported platform. Clicking a platform button:
 
 1. Copies the exported file to the OS clipboard (Windows: PowerShell `Set-Clipboard -Path`; macOS: `pbcopy`; Linux: `xclip`)
 2. Opens the platform's compose / upload page in your browser (pre-filled with your caption on X, Reddit, and Facebook's sharer)
