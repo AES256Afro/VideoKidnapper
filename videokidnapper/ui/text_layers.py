@@ -3,12 +3,12 @@
 import os
 import sys
 import tkinter.font as tkfont
+from contextlib import contextmanager
 
 import customtkinter as ctk
 
 from videokidnapper.config import TEXT_STYLES, POSITION_MAP, TEXT_COLORS
 from videokidnapper.ui import theme as T
-from videokidnapper.ui.widgets import RangeSlider
 
 
 def _get_system_fonts():
@@ -174,19 +174,52 @@ def _find_font_path(font_name, bold=False, italic=False, fonts_dir=None):
     return _variant_font_path(os.path.join(dirs[0], "arial.ttf"), bold, italic)
 
 
-class TextLayerWidget(ctk.CTkFrame):
-    """A single text layer with all its controls."""
+class _TimeRange:
+    """A caption's visible window, in seconds of the source video.
+
+    Holds what the hidden ``RangeSlider`` of each caption row used to:
+    the same ``from_``/``to`` bounds, the same clamping in
+    :meth:`set_values`, and a ``command`` the panel wraps, so the
+    timeline, the Inspector and undo use it unchanged.
+    """
+
+    def __init__(self, from_=0, to=100, command=None):
+        self.from_ = from_
+        self.to = to
+        self.command = command
+        self._start_val = from_
+        self._end_val = to
+
+    def set_range(self, from_, to):
+        self.from_ = from_
+        self.to = to
+        self._start_val = from_
+        self._end_val = to
+
+    def set_values(self, start, end):
+        self._start_val = max(self.from_, min(start, self.to))
+        self._end_val = max(self.from_, min(end, self.to))
+
+    def get_values(self):
+        return self._start_val, self._end_val
+
+
+class TextLayer:
+    """One caption: its settings held in Tk variables, with no widgets.
+
+    The Studio Inspector edits the selected caption by binding its own
+    controls to these variables; the preview, timeline and export read
+    :meth:`get_layer_data`. Each caption used to build a full row of
+    controls that was never shown, about thirty widgets with four
+    drop-down menus. A 300-line subtitle file took minutes to import
+    that way, and then failed when Windows ran out of menus. Tk
+    variables cost microseconds.
+    """
 
     def __init__(self, master, layer_index, video_duration,
-                 on_remove=None, on_duplicate=None, on_move=None, **kwargs):
-        super().__init__(
-            master,
-            corner_radius=T.RADIUS_MD,
-            border_width=1,
-            border_color=T.BORDER,
-            fg_color=T.BG_RAISED,
-            **kwargs,
-        )
+                 on_remove=None, on_duplicate=None, on_move=None):
+        # ``master`` owns the Tk variables (and parents any dialog).
+        self.master = master
         self.layer_index = layer_index
         self.video_duration = video_duration
         self.on_remove = on_remove
@@ -198,236 +231,51 @@ class TextLayerWidget(ctk.CTkFrame):
         # pixel coords here. Selecting a preset from the dropdown clears it.
         self._custom_position = None  # {"x": int, "y": int} or None
 
-        self._build_ui()
+        self._build_vars()
 
-    def _build_ui(self):
-        # Row 1: Header + style preset + remove button
-        row1 = ctk.CTkFrame(self, fg_color="transparent")
-        row1.pack(fill="x", padx=10, pady=(8, 4))
+    def _build_vars(self):
+        def string(value):
+            return ctk.StringVar(self.master, value=value)
 
-        ctk.CTkLabel(
-            row1, text=f"Layer {self.layer_index + 1}",
-            font=T.font(T.SIZE_LG, "bold"),
-            text_color=T.TEXT,
-        ).pack(side="left")
+        def flag(value):
+            return ctk.BooleanVar(self.master, value=value)
 
-        self.remove_btn = ctk.CTkButton(
-            row1, text="✕", width=28, height=28,
-            fg_color=T.DANGER, hover_color=T.DANGER_HOVER,
-            font=T.font(T.SIZE_MD, "bold"),
-            corner_radius=T.RADIUS_SM,
-            command=self._on_remove,
-        )
-        self.remove_btn.pack(side="right")
-
-        self.dup_btn = ctk.CTkButton(
-            row1, text="⧉", width=28, height=28,
-            fg_color=T.BG_RAISED, hover_color=T.BG_HOVER,
-            text_color=T.TEXT,
-            font=T.font(T.SIZE_MD, "bold"),
-            corner_radius=T.RADIUS_SM,
-            command=self._on_duplicate,
-        )
-        self.dup_btn.pack(side="right", padx=(0, 4))
-
-        self.down_btn = ctk.CTkButton(
-            row1, text="▼", width=24, height=28,
-            fg_color="transparent", hover_color=T.BG_HOVER,
-            text_color=T.TEXT_MUTED,
-            font=T.font(T.SIZE_SM),
-            corner_radius=T.RADIUS_SM,
-            command=lambda: self._on_move(1),
-        )
-        self.down_btn.pack(side="right")
-
-        self.up_btn = ctk.CTkButton(
-            row1, text="▲", width=24, height=28,
-            fg_color="transparent", hover_color=T.BG_HOVER,
-            text_color=T.TEXT_MUTED,
-            font=T.font(T.SIZE_SM),
-            corner_radius=T.RADIUS_SM,
-            command=lambda: self._on_move(-1),
-        )
-        self.up_btn.pack(side="right")
-
-        ctk.CTkLabel(row1, text="Style:", font=ctk.CTkFont(size=12)).pack(side="right", padx=(0, 5))
-        self.style_var = ctk.StringVar(value="Subtitle")
-        self.style_menu = ctk.CTkOptionMenu(
-            row1, variable=self.style_var,
-            values=list(TEXT_STYLES.keys()), width=110,
-            command=self._on_style_change,
-        )
-        self.style_menu.pack(side="right", padx=(0, 8))
-
-        # Row 2: Text input — a 2-line textbox so captions can wrap.
-        # Embedded newlines flow through to drawtext (and the PIL preview)
-        # as real line breaks. ``text_var`` mirrors the textbox content so
-        # the panel's trace-based change wiring keeps working.
-        row2 = ctk.CTkFrame(self, fg_color="transparent")
-        row2.pack(fill="x", padx=10, pady=2)
-
-        self.text_var = ctk.StringVar(value="")
-        self.text_box = ctk.CTkTextbox(
-            row2, height=56, wrap="word",
-            font=ctk.CTkFont(size=13),
-            border_width=1,
-        )
-        self.text_box.pack(fill="x")
-        self.text_box.bind("<KeyRelease>", self._sync_text_var)
-        self.text_box.bind("<FocusOut>", self._sync_text_var)
-
-        # Row 3: Font, size, color, position
-        row3 = ctk.CTkFrame(self, fg_color="transparent")
-        row3.pack(fill="x", padx=10, pady=2)
-
-        ctk.CTkLabel(row3, text="Font:", font=ctk.CTkFont(size=11)).pack(side="left")
-        self.font_var = ctk.StringVar(value="Arial")
-        self.font_menu = ctk.CTkOptionMenu(
-            row3, variable=self.font_var,
-            values=self._get_fonts()[:30],  # Limit dropdown length
-            width=130,
-        )
-        self.font_menu.pack(side="left", padx=(2, 8))
-
-        ctk.CTkLabel(row3, text="Size:", font=ctk.CTkFont(size=11)).pack(side="left")
-        self.size_var = ctk.StringVar(value="24")
-        self.size_entry = ctk.CTkEntry(
-            row3, textvariable=self.size_var, width=50, height=28,
-            font=ctk.CTkFont(size=12), justify="center",
-        )
-        self.size_entry.pack(side="left", padx=(2, 8))
-
-        # Bold / italic toggles — resolved to font-variant files at
-        # export and preview time (arialbd.ttf, ariali.ttf, ...).
-        self.bold_var = ctk.BooleanVar(value=False)
-        self.bold_cb = ctk.CTkCheckBox(
-            row3, text="B", variable=self.bold_var, width=36,
-            font=ctk.CTkFont(size=12, weight="bold"),
-        )
-        self.bold_cb.pack(side="left", padx=(0, 2))
-
-        self.italic_var = ctk.BooleanVar(value=False)
-        self.italic_cb = ctk.CTkCheckBox(
-            row3, text="I", variable=self.italic_var, width=36,
-            font=ctk.CTkFont(size=12, slant="italic"),
-        )
-        self.italic_cb.pack(side="left", padx=(0, 8))
-
-        ctk.CTkLabel(row3, text="Color:", font=ctk.CTkFont(size=11)).pack(side="left")
-        self.color_var = ctk.StringVar(value="White")
-        self.color_menu = ctk.CTkOptionMenu(
-            row3, variable=self.color_var,
-            values=list(TEXT_COLORS.keys()) + ["Custom…"], width=110,
-            command=self._on_color_choice,
-        )
-        self.color_menu.pack(side="left", padx=(2, 8))
-
-        ctk.CTkLabel(row3, text="Position:", font=ctk.CTkFont(size=11)).pack(side="left")
-        self.position_var = ctk.StringVar(value="Bottom Center")
-        # Custom is selected automatically when the user drags the text on
-        # the preview; picking any preset clears the custom override.
-        self.position_menu = ctk.CTkOptionMenu(
-            row3, variable=self.position_var,
-            values=list(POSITION_MAP.keys()) + ["Custom (drag)"], width=150,
-            command=self._on_position_choice,
-        )
-        self.position_menu.pack(side="left", padx=(2, 0))
-
-        # Row 4: Background box / outline / shadow toggles
-        row4 = ctk.CTkFrame(self, fg_color="transparent")
-        row4.pack(fill="x", padx=10, pady=2)
-
-        self.box_var = ctk.BooleanVar(value=True)
-        self.box_cb = ctk.CTkCheckBox(
-            row4, text="Background box",
-            variable=self.box_var,
-            font=ctk.CTkFont(size=11),
-        )
-        self.box_cb.pack(side="left", padx=(0, 12))
-
+        self.style_var = string("Subtitle")
+        # The caption text. Embedded newlines flow through to drawtext
+        # (and the PIL preview) as real line breaks.
+        self.text_var = string("")
+        self.font_var = string("Arial")
+        self.size_var = string("24")
+        # Bold / italic resolve to font-variant files at export and
+        # preview time (arialbd.ttf, ariali.ttf, ...).
+        self.bold_var = flag(False)
+        self.italic_var = flag(False)
+        self.color_var = string("White")
+        # "Custom (drag)" is selected automatically when the user drags
+        # the text on the preview; picking any preset clears the override.
+        self.position_var = string("Bottom Center")
+        self.box_var = flag(True)
+        self.outline_var = flag(False)
+        self.shadow_var = flag(False)
         # Outline / shadow widths and offsets default to the social-caption
         # standard (2px). load_from_dict preserves imported values in the
         # private fields so a round-trip doesn't normalise them away.
         self._borderw = 2
         self._shadow_offset = (2, 2)
-
-        self.outline_var = ctk.BooleanVar(value=False)
-        self.outline_cb = ctk.CTkCheckBox(
-            row4, text="Outline",
-            variable=self.outline_var,
-            font=ctk.CTkFont(size=11),
-        )
-        self.outline_cb.pack(side="left", padx=(0, 12))
-
-        self.shadow_var = ctk.BooleanVar(value=False)
-        self.shadow_cb = ctk.CTkCheckBox(
-            row4, text="Shadow",
-            variable=self.shadow_var,
-            font=ctk.CTkFont(size=11),
-        )
-        self.shadow_cb.pack(side="left")
-
-        # Row 5: Timing slider
-        row5 = ctk.CTkFrame(self, fg_color="transparent")
-        row5.pack(fill="x", padx=10, pady=(2, 8))
-
-        ctk.CTkLabel(row5, text="Visible:", font=ctk.CTkFont(size=11)).pack(side="left")
-
-        self.time_slider = RangeSlider(
-            row5, from_=0, to=max(self.video_duration, 0.1),
-            command=self._on_time_change,
-        )
-        self.time_slider.pack(side="left", fill="x", expand=True, padx=(5, 5))
-
-        from videokidnapper.utils.time_format import seconds_to_hms
-        self.time_label = ctk.CTkLabel(
-            row5,
-            text=f"0s - {seconds_to_hms(self.video_duration)}",
-            font=ctk.CTkFont(family="Consolas", size=11), text_color="gray",
-        )
-        self.time_label.pack(side="right")
-
+        self.time_slider = _TimeRange(
+            0, max(self.video_duration, 0.1), command=self._on_time_change)
         # Motion path (meme-style tracked caption). While armed, dragging
         # the text on the preview records a keyframe at the current
         # playhead time instead of moving the whole layer; the caption
         # then follows the interpolated path in preview AND export.
-        row6 = ctk.CTkFrame(self, fg_color="transparent")
-        row6.pack(fill="x", padx=10, pady=(0, 8))
-
         self._keyframes = []
-        self.motion_var = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(
-            row6, text="🎯 Motion track", variable=self.motion_var,
-            font=ctk.CTkFont(size=11),
-            fg_color=T.ACCENT, hover_color=T.ACCENT_HOVER,
-            border_color=T.BORDER_STRONG, checkbox_width=18,
-            checkbox_height=18, command=self._on_motion_toggled,
-        ).pack(side="left")
+        self.motion_var = flag(False)
 
-        self.motion_hint = ctk.CTkLabel(
-            row6, text="",
-            font=ctk.CTkFont(size=10), text_color="gray", anchor="w",
-        )
-        self.motion_hint.pack(side="left", padx=(8, 0))
-
-        self.motion_clear_btn = ctk.CTkButton(
-            row6, text="✕ clear path", width=80, height=20,
-            fg_color="transparent", hover_color=T.BG_HOVER,
-            text_color="gray", font=ctk.CTkFont(size=10),
-            command=self._clear_keyframes,
-        )
-        # packed on demand by _update_motion_hint
-
-        # Auto-track: drop the caption on the thing, click, and OpenCV
-        # follows it. Owned by the studio tab (needs the player + video);
-        # the panel forwards clicks via its autotrack handler.
-        self.autotrack_btn = ctk.CTkButton(
-            row6, text="⚡ Auto-track from here", width=150, height=20,
-            fg_color=T.BG_RAISED, hover_color=T.BG_HOVER,
-            text_color=T.TEXT, font=ctk.CTkFont(size=10),
-            command=lambda: self._request_autotrack(),
-        )
-        self.autotrack_btn.pack(side="right", padx=(0, 6))
+    def destroy(self):
+        """The panel dropped this caption: stop calling back into it."""
+        self._change_cb = None
+        self._autotrack_cb = None
+        self.time_slider.command = None
 
     def _request_autotrack(self):
         cb = getattr(self, "_autotrack_cb", None)
@@ -440,19 +288,16 @@ class TextLayerWidget(ctk.CTkFrame):
         self._keyframes = normalize_keyframes(keyframes)
         if self._keyframes:
             self.motion_var.set(True)
-        self._update_motion_hint()
         self._fire_change()
 
     # ------------------------------------------------------------------
     # Motion path (keyframed position)
     # ------------------------------------------------------------------
     def _on_motion_toggled(self):
-        self._update_motion_hint()
         self._fire_change()
 
     def _clear_keyframes(self):
         self._keyframes = []
-        self._update_motion_hint()
         self._fire_change()
 
     def add_keyframe(self, t, x, y):
@@ -461,26 +306,10 @@ class TextLayerWidget(ctk.CTkFrame):
         self._keyframes.append(
             {"t": float(t), "x": float(x), "y": float(y)})
         self._keyframes = normalize_keyframes(self._keyframes)
-        self._update_motion_hint()
         self._fire_change()
 
     def is_motion_armed(self):
         return bool(self.motion_var.get())
-
-    def _update_motion_hint(self):
-        n = len(self._keyframes)
-        if self.motion_var.get():
-            hint = (f"{n} point{'s' if n != 1 else ''} — scrub, then drag "
-                    "the text to add the next one"
-                    if n else
-                    "scrub the timeline, drag the text where it should be")
-        else:
-            hint = f"path: {n} points" if n else ""
-        self.motion_hint.configure(text=hint)
-        if n:
-            self.motion_clear_btn.pack(side="right")
-        else:
-            self.motion_clear_btn.pack_forget()
 
     def _fire_change(self):
         # The panel wires _notify_change onto layers after construction;
@@ -494,16 +323,10 @@ class TextLayerWidget(ctk.CTkFrame):
             self._fonts = _get_system_fonts()
         return self._fonts
 
-    def _sync_text_var(self, _event=None):
-        """Mirror the textbox into ``text_var`` so traces keep firing."""
-        value = self.text_box.get("1.0", "end-1c")
+    def _set_text(self, value):
+        value = value or ""
         if value != self.text_var.get():
             self.text_var.set(value)
-
-    def _set_text(self, value):
-        self.text_box.delete("1.0", "end")
-        self.text_box.insert("1.0", value or "")
-        self.text_var.set(value or "")
 
     def _on_style_change(self, style_name):
         style = TEXT_STYLES.get(style_name, {})
@@ -538,8 +361,7 @@ class TextLayerWidget(ctk.CTkFrame):
             self.color_var.set("Black")
 
     def _on_time_change(self, start, end):
-        from videokidnapper.utils.time_format import seconds_to_hms
-        self.time_label.configure(text=f"{seconds_to_hms(start)} - {seconds_to_hms(end)}")
+        """Hook for a new visible window; the panel wraps it to notify."""
 
     def _on_color_choice(self, value):
         if value == "Custom…":
@@ -580,7 +402,7 @@ class TextLayerWidget(ctk.CTkFrame):
     def pick_custom_color(self):
         from videokidnapper.ui.color_picker import ask_color
         current = self._custom_color or "#FFFFFF"
-        new = ask_color(self, initial=current, title="Pick text color")
+        new = ask_color(self.master, initial=current, title="Pick text color")
         if new:
             self._custom_color = new
 
@@ -613,7 +435,7 @@ class TextLayerWidget(ctk.CTkFrame):
 
         sx, sy = self._shadow_offset
         return {
-            "text": self.text_box.get("1.0", "end-1c"),
+            "text": self.text_var.get(),
             "font": self.font_var.get(),
             "fontsize": fontsize,
             "fontcolor": fontcolor,
@@ -635,7 +457,7 @@ class TextLayerWidget(ctk.CTkFrame):
         }
 
     def load_from_dict(self, data):
-        """Populate this widget from a layer dict (used for duplicate/import)."""
+        """Populate this caption from a layer dict (duplicate, import, undo)."""
         self._set_text(data.get("text", ""))
         self.font_var.set(data.get("font", "Arial"))
         self.size_var.set(str(data.get("fontsize", 24)))
@@ -696,7 +518,10 @@ class TextLayerWidget(ctk.CTkFrame):
         # Motion path round-trips through undo snapshots / duplication.
         from videokidnapper.utils.keyframes import normalize_keyframes
         self._keyframes = normalize_keyframes(data.get("keyframes") or [])
-        self._update_motion_hint()
+
+
+# The old name, for anything that still imports it.
+TextLayerWidget = TextLayer
 
 
 class TextLayersPanel(ctk.CTkFrame):
@@ -718,15 +543,40 @@ class TextLayersPanel(ctk.CTkFrame):
         self.video_duration = 0
         self._expanded = False
         self._on_change = on_change
+        # batch_changes() nesting depth, and whether a change arrived
+        # while it was held.
+        self._batch_depth = 0
+        self._batch_changed = False
 
         self._build_ui()
 
     def _notify_change(self):
+        if self._batch_depth:
+            self._batch_changed = True
+            return
         if self._on_change:
             try:
                 self._on_change()
             except Exception:
                 pass
+
+    @contextmanager
+    def batch_changes(self):
+        """Hold change notifications; send one at the end if anything changed.
+
+        Loading a caption sets a dozen variables, each of which notifies,
+        and every notification redraws the timeline from every caption.
+        Without this, importing N subtitle lines did that about 12 * N
+        times over a growing list.
+        """
+        self._batch_depth += 1
+        try:
+            yield
+        finally:
+            self._batch_depth -= 1
+            if not self._batch_depth and self._batch_changed:
+                self._batch_changed = False
+                self._notify_change()
 
     def _build_ui(self):
         # Toggle header
@@ -757,16 +607,6 @@ class TextLayersPanel(ctk.CTkFrame):
         self.add_btn.configure(command=self._add_layer)
         self.add_btn.pack(anchor="w", padx=12, pady=(6, 6))
 
-        # Scrollable container for layers
-        self.layers_container = ctk.CTkScrollableFrame(
-            self.content,
-            fg_color="transparent",
-            height=220,
-            scrollbar_button_color=T.BG_HOVER,
-            scrollbar_button_hover_color=T.BG_ACTIVE,
-        )
-        self.layers_container.pack(fill="x", padx=12, pady=(0, 10))
-
     def _toggle(self):
         self._expanded = not self._expanded
         if self._expanded:
@@ -776,21 +616,21 @@ class TextLayersPanel(ctk.CTkFrame):
         self._update_header()
 
     def _add_layer(self, preset_data=None):
-        layer = TextLayerWidget(
-            self.layers_container,
-            layer_index=len(self.layers),
-            video_duration=self.video_duration,
-            on_remove=self._remove_layer,
-            on_duplicate=self._duplicate_layer,
-            on_move=self._move_layer,
-        )
-        layer.pack(fill="x", pady=(0, 5))
-        self.layers.append(layer)
-        self._wire_layer_change(layer)
-        if preset_data:
-            layer.load_from_dict(preset_data)
-        self._update_header()
-        self._notify_change()
+        with self.batch_changes():
+            layer = TextLayer(
+                self,
+                layer_index=len(self.layers),
+                video_duration=self.video_duration,
+                on_remove=self._remove_layer,
+                on_duplicate=self._duplicate_layer,
+                on_move=self._move_layer,
+            )
+            self.layers.append(layer)
+            self._wire_layer_change(layer)
+            if preset_data:
+                layer.load_from_dict(preset_data)
+            self._update_header()
+            self._notify_change()
 
         # Auto-expand when first layer is added
         if not self._expanded:
@@ -810,18 +650,21 @@ class TextLayersPanel(ctk.CTkFrame):
             return
         self.layers.pop(idx)
         self.layers.insert(new_idx, layer_widget)
-        # Re-pack to match new order.
-        for lyr in self.layers:
-            lyr.pack_forget()
         for i, lyr in enumerate(self.layers):
             lyr.layer_index = i
-            lyr.pack(fill="x", pady=(0, 5))
         self._notify_change()
 
     def import_srt_layers(self, layer_dicts):
-        """Bulk-add parsed SRT entries; each becomes its own layer widget."""
-        for data in layer_dicts:
-            self._add_layer(preset_data=data)
+        """Bulk-add parsed SRT entries as captions, with one notification.
+
+        Returns the number added.
+        """
+        added = 0
+        with self.batch_changes():
+            for data in layer_dicts:
+                self._add_layer(preset_data=data)
+                added += 1
+        return added
 
     def _wire_layer_change(self, layer):
         """Call `_notify_change` whenever the user edits any field of a layer."""
