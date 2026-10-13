@@ -43,7 +43,7 @@ videokidnapper/
 │   ├── widgets.py          # range slider, toast, platform chip, timestamp entry
 │   ├── export_options.py / share_panel.py
 │   ├── text_layers.py / multi_range.py / batch_queue.py / waveform.py
-│   ├── setup_dialog.py     # prereq checklist
+│   ├── setup_page.py       # prereq checklist
 │   └── theme.py            # design tokens; dark + light palettes
 └── utils/
     ├── settings.py         # JSON-backed preferences with schema migration

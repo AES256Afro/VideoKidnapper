@@ -15,7 +15,7 @@ undo (the obvious refactor) silently breaks redo.
 
 import pytest
 
-from videokidnapper.ui import shortcuts_dialog
+from videokidnapper.ui import shortcuts_page
 
 
 def _app_class():
@@ -84,24 +84,24 @@ def test_redo_owns_the_upper_case_form():
 
 
 def test_accel_label_uses_mac_glyphs_on_darwin(monkeypatch):
-    monkeypatch.setattr(shortcuts_dialog.sys, "platform", "darwin")
-    assert shortcuts_dialog.accel_label("Ctrl+S") == "⌘S"
-    assert shortcuts_dialog.accel_label("Ctrl+Shift+S") == "⌘⇧S"
+    monkeypatch.setattr(shortcuts_page.sys, "platform", "darwin")
+    assert shortcuts_page.accel_label("Ctrl+S") == "⌘S"
+    assert shortcuts_page.accel_label("Ctrl+Shift+S") == "⌘⇧S"
     # Non-modifier labels are left alone.
-    assert shortcuts_dialog.accel_label("Space") == "Space"
-    assert shortcuts_dialog.accel_label("?") == "?"
+    assert shortcuts_page.accel_label("Space") == "Space"
+    assert shortcuts_page.accel_label("?") == "?"
 
 
 @pytest.mark.parametrize("platform", ["win32", "linux"])
 def test_accel_label_unchanged_off_darwin(monkeypatch, platform):
-    monkeypatch.setattr(shortcuts_dialog.sys, "platform", platform)
-    assert shortcuts_dialog.accel_label("Ctrl+Shift+S") == "Ctrl+Shift+S"
+    monkeypatch.setattr(shortcuts_page.sys, "platform", platform)
+    assert shortcuts_page.accel_label("Ctrl+Shift+S") == "Ctrl+Shift+S"
 
 
 def test_documented_shortcuts_are_all_labelled():
-    """Every row in the overlay renders through accel_label, so none of
-    them may crash or come back empty."""
-    for group in shortcuts_dialog.SHORTCUTS.values():
+    """Every row on the shortcuts page renders through accel_label, so
+    none of them may crash or come back empty."""
+    for group in shortcuts_page.SHORTCUTS.values():
         for sc in group:
-            assert shortcuts_dialog.accel_label(sc.keys)
+            assert shortcuts_page.accel_label(sc.keys)
             assert sc.description
