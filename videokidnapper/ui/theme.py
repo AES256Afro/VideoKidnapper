@@ -266,6 +266,9 @@ def _select_palette():
     is missing or names a theme this build does not have (a settings
     file written by a newer version, say)."""
     key = settings.get("theme", DEFAULT_THEME)
+    if not isinstance(key, str):
+        # This runs at import time, before any error window can show.
+        key = DEFAULT_THEME
     return PALETTES.get(key, PALETTES[DEFAULT_THEME])
 
 

@@ -21,6 +21,7 @@ moves, and the Stop button all behave the same regardless of which
 path started the playback.
 """
 
+import threading
 import tkinter as tk
 
 import customtkinter as ctk
@@ -30,14 +31,19 @@ from videokidnapper.utils.text_wrap import drawtext_layout
 
 from videokidnapper.utils.coerce import coerce_float, coerce_int
 from videokidnapper.core import playback
-from videokidnapper.core.preview import get_frame_at
+from videokidnapper.core.preview import get_frame_at, peek_frame
 from videokidnapper.ui import theme as T
 from videokidnapper.utils.snap import apply_snap, build_targets
+
+# How often the Tk thread checks for a frame the scrub worker fetched.
+_FRAME_POLL_MS = 15
 
 
 class VideoPlayer(ctk.CTkFrame):
     _PLAY_FPS = 8
     _PLAY_MS = int(1000 / _PLAY_FPS)
+    # How often the Tk thread collects frames during A/V playback.
+    _AV_PUMP_MS = 15
 
     def __init__(self, master, on_empty_click=None, on_file_dropped=None,
                  canvas_bg=None, inset=10, **kwargs):
@@ -68,10 +74,23 @@ class VideoPlayer(ctk.CTkFrame):
         self._color_provider = None
         self._playing = False
         self._play_after_id = None
+        # Scrubbing fetches frames on one background worker (see
+        # request_frame). Guarded by _frame_lock: what is wanted next,
+        # what has arrived, and whether the worker is still running.
+        self._frame_lock = threading.Lock()
+        self._frame_wanted = None
+        self._frame_ready = None
+        self._frame_worker_running = False
+        self._frame_poll_id = None
         self._play_end = None
-        # Real-time A/V player (None until play() creates one).
+        # Real-time A/V player (None until play() creates one). The
+        # decode threads leave the newest frame and the end-of-clip
+        # reason in the two slots below for the Tk thread to collect.
         self._av_player = None
         self._av_time_after_id = None
+        self._av_session = None
+        self._av_frame = None
+        self._av_finished = None
 
         # Crop state: a rect in SOURCE pixel coords, or None when disabled.
         self._crop_mode = False
@@ -142,7 +161,7 @@ class VideoPlayer(ctk.CTkFrame):
 
     def _on_drop(self, event):
         from videokidnapper.utils.dnd import parse_dnd_files
-        paths = parse_dnd_files(event.data or "")
+        paths = parse_dnd_files(event.data or "", splitlist=self.tk.splitlist)
         if paths and self._on_file_dropped:
             self._on_file_dropped(paths[0])
 
@@ -207,8 +226,11 @@ class VideoPlayer(ctk.CTkFrame):
                 options = dict(self._export_options_provider() or {})
             except Exception:
                 options = {}
-        # The live crop rect: settings only learn it on mouse release.
-        options["crop"] = self._crop_rect if self._crop_mode else None
+        # The player's own crop rect: settings only learn a new one on
+        # mouse release. It applies outside crop mode too. Dropping it
+        # there laid captions out on the whole frame while the export
+        # placed them inside the crop.
+        options["crop"] = self._crop_rect
         if self._crop_mode:
             # The crop tool is drawn on the unrotated source, so show that.
             options["rotate"] = 0
@@ -372,7 +394,7 @@ class VideoPlayer(ctk.CTkFrame):
 
     def _on_resize(self, _event=None):
         if self.video_path:
-            self.show_frame(self.current_time)
+            self.request_frame(self.current_time)
         else:
             self._draw_placeholder()
 
@@ -388,15 +410,96 @@ class VideoPlayer(ctk.CTkFrame):
             self.canvas.delete(item)
         self._placeholder_ids.clear()
         self.canvas.configure(cursor="crosshair")
-        self.show_frame(0)
+        self.request_frame(0)
 
     def show_frame(self, timestamp):
+        """Show the frame at ``timestamp`` now, waiting for ffmpeg if needed.
+
+        For redraws of the frame already on screen (an overlay edit, a
+        resize), which the cache answers at once. Moving to a new time goes
+        through :meth:`request_frame`, which never blocks the window.
+        """
         if not self.video_path:
             return
         self.current_time = timestamp
         frame = get_frame_at(self.video_path, timestamp)
         if frame is None:
             return
+        self._render_frame(frame, timestamp)
+
+    def request_frame(self, timestamp):
+        """Show the frame at ``timestamp`` without freezing the window.
+
+        Fetching an uncached frame starts ffmpeg, 0.1–0.2 s a time, and
+        scrubbing did that on the Tk thread for every position, so the
+        whole window stuttered while dragging. A cached frame still shows
+        at once. Otherwise one worker fetches the newest position asked
+        for, skipping any it has not reached yet, and each frame shows as
+        it arrives.
+        """
+        if not self.video_path:
+            return
+        self.current_time = timestamp
+        cached = peek_frame(self.video_path, timestamp)
+        if cached is not None:
+            self._render_frame(cached, timestamp)
+            return
+        with self._frame_lock:
+            self._frame_wanted = (self.video_path, timestamp)
+            start = not self._frame_worker_running
+            self._frame_worker_running = True
+        if start:
+            threading.Thread(target=self._fetch_frames, daemon=True,
+                             name="preview-frames").start()
+        if self._frame_poll_id is None:
+            self._frame_poll_id = self.after(_FRAME_POLL_MS, self._poll_frames)
+
+    def _fetch_frames(self):
+        """Worker: fetch the newest wanted frame until nothing is wanted.
+
+        Touches no widgets; results go through ``_frame_ready``.
+        """
+        while True:
+            with self._frame_lock:
+                wanted = self._frame_wanted
+                self._frame_wanted = None
+                if wanted is None:
+                    # Decided under the lock, so a request made from now
+                    # on starts a new worker instead of being missed.
+                    self._frame_worker_running = False
+                    return
+            path, timestamp = wanted
+            try:
+                frame = get_frame_at(path, timestamp)
+                if frame is not None:
+                    # Decode here rather than on the Tk thread.
+                    frame.load()
+            except Exception:
+                frame = None
+            with self._frame_lock:
+                self._frame_ready = (path, timestamp, frame)
+
+    def _poll_frames(self):
+        self._frame_poll_id = None
+        with self._frame_lock:
+            ready, self._frame_ready = self._frame_ready, None
+            busy = self._frame_worker_running
+        if ready is not None:
+            path, timestamp, frame = ready
+            # A frame from a video that has since been replaced, or one
+            # arriving after playback started, is dropped.
+            if frame is not None and path == self.video_path and not self._playing:
+                self._render_frame(frame, timestamp)
+        if busy:
+            self._frame_poll_id = self.after(_FRAME_POLL_MS, self._poll_frames)
+
+    def _render_frame(self, frame, timestamp):
+        """Show a source-sized ``frame`` as the export will produce it.
+
+        Scrubbing and playback both come through here, so a playing clip
+        shows the same rotation, frame shape, crop, blur fill and image
+        overlays as a paused one.
+        """
         frame = self._apply_color(frame)
 
         cw = self.canvas.winfo_width()
@@ -453,7 +556,7 @@ class VideoPlayer(ctk.CTkFrame):
         self._draw_crop_overlay()
 
     def _draw_layout_dim(self):
-        """Dim the parts of the source an aspect-preset crop discards."""
+        """Dim the parts of the source an aspect preset or crop discards."""
         self.canvas.delete("layoutdim")
         if self._crop_mode or not self._last_frame_rect:
             return  # the crop tool draws its own dimming
@@ -567,12 +670,16 @@ class VideoPlayer(ctk.CTkFrame):
                 th = layout[2]
 
             keyframes = layer.get("keyframes") or []
+            path_xy = None
             if keyframes:
                 # Motion path: the SAME interpolation the export compiles
                 # into drawtext expressions, evaluated at this frame time.
+                # None when no keyframe is usable (a damaged project), and
+                # then the static position applies, as in the export.
                 from videokidnapper.utils.keyframes import position_at
-                kx, ky = position_at(keyframes, timestamp)
-                x, y = int(round(kx)), int(round(ky))
+                path_xy = position_at(keyframes, timestamp)
+            if path_xy is not None:
+                x, y = int(round(path_xy[0])), int(round(path_xy[1]))
             else:
                 x, y = _resolve_position(
                     layer.get("position", ""), w, h, tw, th, pad=20,
@@ -794,7 +901,9 @@ class VideoPlayer(ctk.CTkFrame):
         else:
             self._tick()
 
-    def stop(self):
+    def stop(self, wait=0.0):
+        """Stop playback. ``wait`` seconds is passed to the A/V player for
+        callers about to exit (see :meth:`AudioVideoPlayer.stop`)."""
         self._playing = False
         if self._play_after_id is not None:
             try:
@@ -803,12 +912,13 @@ class VideoPlayer(ctk.CTkFrame):
                 pass
             self._play_after_id = None
         # A/V player cleanup — safe to call even when one isn't running.
-        if self._av_player is not None:
+        player, self._av_player = self._av_player, None
+        self._av_session = None
+        if player is not None:
             try:
-                self._av_player.stop()
+                player.stop(wait=wait)
             except Exception:
                 pass
-            self._av_player = None
         if self._av_time_after_id is not None:
             try:
                 self.after_cancel(self._av_time_after_id)
@@ -816,21 +926,38 @@ class VideoPlayer(ctk.CTkFrame):
                 pass
             self._av_time_after_id = None
 
+    def destroy(self):
+        # Closing the window mid-playback: stop the player and give its
+        # audio thread a moment to close the sound device. Left running,
+        # the sound carried on after the window was gone, and the
+        # process crashed on exit when the sound library shut down
+        # underneath the still-open stream.
+        self.stop(wait=1.0)
+        super().destroy()
+
     # ------------------------------------------------------------------
     # Real-time A/V playback branch
     # ------------------------------------------------------------------
     def _start_av_playback(self, start, end):
         """Launch an AudioVideoPlayer and wire its frame output to the canvas."""
+        # Both callbacks run on the player's worker threads, so they only
+        # hand data over; _av_pump picks it up on the Tk thread. Calling
+        # Tk from those threads (even winfo_exists or after) blocks them
+        # on the UI thread and fails outright once the window closes.
+        # ``session`` ties the hand-over to this play, so a frame from a
+        # player being torn down cannot land in the next one.
+        session = object()
+        self._av_session = session
+        self._av_frame = None
+        self._av_finished = None
+
         def on_frame(img, ts):
-            # Called from the video decode thread — marshal to Tk main.
-            if not self.winfo_exists():
-                return
-            self.after(0, self._av_render_frame, img, ts)
+            if self._av_session is session:
+                self._av_frame = (img, ts)
 
         def on_finished(reason):
-            if not self.winfo_exists():
-                return
-            self.after(0, self._av_on_finished, reason)
+            if self._av_session is session:
+                self._av_finished = reason
 
         try:
             self._av_player = playback.AudioVideoPlayer(
@@ -843,55 +970,51 @@ class VideoPlayer(ctk.CTkFrame):
             # Construction failed (bad path, missing deps at runtime).
             # Fall back to the scrub loop so the Play button still works.
             self._av_player = None
+            self._av_session = None
             self._tick()
             return
-        # Poll the A/V clock a few times a second so ``current_time``
-        # stays in sync — keyboard-nudge / slider-mark reads it, and we
-        # don't want those reading a stale value while playback runs.
-        self._av_poll_time()
+        self._av_pump()
+
+    def _av_pump(self):
+        """Tk-thread side of A/V playback: show the newest decoded frame,
+        keep ``current_time`` in step (keyboard nudges and marks read it)
+        and notice the end of the clip."""
+        self._av_time_after_id = None
+        if self._av_player is None or not self._playing:
+            return
+        frame, self._av_frame = self._av_frame, None
+        if frame is not None:
+            self._av_render_frame(*frame)
+        else:
+            try:
+                self.current_time = self._av_player.current_time()
+            except Exception:
+                pass
+        if self._av_finished is not None:
+            reason, self._av_finished = self._av_finished, None
+            self._av_on_finished(reason)
+            return
+        self._av_time_after_id = self.after(self._AV_PUMP_MS, self._av_pump)
 
     def _av_render_frame(self, img, ts):
         """Main-thread render path for a frame produced by AudioVideoPlayer."""
         if not self._playing or self._av_player is None:
             return
         self.current_time = ts
-        cw = self.canvas.winfo_width()
-        ch = self.canvas.winfo_height()
-        if cw < 10 or ch < 10:
-            return
-        fw, fh = img.size
-        scale = min(cw / fw, ch / fh)
-        new_w = max(1, int(fw * scale))
-        new_h = max(1, int(fh * scale))
-        # Match the scrub path: composite overlays onto the source-sized
-        # frame, then resize. Keeps preview-matches-export alignment.
-        composited = self._apply_text_overlay(self._apply_color(img), ts)
-        rendered = composited.resize((new_w, new_h), Image.LANCZOS)
-        self._photo = ImageTk.PhotoImage(rendered)
-        self.canvas.delete("frame")
-        self.canvas.create_image(
-            cw // 2, ch // 2, image=self._photo, tags="frame",
-        )
-        self._last_frame_rect = (
-            cw // 2 - new_w // 2, ch // 2 - new_h // 2, new_w, new_h, fw, fh,
-        )
-        self._draw_crop_overlay()
-
-    def _av_poll_time(self):
-        """Mirror the A/V player's clock into ``self.current_time``."""
-        if self._av_player is None or not self._playing:
-            return
-        try:
-            self.current_time = self._av_player.current_time()
-        except Exception:
-            pass
-        # 80ms keeps the timeline playhead moving smoothly during playback.
-        self._av_time_after_id = self.after(80, self._av_poll_time)
+        self._render_frame(img, ts)
 
     def _av_on_finished(self, reason):
         """Tear down when the A/V player reports end-of-clip or stop."""
         self._playing = False
-        self._av_player = None
+        player, self._av_player = self._av_player, None
+        self._av_session = None
+        if player is not None:
+            # Already finished; this just makes sure no decoder outlives
+            # the session.
+            try:
+                player.stop()
+            except Exception:
+                pass
         if self._av_time_after_id is not None:
             try:
                 self.after_cancel(self._av_time_after_id)
@@ -1103,7 +1226,11 @@ class VideoPlayer(ctk.CTkFrame):
 
     def set_crop(self, crop_rect):
         """Programmatic crop update; `crop_rect` is source-pixel dict or None."""
+        changed = crop_rect != self._crop_rect
         self._crop_rect = crop_rect
+        if changed and not self._playing:
+            # The crop reshapes the layout frame, so redraw the frame.
+            self.refresh_overlay()
         self._draw_crop_overlay()
 
     def get_crop(self):
@@ -1173,7 +1300,10 @@ class VideoPlayer(ctk.CTkFrame):
 
     def _draw_crop_overlay(self):
         self.canvas.delete("crop")
-        if not self._crop_rect or not self._last_frame_rect:
+        # Only the crop tool draws the rectangle. Outside it the frame
+        # itself shows the crop (dimmed edges, or the cropped output when
+        # rotated), and source coordinates no longer match the display.
+        if not self._crop_mode or not self._crop_rect or not self._last_frame_rect:
             return
         cr = self._crop_rect
         x1, y1 = self._source_to_canvas(cr["x"], cr["y"])
