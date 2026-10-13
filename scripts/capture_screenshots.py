@@ -211,21 +211,6 @@ def shot_studio_export():
     app.destroy()
 
 
-def shot_onboarding():
-    """The first-run welcome, over the Import workspace."""
-    from videokidnapper.utils import settings
-    settings.set("onboarding_complete", False)
-    # is_first_run() keys off the settings file not existing yet.
-    settings._SETTINGS_PATH.unlink(missing_ok=True)
-    app = new_app()
-    pump(app, 0.8)
-    dialog = app._onboarding_dialog
-    dialog.update()
-    grab(dialog, "onboarding.png")
-    dialog._finish()
-    app.destroy()
-
-
 def shot_history():
     from videokidnapper.utils import settings
     from datetime import datetime, timedelta
@@ -324,7 +309,6 @@ def _shots():
         "studio_text": shot_text_tools,
         "studio_link": shot_studio_link,
         "studio_export": shot_studio_export,
-        "onboarding": shot_onboarding,
         "history": shot_history,
         "debug": shot_debug,
         "setup": shot_setup_dialog,

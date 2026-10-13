@@ -38,7 +38,6 @@ _EDIT_ONLY = {
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self._is_first_run = settings.is_first_run()
         T.configure_global()
 
         self.title(f"{APP_NAME} v{APP_VERSION}")
@@ -71,8 +70,7 @@ class App(ctk.CTk):
         self._install_exception_handler()
         self._load_plugins()
         self._maybe_check_for_update()
-        if not self._maybe_offer_recovery():
-            self._maybe_show_onboarding()
+        self._maybe_offer_recovery()
 
     def _maybe_offer_recovery(self):
         recovery_file = project_files.recoverable_autosave()
@@ -91,18 +89,6 @@ class App(ctk.CTk):
 
         self.after(250, show)
         return True
-
-    def _maybe_show_onboarding(self):
-        if not self._is_first_run or settings.get("onboarding_complete", False):
-            return
-
-        def show():
-            if not self.winfo_exists():
-                return
-            from videokidnapper.ui.onboarding_dialog import OnboardingDialog
-            self._onboarding_dialog = OnboardingDialog(self, self.trim_tab)
-
-        self.after(350, show)
 
     def _initial_geometry(self):
         """Studio wants room: up to 1440x900, centered, within the screen."""
