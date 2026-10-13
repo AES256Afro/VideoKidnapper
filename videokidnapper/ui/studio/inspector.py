@@ -57,6 +57,35 @@ def _group(parent, title):
     return frame
 
 
+class _Pages(dict):
+    """The Inspector's pages, each built the first time it is asked for.
+
+    ``pages["text"]`` builds the page if needed. ``pages.get("text")``
+    does not, and returns None until something has asked for it, which
+    is what callers that only want to update an open page should use.
+    ``"text" in pages`` is true for every page there can be.
+    """
+
+    def __init__(self, factories, eager=()):
+        super().__init__()
+        self._factories = dict(factories)
+        for key in eager:
+            self[key]
+
+    def __missing__(self, key):
+        factory = self._factories.get(key)
+        if factory is None:
+            raise KeyError(key)
+        page = self[key] = factory()
+        return page
+
+    def __contains__(self, key):
+        return key in self._factories
+
+    def built(self, key):
+        return dict.__contains__(self, key)
+
+
 class Inspector(ctk.CTkFrame):
     def __init__(self, master, editor, **kwargs):
         super().__init__(master, fg_color=T.BG_SURFACE, corner_radius=0, **kwargs)
@@ -66,12 +95,14 @@ class Inspector(ctk.CTkFrame):
         C.divider(self).pack(fill="x")
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True)
-        self.pages = {
-            "clip": ClipPage(body, editor),
-            "text": TextPage(body, editor),
-            "image": ImagePage(body, editor),
-            "color": ColorPage(body, editor),
-        }
+        # Clip shows first, and Color is small. Text and Image were about
+        # a fifth of the startup time and wait for their first use.
+        self.pages = _Pages({
+            "clip": lambda: ClipPage(body, editor),
+            "text": lambda: TextPage(body, editor),
+            "image": lambda: ImagePage(body, editor),
+            "color": lambda: ColorPage(body, editor),
+        }, eager=("clip", "color"))
         self.current = None
         self.show("clip")
 
