@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Changed
+
+- **Setup and components opens inside the window.** It used to open a second window. It is now a page in the main window, like the debug log: the prerequisites on the left, the install output on the right, all without scrolling. **Back** or **Esc** returns to the step you were on. An install keeps going if you leave the page, and the page shows how it went when you come back. On first run, **Review details** opens the same page in place of the setup screen.
+- **Keyboard shortcuts open inside the window.** Press **?**, or the **?** button in the header, to see every shortcut on one page. Press **?** again, **Esc** or **Back** to return to where you were. A **?** typed into a caption or any other text box is still just a question mark.
+
 ### Fixed
 
 - **Captions and stickers appeared at the wrong moment.** The editor times them on the full video, but the export counted from the start of the clip, so any clip that did not start at 0:00 showed them late or not at all. They now appear exactly where the preview shows them, at any speed, and a motion-tracked caption follows the same path.
@@ -24,6 +29,7 @@ All notable changes to this project are documented here. The format is based on 
 - **Closing or restarting during an export left ffmpeg running in the background.** You are now asked first, and the export is stopped cleanly. "Restart now" after a theme change and Setup's Relaunch now ask about unsaved work like closing does.
 - **Check for updates said "You're up to date" when it could not reach GitHub.** It now says the check failed. A pip install inside another git folder is no longer mistaken for a source checkout.
 - **Dropping a file with braces in its name**, such as "Take {2}.mp4", now works.
+- **Pressing ? to close the shortcuts list opened it again.** It now closes.
 - **Command line:** `--audio-only` now writes an `.mp3`, `--audio-only` with `--format GIF` and a speed outside 0.25–4 are refused, and an unreadable file prints an error instead of a traceback.
 
 ## [1.9.1] — 2026-10-07

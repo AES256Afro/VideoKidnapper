@@ -71,11 +71,11 @@ videokidnapper/
 │   ├── multi_range.py       # queue of trim ranges + concat toggle
 │   ├── export_options.py    # speed / rotate / aspect / color / transitions
 │   ├── export_dialog.py     # modal progress + share-to-platform panel
-│   ├── setup_dialog.py      # FFmpeg + pip-packages auto-installer
+│   ├── setup_page.py        # FFmpeg + pip-packages auto-installer
 │   ├── onboarding_dialog.py # first-run workflow introduction
 │   ├── project_dialog.py    # save/open/recent project hub + recovery
 │   ├── update_dialog.py     # install-aware app update action
-│   ├── shortcuts_dialog.py  # discoverable keyboard reference
+│   ├── shortcuts_page.py    # discoverable keyboard reference
 │   ├── batch_queue.py       # batch URL download panel
 │   ├── share_panel.py       # clipboard + platform-compose-page share
 │   ├── widgets.py           # RangeSlider, TimestampEntry, PlatformChip, Toast
