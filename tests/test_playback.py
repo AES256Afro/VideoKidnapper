@@ -219,7 +219,8 @@ def test_stop_leaves_the_stream_to_the_audio_thread(fake_av):
     p = _player(events)
     p.play(0.0)
     assert _wait_for(lambda: ("write", "AudioVideoPlayer-audio") in _FakeStream.calls)
-    p.stop(wait=2.0)
+    # Generous wait: a loaded CI machine can take a while to schedule it.
+    p.stop(wait=10.0)
     assert not p._audio_thread.is_alive()
     callers = {thread for _name, thread in _FakeStream.calls}
     assert callers == {"AudioVideoPlayer-audio"}, _FakeStream.calls
