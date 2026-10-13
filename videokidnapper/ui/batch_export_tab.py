@@ -45,6 +45,7 @@ from videokidnapper.utils.batch import (
     STATUS_QUEUED,
     BatchJob,
     extend_batch_jobs,
+    replan_outputs,
     summarise,
 )
 from videokidnapper.utils.dnd import parse_dnd_files
@@ -118,6 +119,9 @@ class BatchExportTab(ctk.CTkFrame):
         self._toast = None
 
         self._jobs: list[BatchJob] = []
+        # The folder the rows' outputs were last planned in; a change of
+        # "Save to" re-plans them (see _on_options_changed).
+        self._planned_dir: str | None = None
         self._job_rows: list[dict] = []  # parallel to _jobs; UI handles
         self._worker: threading.Thread | None = None
         # Two ways to stop: _stop_after lets the file being exported
@@ -148,6 +152,7 @@ class BatchExportTab(ctk.CTkFrame):
 
         self._build_ui()
         self.export_options.add_listener(self._refresh_inherited)
+        self.export_options.add_listener(self._on_options_changed)
         self._restore_persisted_queue()
 
     def set_toast(self, toast):
@@ -308,15 +313,33 @@ class BatchExportTab(ctk.CTkFrame):
 
     def _format_changed(self, value):
         settings.set("batch_format", value)
-        if self._running():
+        self._replan()
+
+    def _on_options_changed(self):
+        # Any Edit option fires this; only "Save to" moves the outputs.
+        if self._output_dir() != self._planned_dir:
+            self._replan()
+
+    def _output_dir(self) -> str:
+        return self.export_options.get_output_folder() \
+            or str(Path.home() / "Downloads")
+
+    def _extension(self) -> str:
+        return "mp3" if self.format_var.get() == "MP3" else "mp4"
+
+    def _replan(self) -> None:
+        """Point unfinished rows at the current folder and format.
+
+        A running queue keeps its plan (the worker is using it); the
+        rows left over are re-planned when it finishes, and Run re-plans
+        before it starts.
+        """
+        if self._running() or not self.winfo_exists():
             return
-        # Queued rows were planned with the old extension; re-plan them.
-        ext = "mp3" if value == "MP3" else "mp4"
-        for job in self._jobs:
-            if job.status != STATUS_DONE:
-                job.output_path = str(Path(job.output_path).with_suffix(f".{ext}"))
-        self._rebuild_rows()
-        self._persist_jobs()
+        self._planned_dir = self._output_dir()
+        if self._jobs and replan_outputs(self._jobs, self._planned_dir, self._extension()):
+            self._refresh_all_rows()
+            self._persist_jobs()
 
     def _refresh_inherited(self):
         if not self.winfo_exists():
@@ -379,11 +402,11 @@ class BatchExportTab(ctk.CTkFrame):
             self._notify("The queue is running. Wait for it or stop it first.", "warn")
             return
 
-        output_dir = self.export_options.get_output_folder() \
-            or str(Path.home() / "Downloads")
+        output_dir = self._output_dir()
         Path(output_dir).mkdir(parents=True, exist_ok=True)
+        self._planned_dir = output_dir
 
-        ext = "mp3" if self.format_var.get() == "MP3" else "mp4"
+        ext = self._extension()
         previous_count = len(self._jobs)
         # extend_batch_jobs preserves per-row state (status, error,
         # platform_override) on rows that were already in the queue —
@@ -624,6 +647,8 @@ class BatchExportTab(ctk.CTkFrame):
             self._rebuild_rows()
         finally:
             self._suspend_persist = False
+        # A restored queue was planned for the folder of its session.
+        self._replan()
         self._notify(f"Restored {len(restored)} queued file(s)", "info")
 
     # ------------------------------------------------------------------
@@ -642,7 +667,18 @@ class BatchExportTab(ctk.CTkFrame):
                 job.status = STATUS_QUEUED
                 job.error = None
                 job.progress = 0.0
+        # Plan for the folder and format on screen now, never over a file
+        # that appeared since (or a restored queue's old folder).
+        output_dir = self._output_dir()
+        try:
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self._notify(f"Can't use that folder: {exc}", "error")
+            return
+        self._planned_dir = output_dir
+        replan_outputs(self._jobs, output_dir, self._extension())
         self._refresh_all_rows()
+        self._persist_jobs()
 
         self._cancel.clear()
         self._stop_after.clear()
@@ -777,6 +813,9 @@ class BatchExportTab(ctk.CTkFrame):
         self.stop_btn.configure(state="disabled", text="Stop after this file")
         self._update_summary()
         self._persist_jobs()
+        # Settings changed while it ran apply to the rows still to do.
+        # (_finish_batch runs before the worker thread has quite ended.)
+        self.after(50, self._replan)
         done = sum(1 for j in self._jobs if j.status == STATUS_DONE)
         failed = sum(1 for j in self._jobs if j.status == STATUS_FAILED)
         if failed:
