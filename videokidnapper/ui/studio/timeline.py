@@ -433,7 +433,14 @@ class TimelineView(ctk.CTkFrame):
         h = c.winfo_height()
         if w < 50:
             return
-        self._view = view_window(self.duration, self.zoom, self.playhead)
+        frozen = (self._drag or {}).get("view")
+        if frozen:
+            # Dragging an in/out edge moves the playhead with it. Re-centring
+            # on it every motion event shifted the time under the mouse, so
+            # on a zoomed timeline the edge ran away from the cursor.
+            self._view = frozen
+        else:
+            self._view = view_window(self.duration, self.zoom, self.playhead)
         x0, width = self._lanes_box()
         x1 = x0 + width
 
@@ -658,7 +665,8 @@ class TimelineView(ctk.CTkFrame):
                     return {"kind": "range", "index": i}
         for edge, t in (("in", self.sel_start), ("out", self.sel_end)):
             if abs(x - self._t2x(t)) <= HANDLE_GRAB_PX:
-                return {"kind": "handle", "edge": edge}
+                # The view stays put for the whole drag (see redraw).
+                return {"kind": "handle", "edge": edge, "view": self._view}
         return {"kind": "seek"}
 
     def _on_hover(self, event):
