@@ -444,10 +444,6 @@ class TextLayerWidget(ctk.CTkFrame):
         self._update_motion_hint()
         self._fire_change()
 
-        # Apply default style
-        self._on_style_change("Subtitle")
-        self._update_motion_hint()
-
     # ------------------------------------------------------------------
     # Motion path (keyframed position)
     # ------------------------------------------------------------------

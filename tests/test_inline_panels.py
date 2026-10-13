@@ -211,13 +211,13 @@ def _export_editor(root, panel, tmp_path, ranges):
             get_options=lambda: {}, get_output_folder=lambda: str(tmp_path / "out")),
         text_layers=SimpleNamespace(get_all_layers=lambda: []),
         image_layers=SimpleNamespace(get_all_layers=lambda: []),
-        notes=[], shown=shown, history=[],
+        notes=[], shown=shown, history=[], after=root.after,
     )
     editor._gather_ranges = lambda: list(ranges)
     editor._notify = lambda message, level="info": editor.notes.append((level, message))
     editor._show_workspace = shown.append
     editor._record_history = lambda path, *_a: editor.history.append(path)
-    return _bind(editor, "_export", "_show_export_progress", "export_in_progress")
+    return _bind(editor, "_export", "_show_export_progress", "export_in_progress", "_post")
 
 
 def test_export_worker_reports_to_the_inline_panel(root, panel, tmp_path, monkeypatch):
@@ -233,6 +233,8 @@ def test_export_worker_reports_to_the_inline_panel(root, panel, tmp_path, monkey
         return output_path
 
     monkeypatch.setattr(trim_tab_module, "trim_to_video", fake_trim)
+    # The fake files are a few bytes, not real video.
+    monkeypatch.setattr(trim_tab_module, "export_output_ok", lambda *_a, **_k: True)
     editor = _export_editor(root, panel, tmp_path, [(0.0, 1.0), (2.0, 3.0)])
 
     editor._export()
@@ -434,7 +436,8 @@ def _captions_editor(root):
     editor._notify = lambda message, level="info": editor.notes.append((level, message))
     return _bind(editor, "generate_captions", "stop_captions", "captions_in_progress",
                  "_speech_box", "_run_whisper_in_background", "_on_captions_progress",
-                 "_on_captions_done", "_on_captions_stopped", "_on_captions_failed")
+                 "_on_captions_done", "_on_captions_stopped", "_on_captions_failed",
+                 "_post")
 
 
 def _speech_box(root, editor):
@@ -579,7 +582,7 @@ def _record_editor(root, tmp_path):
     return _bind(editor, "start_screen_recording", "stop_screen_recording",
                  "screen_recording_in_progress", "_on_record_elapsed",
                  "_on_record_encoding", "_on_record_done", "_on_record_stopped",
-                 "_on_record_failed")
+                 "_on_record_failed", "_post")
 
 
 @pytest.fixture
