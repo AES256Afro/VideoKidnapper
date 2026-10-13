@@ -360,7 +360,7 @@ Two paths:
 
 ### "I want to support a new video platform in URL Download"
 
-1. Add platform regex to `SUPPORTED_PLATFORMS` in `config.py`.
+1. Add the platform's domains to `SUPPORTED_PLATFORMS` in `config.py` (subdomains match automatically).
 2. Add format-selector branch to `core/downloader.py::_build_ydl_opts` (yt-dlp-format-selector docs: https://github.com/yt-dlp/yt-dlp#format-selection).
 3. Add brand color + glyph to `theme.PLATFORM_COLORS` + `PLATFORM_GLYPHS` in `ui/theme.py`.
 4. Add share-compose URL in `utils/share.py` if the platform accepts prefilled captions.

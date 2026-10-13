@@ -11,9 +11,9 @@ Four tabs, each editing one thing at a time:
 - **Image** — the selected image overlay, same approach.
 - **Color** — the color grade, which the preview now shows live.
 
-The caption and overlay rows that used to stack in the scrolling page
-still exist as the data model (``editor.text_layers.layers`` and
-``editor.image_layers.layers``); they just aren't packed anywhere.
+The data model is ``editor.text_layers.layers`` (captions: plain
+``TextLayer`` objects holding Tk variables, no widgets) and
+``editor.image_layers.layers`` (overlay rows that are never packed).
 """
 
 import os
@@ -316,7 +316,7 @@ class TextPage(ctk.CTkScrollableFrame):
             self.motion_switch.configure(variable=layer.motion_var)
             self.style_seg.set(layer.style_var.get())
             self.textbox.delete("1.0", "end")
-            self.textbox.insert("1.0", layer.text_box.get("1.0", "end-1c"))
+            self.textbox.insert("1.0", layer.text_var.get())
         self.refresh_details()
 
     def refresh_details(self):
