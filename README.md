@@ -126,7 +126,7 @@ After a successful export, the Export workspace shows the result right under the
 Each caption is a clip on the timeline's Text track. Select one on the timeline (or with the arrows in the Inspector) and the **Text** tab edits it:
 
 - **Style presets** — Subtitle (white-on-black box), Caption (white with black outline, the social-standard look), Title (large centered), Watermark (small corner), Custom
-- Font (system fonts), size, color (8 presets + **Custom…** color picker), position (7 anchors, or drag it in the preview)
+- Font (system fonts), size, color (8 preset swatches, or any hex code such as `#FF8800`), position (7 anchors, or drag it in the preview)
 - **Bold / italic** toggles, resolved to real font-variant files (`arialbd.ttf`, `ariali.ttf`, ...) with graceful fallback when a variant is missing
 - **Outline**, **Shadow** and **Box** toggles, compiled to drawtext `borderw` / `shadowx` / `box` and mirrored exactly in the preview
 - **Multiline captions:** the text box wraps, and embedded newlines export as real line breaks

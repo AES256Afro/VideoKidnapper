@@ -20,13 +20,14 @@ import os
 
 import customtkinter as ctk
 
-from videokidnapper.config import POSITION_MAP, TEXT_COLORS, TEXT_STYLES
+from videokidnapper.config import POSITION_MAP, TEXT_STYLES
 from videokidnapper.ui import theme as T
 from videokidnapper.ui.editor_options import (
     ASPECT_CHOICES, ASPECT_FILL_CHOICES, FADE_CHOICES, ROTATE_CHOICES,
 )
 from videokidnapper.ui.image_layers import POSITION_ANCHORS
 from videokidnapper.ui.studio import controls as C
+from videokidnapper.ui.studio.color_palette import ColorPalette
 from videokidnapper.ui.studio.icons import icon_button
 from videokidnapper.ui.theme import button
 from videokidnapper.utils.time_format import hms_to_seconds, seconds_to_hms
@@ -240,11 +241,10 @@ class TextPage(ctk.CTkScrollableFrame):
         color_row = ctk.CTkFrame(style, fg_color="transparent")
         color_row.pack(fill="x", pady=(8, 0))
         ctk.CTkLabel(color_row, text="Color", font=T.font(T.SIZE_SM),
-                     text_color=T.TEXT_MUTED, width=44, anchor="w").pack(side="left")
-        self.color_menu = C.option_menu(
-            color_row, list(TEXT_COLORS.keys()) + ["Custom…"], width=130,
-            command=self._color_changed)
-        self.color_menu.pack(side="left")
+                     text_color=T.TEXT_MUTED, width=44, anchor="w").pack(
+            side="left", anchor="n", pady=(3, 0))
+        self.palette = ColorPalette(color_row, command=self._color_changed)
+        self.palette.pack(side="left")
         look_row = ctk.CTkFrame(style, fg_color="transparent")
         look_row.pack(fill="x", pady=(8, 0))
         self.outline_cb = C.checkbox(look_row, "Outline")
@@ -308,7 +308,6 @@ class TextPage(ctk.CTkScrollableFrame):
             self.size_entry.configure(textvariable=layer.size_var)
             self.bold_cb.configure(variable=layer.bold_var)
             self.italic_cb.configure(variable=layer.italic_var)
-            self.color_menu.configure(variable=layer.color_var)
             self.outline_cb.configure(variable=layer.outline_var)
             self.shadow_cb.configure(variable=layer.shadow_var)
             self.box_cb.configure(variable=layer.box_var)
@@ -333,6 +332,7 @@ class TextPage(ctk.CTkScrollableFrame):
         self.start_field.set_value(seconds_to_hms(start))
         self.end_field.set_value(seconds_to_hms(end))
         self.motion_hint.configure(text=_motion_hint(self.layer))
+        self.palette.set(self.layer.color_value())
 
     # -- events -------------------------------------------------------------
     def _text_changed(self, _event=None):
@@ -346,7 +346,7 @@ class TextPage(ctk.CTkScrollableFrame):
 
     def _color_changed(self, value):
         if self.layer is not None:
-            self.layer._on_color_choice(value)
+            self.layer.set_color(value)
 
     def _position_changed(self, value):
         if self.layer is not None:
