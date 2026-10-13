@@ -46,9 +46,17 @@ def test_bare_word_escapes():
 
 @pytest.fixture(scope="module")
 def tcl():
-    # One interpreter for the module: starting many at once, with other
-    # suites running, sometimes failed to read Tcl's init.tcl on Windows.
-    return tkinter.Tcl()
+    # One interpreter for the module. Starting one sometimes fails to read
+    # Tcl's own init.tcl on a busy Windows machine (several test runs at
+    # once); retry, then skip rather than report a product failure.
+    import time
+    for attempt in range(5):
+        try:
+            return tkinter.Tcl()
+        except tkinter.TclError as exc:
+            error = exc
+            time.sleep(0.2 * (attempt + 1))
+    pytest.skip(f"Tcl would not start: {error}")
 
 
 @pytest.mark.parametrize("name", [
