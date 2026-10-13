@@ -12,6 +12,7 @@ All notable changes to this project are documented here. The format is based on 
 - **A manual crop with a frame shape was stretched.** With a manual crop and a preset such as 9:16, the export squeezed the crop into the preset's box. The manual crop now keeps its own shape, as it does in the preview.
 - **Some manual crops could not be exported.** A crop with an odd width or height failed with an encoder error unless the export also downscaled. It is now trimmed by a pixel to an even size.
 - **A failed or stopped export left a broken file behind.** It is now removed.
+- **Stop did nothing during the first part of a GIF export,** and a long GIF could fail after three minutes. The first pass now shows progress, stops when asked and has no time limit.
 - **Non-English file names could stop an export.** On Windows, ffmpeg messages containing such names were read with the wrong text encoding.
 - **An export kept running in the background** if its progress window failed partway. ffmpeg is now stopped.
 - **A file with sound but no picture** now gets a clear message pointing to Audio only instead of an empty video. A file ffprobe describes strangely now gives a clear "cannot read" error instead of a crash.
