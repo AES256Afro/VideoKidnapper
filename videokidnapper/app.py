@@ -28,6 +28,11 @@ TAB_STUDIO = "edit"
 TAB_BATCH = "batch"
 TAB_HISTORY = "history"
 TAB_DEBUG = "log"
+# Pages opened from the settings menu. They take over the window, with
+# Back to return, instead of opening windows of their own, and are
+# built the first time they are shown.
+TAB_SETUP = "setup"
+PAGES = (TAB_SETUP,)
 # Shortcuts that only make sense while looking at the editor.
 _EDIT_ONLY = {
     "keyboard_play_pause", "keyboard_nudge", "keyboard_mark_in",
@@ -268,10 +273,13 @@ class App(ctk.CTk):
         # Constructing them up front cost about half the window build
         # (Batch 365 ms, History 93 ms, measured in situ), for two pages
         # most sessions never open. The Export workspace asks for them
-        # through _ensure_tab when one of its sub-tabs is picked.
+        # through _ensure_tab when one of its sub-tabs is picked. Setup
+        # is deferred the same way: its checks import yt-dlp, which is
+        # slow.
         self._lazy_tabs = {
             TAB_BATCH: self._construct_batch_tab,
             TAB_HISTORY: self._construct_history_tab,
+            TAB_SETUP: self._construct_setup_page,
         }
         self._built_tabs = {}
         self.export_workspace = ExportWorkspace(self.workspaces.add("export"), self, self.trim_tab)
@@ -283,6 +291,10 @@ class App(ctk.CTk):
         self.show_workspace("edit" if self.trim_tab.video_path else "import")
 
     def show_workspace(self, key):
+        # Pages are built on first view. One that fails to build is
+        # logged, and the window stays where it was.
+        if key in PAGES and self._on_tab_changed(key) is None:
+            return
         self.workspaces.set(key)
 
     def _on_workspace_switched(self, key):
@@ -357,6 +369,14 @@ class App(ctk.CTk):
             tab.set_toast(self.status_bar)
         return tab
 
+    def _construct_setup_page(self):
+        from videokidnapper.ui.setup_page import SetupPage
+
+        page = SetupPage(self.workspaces.add(TAB_SETUP), on_back=self._close_page,
+                         on_relaunch=self._restart_app)
+        page.pack(fill="both", expand=True)
+        return page
+
     @property
     def batch_export_tab(self):
         return self._ensure_tab(TAB_BATCH)
@@ -398,7 +418,7 @@ class App(ctk.CTk):
     def _open_settings_menu(self):
         menu = self._settings_menu
         menu.delete(0, "end")
-        menu.add_command(label="Setup and components…", command=self._open_setup_dialog)
+        menu.add_command(label="Setup and components…", command=self._open_setup_page)
         menu.add_command(label="Check for updates", command=self._check_updates_now)
         menu.add_separator()
         menu.add_cascade(label="Theme", menu=self._build_theme_menu(menu))
@@ -748,11 +768,53 @@ class App(ctk.CTk):
             )
 
     # ------------------------------------------------------------------
-    # Setup dialog
+    # Pages shown in place of the workspaces
     # ------------------------------------------------------------------
-    def _open_setup_dialog(self):
-        from videokidnapper.ui.setup_dialog import SetupDialog
-        SetupDialog(self, on_relaunch=self._restart_app)
+    def _open_page(self, key):
+        """Show one of the PAGES in place of the workspace.
+
+        Remembers where the user was, so Back returns there rather than
+        to a fixed place. Going from one page to another keeps the
+        original place, so pages never send Back to each other.
+        """
+        current = self.workspaces.get()
+        if current not in PAGES:
+            self._page_return = current
+        fresh = key not in self._built_tabs
+        self.show_workspace(key)
+        page = self._tab_if_built(key)
+        if page is None:
+            return
+        page.set_back_label(self._workspace_title(self._return_target()))
+        if not fresh and hasattr(page, "refresh"):
+            page.refresh()  # Setup looks again at what is installed
+
+    def _close_page(self):
+        self.show_workspace(self._return_target())
+
+    def _return_target(self):
+        target = getattr(self, "_page_return", None)
+        return target if target in self.workspaces.keys() else "edit"
+
+    @staticmethod
+    def _workspace_title(key):
+        """The name Back shows: "Import", or a plugin workspace's own name."""
+        if key.startswith("plugin:"):
+            return key.split(":", 1)[1]
+        if key == TAB_DEBUG:
+            return "Debug log"
+        return dict(WORKSPACES).get(key, key).split()[-1]
+
+    def _open_setup_page(self):
+        # The first-run landing has no workspaces yet, so there Setup
+        # takes the landing's place instead.
+        if getattr(self, "workspaces", None) is None:
+            self._show_setup_over_landing()
+        else:
+            self._open_page(TAB_SETUP)
+
+    # Older name, kept for anything still calling it.
+    _open_setup_dialog = _open_setup_page
 
     # ------------------------------------------------------------------
     # Shortcuts overlay (? key / header chip)
@@ -1010,7 +1072,7 @@ class App(ctk.CTk):
             ).pack(side="left", padx=4)
         button(
             self._setup_btnrow, "Review details", variant="secondary",
-            width=140, command=self._open_setup_dialog,
+            width=140, command=self._open_setup_page,
         ).pack(side="left", padx=4)
         button(
             self._setup_btnrow, "Exit", variant="ghost",
@@ -1027,6 +1089,30 @@ class App(ctk.CTk):
         self._setup_frame = None
         self._show_setup_landing()
 
+    def _show_setup_over_landing(self):
+        """The landing's "Review details": the Setup page, in its place."""
+        from videokidnapper.ui.setup_page import SetupPage
+        if getattr(self, "_landing_setup_page", None) is not None:
+            return
+        self._setup_frame.place_forget()
+        page = SetupPage(self, on_back=self._close_setup_over_landing,
+                         on_relaunch=self._restart_app)
+        page.pack(fill="both", expand=True)
+        self._landing_setup_page = page
+
+    def _close_setup_over_landing(self):
+        page = self._landing_setup_page
+        if page.installing:
+            # The landing is rebuilt from what is installed, so it has to
+            # wait for the answer.
+            page.set_status("Still installing. Back works once it finishes.", T.WARN)
+            return
+        page.destroy()
+        self._landing_setup_page = None
+        # Something may have been installed on the page: look again
+        # rather than asking for it a second time.
+        self._recheck_setup()
+
     def _confirm_setup_install(self, missing):
         for widget in self._setup_btnrow.winfo_children():
             widget.destroy()
@@ -1036,49 +1122,22 @@ class App(ctk.CTk):
         self._auto_install_prereqs(missing)
 
     def _auto_install_prereqs(self, missing):
-        from videokidnapper.utils import prereq_check
+        from videokidnapper.ui.setup_page import install_in_background
         if not missing:
             # Nothing actually missing (e.g. a probe false-negative that
             # the detection fix already resolved) — just go.
             self._finish_setup_and_launch()
             return
 
-        # Worker thread NEVER touches Tk. It writes progress into a plain
-        # dict; a main-thread poller (after-loop) reads it and updates the
-        # UI. This is the only thread-safe way to drive Tk from a worker.
-        self._install_state = {
-            "frac": 0.0, "note": "", "done": False,
-            "installed": None, "failures": None,
-        }
-
         def progress(frac, note):
-            self._install_state["frac"] = max(0.0, min(1.0, frac))
+            self._setup_progress.set(max(0.0, min(1.0, frac)))
             if note:
-                self._install_state["note"] = note
+                self._setup_msg.configure(text=note)
 
-        def worker():
-            installed, failures = prereq_check.install_missing(
-                missing, progress_cb=progress,
-            )
-            self._install_state["installed"] = installed
-            self._install_state["failures"] = failures
-            self._install_state["done"] = True
-
-        import threading
-        threading.Thread(target=worker, daemon=True).start()
-        self._poll_install()
-
-    def _poll_install(self):
-        st = getattr(self, "_install_state", None)
-        if st is None or not self.winfo_exists():
-            return
-        self._setup_progress.set(st["frac"])
-        if st["note"]:
-            self._setup_msg.configure(text=st["note"])
-        if st["done"]:
-            self._on_auto_install_done(st["installed"], st["failures"])
-            return
-        self.after(120, self._poll_install)
+        # The same runner as the Setup page: the worker never touches Tk,
+        # and progress and the result arrive here on the main thread.
+        install_in_background(self, missing, on_progress=progress,
+                              on_done=self._on_auto_install_done, poll_ms=120)
 
     def _on_auto_install_done(self, installed, failures):
         from videokidnapper.utils import prereq_check
@@ -1147,7 +1206,7 @@ class App(ctk.CTk):
             w.destroy()
         button(
             self._setup_btnrow, "  Open Setup", variant="primary",
-            width=150, command=self._open_setup_dialog,
+            width=150, command=self._open_setup_page,
         ).pack(side="left", padx=4)
         button(
             self._setup_btnrow, "Retry", variant="secondary",
