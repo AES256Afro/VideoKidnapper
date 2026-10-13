@@ -24,6 +24,8 @@ All notable changes to this project are documented here. The format is based on 
 - **Dragging a sticker could move a different one.** If an earlier image overlay's file had gone missing, dragging the visible sticker moved the missing one instead. The sticker you drag is now the one that moves.
 - **"Follow an object" reset the caption's look.** After tracking, the caption went back to the default size, color, box, outline and shadow. It now keeps its style.
 - **Dragging the in or out point lagged** once ranges were saved, up to a second per mouse movement with ten ranges, because the hidden Export page rebuilt its range list on every move. It now updates when you open it.
+- **Empty clips were exported as broken files.** Pressing O at the very start or I at the very end made an empty selection, and a project reopened with a shorter video kept an Out point and saved ranges past its end. Both exported tiny files with no picture and called it a success. The mark keys now keep a selection at least a twentieth of a second long, a reopened project's ranges are fitted to the video, and an export that comes out empty is reported as failed.
+- **Work that finished after you opened another video landed in it.** Captions from speech and "Follow an object" applied their results to whatever was open when they finished, and a multi-part export cut its remaining parts from a video opened with Ctrl+O in the meantime. Each now sticks to the video it started with, and Ctrl+O, Ctrl+E and the other shortcuts wait while the export window is open.
 
 ## [1.9.1] — 2026-10-07
 

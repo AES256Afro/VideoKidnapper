@@ -67,6 +67,9 @@ INSPECTOR_W = 340
 _FRAME_COALESCE_MS = 15
 _PREVIEW_REFRESH_MS = 40
 _PLAY_POLL_MS = 80
+# Shortest selection or saved range: the gap the timeline keeps between
+# the in and out edges, and RangeStore's minimum.
+MIN_SELECTION_S = 0.05
 
 
 def short_duration(seconds):
@@ -77,10 +80,43 @@ def short_duration(seconds):
     return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
 
 
+def clamp_range(start, end, duration):
+    """``(start, end)`` limited to ``[0, duration]``, or None if too little
+    of it is left to export.
+
+    A project relinked to a shorter video kept its old selection and saved
+    ranges, some of them wholly past the new end.
+    """
+    start = max(0.0, min(float(start), duration))
+    end = max(start, min(float(end), duration))
+    if end - start < MIN_SELECTION_S:
+        return None
+    return start, end
+
+
+def export_output_ok(path, audio_only=False):
+    """True when an export produced something playable.
+
+    ffmpeg exits cleanly when a range holds no frames (an empty selection,
+    a saved range past the end of the video) and leaves a stub behind: a
+    few hundred bytes with no streams, or a millisecond of sound and no
+    picture. That used to be reported as a successful export.
+    """
+    try:
+        if Path(path).stat().st_size <= 0:
+            return False
+        info = get_video_info(path)
+    except Exception:
+        return False
+    if audio_only:
+        return bool(info.get("has_audio")) and info.get("duration", 0) > 0
+    return bool(info.get("has_video", True))
+
+
 class RangeStore:
     """Saved ranges: what the old ``RangeQueue`` held, minus its widget."""
 
-    MIN_LENGTH = 0.05
+    MIN_LENGTH = MIN_SELECTION_S
 
     def __init__(self, on_change=None):
         self._ranges = []
@@ -888,7 +924,7 @@ class TrimTab(ctk.CTkFrame):
             self._notify(hint, "warn")
             return
         bbox = self.player.get_text_source_bbox(index)
-        if not bbox:
+        if not bbox or not (0 <= index < len(self.text_layers.layers)):
             self._notify(
                 "Drag the caption onto the thing you want to track first",
                 "warn")
@@ -903,11 +939,15 @@ class TrimTab(ctk.CTkFrame):
 
         self._notify("Tracking… the caption will follow when it's done", "info")
         state = {"frac": 0.0, "done": False, "result": None, "error": None}
+        # The path follows a caption, not a row number, and only in the
+        # video it was tracked in: either can change while it runs.
+        video_path = self.video_path
+        layer = self.text_layers.layers[index]
 
         def worker():
             try:
                 state["result"] = trk.track_region(
-                    self.video_path, region, start_t, end_t,
+                    video_path, region, start_t, end_t,
                     progress_cb=lambda f: state.__setitem__("frac", f),
                 )
             except Exception as e:      # noqa: BLE001 - surfaced to the user
@@ -920,6 +960,9 @@ class TrimTab(ctk.CTkFrame):
             if not state["done"]:
                 self._notify(f"Tracking… {int(state['frac']*100)}%", "info")
                 self.after(250, poll)
+                return
+            if self.video_path != video_path or layer not in self.text_layers.layers:
+                self._notify("Tracking finished, but its caption is gone", "warn")
                 return
             if state["error"]:
                 self._notify(f"Tracking failed: {state['error'][:120]}", "error")
@@ -940,7 +983,8 @@ class TrimTab(ctk.CTkFrame):
                     kf["x"], kf["y"], kf["x"] + bw, kf["y"] + bh)
                 mapped.append(dict(kf, x=int(round(lx1)), y=int(round(ly1))))
             kfs = mapped
-            self.text_layers.set_layer_keyframes(index, kfs)
+            self.text_layers.set_layer_keyframes(
+                self.text_layers.layers.index(layer), kfs)
             self.player.refresh_overlay()
             self._notify(
                 f"Tracked {kfs[-1]['t'] - kfs[0]['t']:.1f}s → "
@@ -1253,25 +1297,33 @@ class TrimTab(ctk.CTkFrame):
         from videokidnapper.core import whisper_captions
 
         start, end = self.timeline.get_values()
+        video_path = self.video_path
         self._notify(f"Transcribing with Whisper ({model_size})…", "info")
         self.captions_btn.configure(state="disabled")
 
         def worker():
             try:
                 entries = whisper_captions.transcribe(
-                    self.video_path,
+                    video_path,
                     model_size=model_size,
                     start=start, end=end,
                 )
             except Exception as exc:
-                self.after(0, self._on_captions_failed, str(exc))
+                self._post(self._on_captions_failed, str(exc))
                 return
-            self.after(0, self._on_captions_done, entries)
+            self._post(self._on_captions_done, entries, video_path)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _on_captions_done(self, entries):
+    def _on_captions_done(self, entries, video_path=None):
         self.captions_btn.configure(state="normal")
+        if video_path is not None and video_path != self.video_path:
+            # Transcription takes a while. If another video was opened
+            # meanwhile, these captions belong to the old one.
+            self._notify(
+                f"Captions for {os.path.basename(video_path)} were not added: "
+                "a different video is open now", "warn")
+            return
         if not entries:
             self._notify("Whisper produced no text (silent clip?)", "warn")
             return
@@ -1352,6 +1404,9 @@ class TrimTab(ctk.CTkFrame):
         self._notify(f"Recording {duration_seconds}s — window will minimize...", "info")
         self.winfo_toplevel().iconify()
         time.sleep(0.4)  # let the window minimize before capture begins
+        # Tk variables are read here, not on the worker thread.
+        output_folder = self.export_options.get_output_folder()
+        preset = self.quality_var.get()
 
         def worker():
             try:
@@ -1360,21 +1415,20 @@ class TrimTab(ctk.CTkFrame):
                     progress_callback=None,
                 )
             except Exception as e:
-                self.after(0, self._on_record_failed, str(e))
+                self._post(self._on_record_failed, str(e))
                 return
             if count < 2:
-                self.after(0, self._on_record_failed, "No frames captured")
+                self._post(self._on_record_failed, "No frames captured")
                 return
             # A screen recording has no source video, so the title
             # styles fall back to "clip" — which is the honest answer.
             output = generate_export_path(
                 "record", "mp4",
-                base_dir=self.export_options.get_output_folder(),
+                base_dir=output_folder,
                 source_name="screen recording",
             )
-            preset = self.quality_var.get()
             result = frames_to_video(str(frame_dir), fps, preset, str(output))
-            self.after(0, self._on_record_done, str(result) if result else None)
+            self._post(self._on_record_done, str(result) if result else None)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1440,20 +1494,27 @@ class TrimTab(ctk.CTkFrame):
     def keyboard_mark_in(self):
         if not self.video_path:
             return
+        duration = self.video_info["duration"]
         _, end = self.timeline.get_values()
         start = self.playhead
-        if end <= start + 0.05:
-            end = self.video_info["duration"]
+        if end <= start + MIN_SELECTION_S:
+            end = duration
+        # I at the very end used to make an empty selection, which
+        # exported as a file with no picture. Keep at least a sliver.
+        start = max(0.0, min(start, end - MIN_SELECTION_S))
         self._apply_selection(start, end)
         self._request_snapshot(immediate=True)
 
     def keyboard_mark_out(self):
         if not self.video_path:
             return
+        duration = self.video_info["duration"]
         start, _ = self.timeline.get_values()
         end = self.playhead
-        if end <= start + 0.05:
+        if end <= start + MIN_SELECTION_S:
             start = 0.0
+        # Likewise O at 0:00, before the playhead has moved.
+        end = min(duration, max(end, start + MIN_SELECTION_S))
         self._apply_selection(start, end)
         self._request_snapshot(immediate=True)
 
@@ -1567,11 +1628,17 @@ class TrimTab(ctk.CTkFrame):
             return
         self._restoring = True
         try:
-            start, end = snap.get(
-                "range", (0.0, float((self.video_info or {}).get("duration", 0.0))),
-            )
-            self._apply_selection(start, end)
-            self.range_queue.set_ranges(snap.get("queued", []))
+            duration = float((self.video_info or {}).get("duration", 0.0))
+            # Limit everything to this video: a project reopened against
+            # a shorter replacement showed an Out point past the end and
+            # exported saved ranges that held nothing.
+            selection = clamp_range(*snap.get("range", (0.0, duration)), duration)
+            self._apply_selection(*(selection or (0.0, duration)))
+            self.range_queue.set_ranges([
+                kept for kept in (clamp_range(s, e, duration)
+                                  for s, e in snap.get("queued", []))
+                if kept
+            ])
 
             # Crop rect.
             self.player.set_crop(snap.get("crop"))
@@ -1824,6 +1891,12 @@ class TrimTab(ctk.CTkFrame):
         ranges = self._gather_ranges()
         concat = options.get("concat") and len(ranges) > 1 and fmt != "GIF" \
                  and not options.get("audio_only")
+        audio_only = bool(options.get("audio_only"))
+        # Read once, here on the Tk thread. The worker used to re-read
+        # them for every clip, so a file opened mid-export supplied (and
+        # named) the clips still to come.
+        video_path = self.video_path
+        source_title = self.source_title
 
         title_suffix = " (joined)" if concat else ""
         dialog = ExportDialog(
@@ -1832,6 +1905,14 @@ class TrimTab(ctk.CTkFrame):
         )
         self._notify(f"Exporting {len(ranges)} clip(s) [{preset}]{title_suffix}...", "info")
 
+        # Runs on the Tk thread (through _post), like everything below
+        # that touches a widget.
+        def failed(message, toast=None):
+            if dialog.winfo_exists():
+                dialog.export_failed(message)
+                if toast:
+                    self._notify(toast, "error")
+
         def run_export():
             produced = []
             for i, (start, end) in enumerate(ranges, 1):
@@ -1839,18 +1920,17 @@ class TrimTab(ctk.CTkFrame):
                     break
                 output_path = str(generate_export_path(
                     "trim", ext, base_dir=output_dir,
-                    source_name=self.source_title,
+                    source_name=source_title,
                 ))
 
                 def progress_cb(p, i=i):
-                    if dialog.winfo_exists():
-                        prog = ((i - 1) + p) / len(ranges)
-                        dialog.after(0, dialog.update_progress, prog,
-                                     f"Clip {i}/{len(ranges)} — encoding {fmt}...")
+                    prog = ((i - 1) + p) / len(ranges)
+                    self._post(dialog.update_progress, prog,
+                               f"Clip {i}/{len(ranges)} — encoding {fmt}...")
                 try:
-                    if options.get("audio_only"):
+                    if audio_only:
                         result = trim_to_video(
-                            self.video_path, start, end, preset, output_path,
+                            video_path, start, end, preset, output_path,
                             text_layers=layers, options=options,
                             progress_callback=progress_cb, cancel_event=dialog.cancel_event,
                         )
@@ -1859,36 +1939,40 @@ class TrimTab(ctk.CTkFrame):
                         # first (see ffmpeg_backend.trim_to_gif) — slower
                         # but keeps the filter-graph plumbing simple.
                         result = trim_to_gif(
-                            self.video_path, start, end, preset, output_path,
+                            video_path, start, end, preset, output_path,
                             text_layers=layers, image_layers=image_layers,
                             options=options,
                             progress_callback=progress_cb, cancel_event=dialog.cancel_event,
                         )
                     else:
                         result = trim_to_video(
-                            self.video_path, start, end, preset, output_path,
+                            video_path, start, end, preset, output_path,
                             text_layers=layers, image_layers=image_layers,
                             options=options,
                             progress_callback=progress_cb, cancel_event=dialog.cancel_event,
                         )
+                    if result and not export_output_ok(result, audio_only):
+                        try:
+                            Path(result).unlink()
+                        except OSError:
+                            pass
+                        self._post(failed, f"Clip {i} came out empty — check "
+                                           "that it lies inside the video")
+                        return
                     if result:
                         produced.append(str(result))
                     else:
-                        if dialog.winfo_exists():
-                            dialog.after(0, dialog.export_failed,
-                                         f"Clip {i} failed — aborting")
+                        self._post(failed, f"Clip {i} failed — aborting")
                         return
                 except Exception as e:
-                    if dialog.winfo_exists():
-                        dialog.after(0, dialog.export_failed, f"Error: {e}")
-                        self._notify(f"Export error: {e}", "error")
+                    self._post(failed, f"Error: {e}", f"Export error: {e}")
                     return
 
             final_path = None
             if concat and len(produced) > 1:
                 combined = str(generate_export_path(
                     "trim_concat", ext, base_dir=output_dir,
-                    source_name=self.source_title,
+                    source_name=source_title,
                 ))
                 # Pick transition from the export options. "cut" stays on
                 # the fast lossless concat demuxer path; anything else
@@ -1908,17 +1992,33 @@ class TrimTab(ctk.CTkFrame):
                             pass
             if not final_path:
                 final_path = produced[-1] if produced else None
+            self._post(finished, final_path)
 
-            if final_path and dialog.winfo_exists():
+        def finished(final_path):
+            if not dialog.winfo_exists():
+                return
+            if final_path:
                 settings.set("last_export", final_path)
                 self._record_history(final_path, fmt, preset, options)
-                dialog.after(0, dialog.export_complete, final_path)
+                dialog.export_complete(final_path)
                 self._notify(f"Exported {len(ranges)} clip(s)", "success")
-            elif dialog.winfo_exists():
-                dialog.after(0, dialog.export_failed, "Cancelled")
+            else:
+                dialog.export_failed("Cancelled")
                 self._notify("Export cancelled", "warn")
 
         threading.Thread(target=run_export, daemon=True).start()
+
+    def _post(self, fn, *args):
+        """Run ``fn(*args)`` on the Tk thread. Safe from a worker thread.
+
+        Workers must not touch widgets themselves; ``after`` is the one Tk
+        call they make. It fails once the window is closing, which a late
+        worker has no reason to report.
+        """
+        try:
+            self.after(0, fn, *args)
+        except (RuntimeError, tk.TclError):
+            pass
 
     def _record_history(self, path, fmt, preset, options):
         try:
