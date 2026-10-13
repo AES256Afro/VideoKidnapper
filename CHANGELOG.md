@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Changed
+
+- **No welcome window on first start.** The app opens on Import, which already shows the ways to bring a clip in.
+
 ### Fixed
 
 - **Captions and stickers appeared at the wrong moment.** The editor times them on the full video, but the export counted from the start of the clip, so any clip that did not start at 0:00 showed them late or not at all. They now appear exactly where the preview shows them, at any speed, and a motion-tracked caption follows the same path.

@@ -97,10 +97,6 @@ Captures `stdout` + `stderr` with level-colored tags: `INFO` accent-blue, `WARN`
 
 ### Setup
 
-![First-run welcome](assets/screenshots/onboarding.png)
-
-New installs start with a short three-step welcome and direct actions for opening a local video or using a web link. Editing stays on the computer, with no account or upload required.
-
 ![Setup dialog](assets/screenshots/setup.png)
 
 Opened from **Setup and components…** in the settings (gear) menu. When FFmpeg is missing on first run, a setup screen explains the source, destination, and integrity check before asking permission to install. Each row describes a prerequisite and the feature it unlocks; required items are pre-checked, optional ones wait for opt-in. **Select all missing** toggles every installable row.
