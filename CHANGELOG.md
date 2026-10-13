@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on 
 
 ## [Unreleased]
 
+### Changed
+
+- **One window.** Recovering unsaved work, saving before you close or open another project, stopping an export that is still running, and restarting after a theme change are now asked in a bar at the top of the window instead of separate popups. The bar floats over the top edge, so nothing else moves, and you can keep working while it waits. Closing the recovery bar with ✕, or opening another video first, keeps the unsaved work for next time.
+- **Projects are in the main window.** Click the project's name in the header for Open project, Save, Save as and your recent projects. Import lists recent projects too, each with an Open button. The separate Projects window is gone.
+- **No welcome window on first start.** The app opens on Import, which already shows the ways to bring a clip in.
+
 ### Fixed
 
 - **Captions and stickers appeared at the wrong moment.** The editor times them on the full video, but the export counted from the start of the clip, so any clip that did not start at 0:00 showed them late or not at all. They now appear exactly where the preview shows them, at any speed, and a motion-tracked caption follows the same path.
