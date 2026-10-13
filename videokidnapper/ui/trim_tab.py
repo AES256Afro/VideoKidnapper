@@ -16,10 +16,10 @@ The class keeps its historical name and public API (``app.trim_tab``,
 ``open_project``, ``receive_url``, keyboard handlers, ...) so dialogs,
 plugins and the CLI-adjacent code that call into it keep working.
 
-Captions and image overlays still live in ``TextLayersPanel`` /
-``ImageLayersPanel`` rows, which act as the data model; they're never
-shown. The Inspector edits one selected row at a time and the timeline
-draws them all as clips.
+Captions live in ``TextLayersPanel`` as plain ``TextLayer`` objects and
+image overlays in ``ImageLayersPanel`` rows; they are the data model and
+are never shown. The Inspector edits one selected row at a time and the
+timeline draws them all as clips.
 """
 
 import os
@@ -1649,9 +1649,12 @@ class TrimTab(ctk.CTkFrame):
             settings.set("crop", snap.get("crop"))
 
             # Captions and overlays — rebuild the model rows from dicts.
-            self.text_layers.clear_layers()
-            for data in snap.get("layers", []):
-                self.text_layers._add_layer(preset_data=data)
+            # One change notification for all the captions, not one per
+            # field per caption (each redraws the timeline).
+            with self.text_layers.batch_changes():
+                self.text_layers.clear_layers()
+                for data in snap.get("layers", []):
+                    self.text_layers._add_layer(preset_data=data)
 
             self.image_layers.clear_layers()
             for data in snap.get("images", []):
