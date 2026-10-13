@@ -270,29 +270,22 @@ def shot_projects():
     app.destroy()
 
 
-def shot_update_dialog():
-    """Update prompt as a Windows Setup install sees it (GitHub release).
+def shot_update_prompt():
+    """The update offer in the banner, as a Windows Setup install sees it.
 
     Running from source would otherwise show the source-checkout route.
     """
-    from videokidnapper.ui import update_dialog
+    from videokidnapper.ui import update_prompt
     from videokidnapper.utils.github_update import build_update_plan
-    update_dialog.build_update_plan = (
+    update_prompt.build_update_plan = (
         lambda release_url=None: build_update_plan("setup", release_url))
-    UpdateDialog = update_dialog.UpdateDialog
     app = new_app()
-    dialog = UpdateDialog(
-        app, "1.9.0", "v1.9.1",
-        "https://github.com/AES256Afro/VideoKidnapper/releases/latest",
-    )
-    dialog.deiconify()
-    dialog.wait_visibility()
-    dialog.attributes("-topmost", True)
+    app.show_workspace("edit")
+    app._update_tag = "v1.9.2"
+    app._update_link = "https://github.com/AES256Afro/VideoKidnapper/releases/latest"
+    app._open_update_link()
     pump(app, 0.5)
-    dialog._center()
-    pump(app, 0.3)
     grab(app, "updates.png")
-    dialog.destroy()
     app.destroy()
 
 
@@ -307,7 +300,7 @@ def _shots():
         "debug": shot_debug,
         "setup": shot_setup,
         "projects": shot_projects,
-        "updates": shot_update_dialog,
+        "updates": shot_update_prompt,
     }
 
 
