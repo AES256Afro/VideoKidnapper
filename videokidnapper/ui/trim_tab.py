@@ -910,9 +910,15 @@ class TrimTab(ctk.CTkFrame):
         if self.download_bar is None:
             self._notify("The downloader isn't ready yet", "warn")
             return
+        if self.download_bar.busy():
+            # Keep the link here; it used to be cleared while the old one
+            # was downloaded a second time.
+            self._notify("A download is already running. Wait for it, or "
+                         "cancel it on the Import page.", "warn")
+            return
         self.download_bar.receive_url(url)
-        self.download_bar._download()
-        self.media_link_entry.delete(0, "end")
+        if self.download_bar._download():
+            self.media_link_entry.delete(0, "end")
 
     def _auto_track(self, index):
         """Auto-track: follow the video patch under the caption from the
