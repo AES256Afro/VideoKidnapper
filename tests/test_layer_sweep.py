@@ -429,3 +429,108 @@ def test_batch_run_replans_before_starting(root, batch_tab, tmp_path):
     assert open(planned, "rb").read() == b"someone else's file"
     batch_tab.encoder.release.set()
     _run_until(root, lambda: not batch_tab._running())
+
+
+# ---------------------------------------------------------------------------
+# Downloads
+# ---------------------------------------------------------------------------
+
+class _SlowDownload:
+    """Stands in for download_video: runs until released or cancelled."""
+
+    def __init__(self):
+        import threading
+
+        self.release = threading.Event()
+        self.urls = []
+
+    def __call__(self, url, progress_callback=None, cancel_event=None, cookies=None):
+        self.urls.append(url)
+        while not self.release.is_set():
+            if cancel_event is not None and cancel_event.is_set():
+                return {"path": None, "title": None, "platform": None,
+                        "error": "cancelled"}
+            time.sleep(0.01)
+        return {"path": None, "title": None, "platform": None, "error": "nope"}
+
+
+@pytest.fixture
+def download_bar(root, monkeypatch, tmp_path):
+    from videokidnapper import config
+    from videokidnapper.ui import source_bar
+    from videokidnapper.utils import settings
+
+    monkeypatch.setattr(settings, "_SETTINGS_PATH", tmp_path / "settings.json")
+    # destroy() clears partial downloads; keep it out of the real home.
+    monkeypatch.setattr(config, "TEMP_DIR", tmp_path / "temp")
+    fake = _SlowDownload()
+    monkeypatch.setattr(source_bar, "download_video", fake)
+    toasts = []
+    bar = source_bar.DownloadBar(root, on_video_ready=lambda *a: None,
+                                 notify=lambda m, level="info": toasts.append((level, m)))
+    bar.fake, bar.toasts = fake, toasts
+    yield bar
+    fake.release.set()
+    _run_until(root, lambda: not bar.busy(), timeout=5)
+    bar.destroy()
+
+
+def test_link_pasted_during_a_download_is_kept(root, download_bar):
+    """The link box was disabled during a download, so Tk ignored a
+    pasted link while the toast said "Link pasted"."""
+    bar = download_bar
+    bar.receive_url("https://youtu.be/AAAAAAAAAAA")
+    assert bar._download() is True
+    bar.receive_url("https://youtu.be/BBBBBBBBBBB")
+    assert bar.url_entry.get() == "https://youtu.be/BBBBBBBBBBB"
+    # Pressing Download again starts nothing and keeps the link.
+    assert bar._download() is False
+    _run_until(root, lambda: bar.fake.urls)
+    assert bar.fake.urls == ["https://youtu.be/AAAAAAAAAAA"]
+    assert bar.url_entry.get() == "https://youtu.be/BBBBBBBBBBB"
+
+
+def test_get_link_during_a_download_keeps_it(root, download_bar, editor):
+    """The Edit page's "Get" re-downloaded the running link and cleared
+    the new one from its box."""
+    bar = download_bar
+    editor.download_bar = bar
+    try:
+        bar.receive_url("https://youtu.be/AAAAAAAAAAA")
+        bar._download()
+        editor.media_link_entry.insert(0, "https://youtu.be/BBBBBBBBBBB")
+        editor._media_get_link()
+        _run_until(root, lambda: bar.fake.urls)
+        root.update()
+        assert bar.fake.urls == ["https://youtu.be/AAAAAAAAAAA"]
+        assert editor.media_link_entry.get() == "https://youtu.be/BBBBBBBBBBB"
+    finally:
+        editor.media_link_entry.delete(0, "end")
+        editor.download_bar = None
+
+
+def test_cancel_stops_a_download(root, download_bar):
+    bar = download_bar
+    assert bar.cancel_btn.cget("state") == "disabled"
+    bar.receive_url("https://youtu.be/AAAAAAAAAAA")
+    bar._download()
+    assert bar.cancel_btn.cget("state") == "normal"
+    bar.cancel_download()
+    _run_until(root, lambda: not bar.busy())
+    assert bar.status_label.cget("text") == "Download cancelled"
+    assert bar.download_btn.cget("state") == "normal"
+    assert bar.cancel_btn.cget("state") == "disabled"
+
+
+def test_a_crashing_download_does_not_wedge_the_bar(root, download_bar, monkeypatch):
+    from videokidnapper.ui import source_bar
+
+    def boom(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(source_bar, "download_video", boom)
+    bar = download_bar
+    bar.receive_url("https://youtu.be/AAAAAAAAAAA")
+    bar._download()
+    _run_until(root, lambda: not bar.busy())
+    assert "disk full" in bar.status_label.cget("text")
