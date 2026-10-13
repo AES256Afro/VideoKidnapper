@@ -24,10 +24,14 @@ editor.
 
 
 def coerce_int(value, default=0):
-    """``int(value)``, or ``default`` when that is not possible."""
+    """``int(value)``, or ``default`` when that is not possible.
+
+    That includes the infinities: ``int(float("inf"))`` raises
+    OverflowError, and Python's json reads ``Infinity`` as one.
+    """
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 

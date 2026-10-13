@@ -130,3 +130,49 @@ def test_no_bare_numeric_casts_on_layer_data_in_the_preview():
         "video_player.py — use utils.coerce so the preview cannot crash "
         "on a project the export handles fine"
     )
+
+
+# --------------------------------------------------------------------------
+# The loaders: undo, duplicate and project open all go through them
+# --------------------------------------------------------------------------
+
+def test_coerce_int_rejects_infinity():
+    """``int(float("inf"))`` raises OverflowError, not ValueError, and
+    Python's json reads ``Infinity`` as exactly that."""
+    assert coerce_int(float("inf"), 7) == 7
+    assert coerce_int(float("-inf"), 7) == 7
+
+
+BAD_KEYFRAMES = [
+    "a path", 42, {"t": 1}, [None, "x", 3],
+    [{"t": 1, "y": 2}], [{"t": "soon", "x": 1, "y": 2}],
+    [{"t": float("nan"), "x": 1, "y": 2}], [{"t": 1, "x": [], "y": 2}],
+]
+
+
+@pytest.mark.parametrize("path", BAD_KEYFRAMES)
+def test_malformed_keyframes_are_skipped(path):
+    from videokidnapper.utils.keyframes import (
+        compile_axis_expr, normalize_keyframes, position_at,
+    )
+
+    assert normalize_keyframes(path) == []
+    assert position_at(path, 1.0) is None
+    assert compile_axis_expr(path, "x") is None
+
+
+def test_good_keyframes_survive_beside_bad_ones():
+    from videokidnapper.utils.keyframes import normalize_keyframes
+
+    path = [{"t": 2, "x": 5, "y": 6}, {"t": 1, "y": 2}, "junk",
+            {"t": "1.0", "x": "3", "y": 4}]
+    assert normalize_keyframes(path) == [
+        {"t": 1.0, "x": 3.0, "y": 4.0}, {"t": 2.0, "x": 5.0, "y": 6.0}]
+
+
+def test_export_uses_static_position_for_an_unusable_path():
+    from videokidnapper.core.ffmpeg.filters import _build_drawtext_filter
+
+    spec = _build_drawtext_filter({
+        "text": "hi", "start": 0, "end": 9, "keyframes": [{"t": "x"}]})
+    assert "None" not in spec

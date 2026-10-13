@@ -319,3 +319,49 @@ def test_from_dict_normalises_unknown_status():
 def test_platform_inherit_is_default():
     job = BatchJob(input_path="/a", output_path="/b")
     assert job.platform_override == PLATFORM_INHERIT
+
+
+# ---------------------------------------------------------------------------
+# Output names that differ only in case, and re-planning
+
+def test_outputs_differing_only_in_case_do_not_collide(tmp_path):
+    """D:/cam/Clip.mp4 and E:/phone/clip.mp4 were planned to
+    Clip_batch.mp4 and clip_batch.mp4: one file on Windows and macOS, so
+    the second export overwrote the first while both rows said Done."""
+    jobs = plan_batch_jobs(
+        [tmp_path / "cam" / "Clip.mp4", tmp_path / "phone" / "clip.mp4"],
+        tmp_path / "out", "mp4")
+    first, second = (job.output_path.casefold() for job in jobs)
+    assert first != second
+
+
+def test_inputs_differing_only_in_case(tmp_path):
+    """The same file typed two ways is one file where the file system
+    ignores case (Windows), and two files where it doesn't."""
+    import os
+
+    jobs = plan_batch_jobs(
+        [tmp_path / "Clip.mp4", str(tmp_path / "Clip.mp4").upper()],
+        tmp_path / "out", "mp4")
+    assert len(jobs) == (1 if os.name == "nt" else 2)
+
+
+def test_replan_moves_unfinished_rows(tmp_path):
+    from videokidnapper.utils.batch import replan_outputs
+
+    old, new = tmp_path / "old", tmp_path / "new"
+    new.mkdir()
+    (new / "talk_batch.mp3").write_bytes(b"last week's export")
+    done = BatchJob(str(tmp_path / "intro.mp4"), str(old / "intro_batch.mp4"),
+                    status=STATUS_DONE)
+    queued = BatchJob(str(tmp_path / "talk.mp4"), str(old / "talk_batch.mp4"))
+    failed = BatchJob(str(tmp_path / "outro.mp4"), str(old / "outro_batch.mp4"),
+                      status=STATUS_FAILED)
+
+    assert replan_outputs([done, queued, failed], new, "mp3")
+
+    assert done.output_path == str(old / "intro_batch.mp4")
+    # Never onto a file that is already there.
+    assert queued.output_path == str(new / "talk_batch_1.mp3")
+    assert failed.output_path == str(new / "outro_batch.mp3")
+    assert not replan_outputs([done, queued, failed], new, "mp3")
