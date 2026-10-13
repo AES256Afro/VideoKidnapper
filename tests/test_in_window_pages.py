@@ -1,14 +1,17 @@
 # SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
-"""Setup is a page inside the window.
+"""Setup and the keyboard shortcuts are pages inside the window.
 
-It used to open a window of its own. The rule now is one window: a page
-takes over the workspace area, and Back returns to the workspace the
-user came from. These tests pin:
+Both used to open windows of their own. The rule now is one window: a
+page takes over the workspace area, and Back (or Esc) returns to the
+workspace the user came from. These tests pin:
 
-- the page builds, lazily, and its buttons reach the right helpers
+- the pages build, lazily, and their buttons reach the right helpers
   (installers, the admin terminal and relaunch are all stubbed: nothing
   here downloads, installs or opens a terminal);
+- ``?`` toggles the shortcuts page. The old window closed itself on
+  ``?`` and the app-wide binding then opened it again;
+- ``?`` typed into a text field is just a question mark;
 - the first-run landing shows Setup in its own place, not in a window;
 - plugin workspaces still work alongside the pages.
 
@@ -20,6 +23,7 @@ like the rest of the UI tests.
 import threading
 import time
 import tkinter as tk
+from tkinter import ttk
 from types import SimpleNamespace
 
 import pytest
@@ -29,11 +33,13 @@ ctk = pytest.importorskip("customtkinter", reason="needs customtkinter")
 from videokidnapper import app as app_module  # noqa: E402
 from videokidnapper.ui import setup_page  # noqa: E402
 from videokidnapper.ui.setup_page import SetupPage  # noqa: E402
+from videokidnapper.ui.shortcuts_page import ShortcutsPage, split_columns  # noqa: E402
 from videokidnapper.ui.studio.chrome import WorkspaceHost  # noqa: E402
 from videokidnapper.utils import prereq_check  # noqa: E402
 
 App = app_module.App
 TAB_SETUP = app_module.TAB_SETUP
+TAB_SHORTCUTS = app_module.TAB_SHORTCUTS
 
 
 @pytest.fixture(scope="module")
@@ -106,9 +112,10 @@ def _toplevels(widget):
 
 _APP_METHODS = (
     "show_workspace", "_on_tab_changed", "_ensure_tab", "_tab_if_built",
-    "_construct_setup_page",
+    "_construct_setup_page", "_construct_shortcuts_page",
     "_open_page", "_close_page", "_return_target", "_workspace_title",
-    "_open_setup_page", "_shortcut_shortcuts_overlay", "_editing_in_entry",
+    "_open_setup_page", "_toggle_shortcuts_page",
+    "_shortcut_shortcuts_overlay", "_escape_shortcut", "_editing_in_entry",
     "_bind_keyboard_shortcuts", "_bind_accel", "_shortcut", "_paste_shortcut",
     "_save_project_shortcut", "_save_project_as_shortcut",
     "_open_project_shortcut", "register_tab",
@@ -125,6 +132,7 @@ class StandInApp:
         self._built_tabs = {}
         self._lazy_tabs = {
             TAB_SETUP: self._construct_setup_page,
+            TAB_SHORTCUTS: self._construct_shortcuts_page,
         }
         self.logged = []
         self.debug_tab = SimpleNamespace(add_log=lambda text, level: self.logged.append(level))
@@ -344,30 +352,52 @@ def _pump_until(root, condition, timeout=5.0):
 
 
 # ---------------------------------------------------------------------------
-# The page's source
+# Shortcuts page
+
+def test_shortcuts_page_builds_and_back_works(root):
+    backs = []
+    widget = ShortcutsPage(root, on_back=lambda: backs.append(1))
+    try:
+        widget.back_button.invoke()
+    finally:
+        widget.destroy()
+    assert backs == [1]
+
+
+def test_shortcut_groups_split_into_balanced_columns_in_order():
+    groups = [("A", [1, 2, 3]), ("B", [1, 2]), ("C", [1, 2]), ("D", [1, 2, 3, 4])]
+    left, right = split_columns(groups)
+    assert [g for g, _ in left] + [g for g, _ in right] == ["A", "B", "C", "D"]
+    assert [g for g, _ in left] == ["A", "B"]
+    assert split_columns([("A", [1])]) == [[("A", [1])], []]
+
 
 def test_pages_never_open_a_window_of_their_own():
     from pathlib import Path
 
     ui = Path(setup_page.__file__).resolve().parent
-    for name in ("setup_page.py",):
+    for name in ("setup_page.py", "shortcuts_page.py"):
         source = (ui / name).read_text(encoding="utf-8")
         assert "Toplevel" not in source, f"{name} opens a window"
         assert "messagebox" not in source, f"{name} opens a message box"
 
 
 # ---------------------------------------------------------------------------
-# The app's side: building and Back
+# The app's side: building, Back, `?` and Esc
 
 def test_pages_are_built_on_first_view_and_reused(app, root):
     assert app._built_tabs == {}
+    app._open_page(TAB_SHORTCUTS)
+    assert app.workspaces.get() == TAB_SHORTCUTS
+    first = app._tab_if_built(TAB_SHORTCUTS)
+    assert isinstance(first, ShortcutsPage)
+    app._close_page()
+    app._open_page(TAB_SHORTCUTS)
+    assert app._tab_if_built(TAB_SHORTCUTS) is first, "the page was rebuilt"
+
     app._open_setup_page()
     assert app.workspaces.get() == TAB_SETUP
-    first = app._tab_if_built(TAB_SETUP)
-    assert isinstance(first, SetupPage)
-    app._close_page()
-    app._open_setup_page()
-    assert app._tab_if_built(TAB_SETUP) is first, "the page was rebuilt"
+    assert isinstance(app._tab_if_built(TAB_SETUP), SetupPage)
     assert _toplevels(root) == []
 
 
@@ -380,8 +410,8 @@ def test_back_returns_to_the_workspace_the_user_came_from(app):
     assert app.workspaces.get() == "import"
 
     app.workspaces.set("export")
-    app._open_page(TAB_SETUP)
-    # Opening it again from itself keeps the original way back.
+    app._open_page(TAB_SHORTCUTS)
+    # Hopping from one page to the other keeps the original way back.
     app._open_page(TAB_SETUP)
     assert page.back_button.cget("text") == "‹  Back to Export"
     app._close_page()
@@ -409,6 +439,56 @@ def test_setup_relaunch_goes_through_the_app(app):
     app._open_page(TAB_SETUP)
     app._tab_if_built(TAB_SETUP)._relaunch()
     assert app.restarts == 1, "relaunch skipped App._restart_app and its save prompts"
+
+
+def test_question_mark_toggles_the_shortcuts_page(app):
+    assert app.press("<Key-question>") == "break"
+    assert app.workspaces.get() == TAB_SHORTCUTS
+    # The old window closed itself on `?` and was then reopened by this
+    # same binding. Now the second press simply goes back.
+    app.press("<Key-question>")
+    assert app.workspaces.get() == "edit"
+
+    app.workspaces.set("import")
+    app.press("<Key-question>")
+    app.press("<Key-question>")
+    assert app.workspaces.get() == "import"
+
+
+def test_the_header_help_button_toggles_too(app):
+    app._toggle_shortcuts_page()
+    assert app.workspaces.get() == TAB_SHORTCUTS
+    app._toggle_shortcuts_page()
+    assert app.workspaces.get() == "edit"
+
+
+def test_question_mark_in_a_text_field_is_just_typed(app, root):
+    entry = ctk.CTkEntry(root)
+    textbox = ctk.CTkTextbox(root)
+    combo = ctk.CTkComboBox(root, values=["a"])
+    plain = [tk.Entry(root), tk.Text(root), ttk.Entry(root), ttk.Combobox(root)]
+    try:
+        for widget in (entry._entry, textbox._textbox, combo._entry, *plain):
+            assert app.press("<Key-question>", widget) is None, widget.winfo_class()
+            assert app.workspaces.get() == "edit", f"? in a {widget.winfo_class()} opened the page"
+    finally:
+        for widget in (entry, textbox, combo, *plain):
+            widget.destroy()
+
+
+def test_escape_leaves_a_page_and_is_left_alone_elsewhere(app):
+    assert app.binding_adds["<Escape>"] == "+", "Esc must not replace other Esc bindings"
+    assert app.press("<Escape>") is None
+    assert app.workspaces.get() == "edit"
+
+    app.workspaces.set("export")
+    app._open_page(TAB_SHORTCUTS)
+    assert app.press("<Escape>") == "break"
+    assert app.workspaces.get() == "export"
+
+    app._open_page(TAB_SETUP)
+    app.press("<Escape>")
+    assert app.workspaces.get() == "export"
 
 
 def test_a_page_that_fails_to_build_leaves_the_window_alone(app, monkeypatch):
@@ -439,7 +519,7 @@ def test_plugin_workspaces_work_alongside_the_pages(app):
     page = app._tab_if_built(TAB_SETUP)
     assert isinstance(page, SetupPage)
     assert page.back_button.cget("text") == "‹  Back to Hello"
-    app._close_page()
+    app.press("<Escape>")
     assert app.workspaces.get() == "plugin:Hello"
     assert built[1].winfo_exists() and built[1].master is app.workspaces.tab("plugin:setup")
 
