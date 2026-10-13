@@ -560,3 +560,67 @@ def test_subtitles_after_the_end_are_left_out(editor, tmp_path, monkeypatch):
         editor.text_layers.clear_layers()
         editor.selected_text_index = None
         editor._sync_timeline_clips()
+
+
+# ---------------------------------------------------------------------------
+# History
+# ---------------------------------------------------------------------------
+
+class _QuietExportDialog:
+    """Stands in for the export progress window, so no window opens."""
+
+    def __init__(self, *_a, **_k):
+        import threading
+
+        self.cancel_event = threading.Event()
+        self.result = None
+
+    def winfo_exists(self):
+        return True
+
+    def update_progress(self, *_a):
+        pass
+
+    def export_complete(self, path):
+        self.result = ("done", path)
+
+    def export_failed(self, message):
+        self.result = ("failed", message)
+
+
+def test_every_exported_clip_is_in_history(root, editor, tmp_path, monkeypatch):
+    """Three ranges exported without joining wrote three files, but only
+    the last one was recorded in History."""
+    from pathlib import Path
+
+    from videokidnapper.ui import trim_tab as tt
+    from videokidnapper.utils import settings
+
+    def fake_encode(_src, _start, _end, _preset, output_path, **_kw):
+        with open(output_path, "wb") as fh:
+            fh.write(b"clip")
+        return output_path
+
+    dialogs = []
+    monkeypatch.setattr(tt, "ExportDialog",
+                        lambda *a, **k: dialogs.append(_QuietExportDialog()) or dialogs[-1])
+    monkeypatch.setattr(tt, "trim_to_video", fake_encode)
+    monkeypatch.setattr(tt, "export_output_ok", lambda *_a, **_k: True)
+    settings.clear_history()
+    editor.export_options.output_folder_var.set(str(tmp_path / "out"))
+    editor.export_options.concat_var.set(False)
+    editor.export_options.audio_only_var.set(False)
+    editor.format_var.set("MP4")
+    editor.range_queue.set_ranges([(0.0, 1.0), (1.5, 2.5)])
+    editor._apply_selection(3.0, 4.0)
+    try:
+        editor._export()
+        _run_until(root, lambda: dialogs and dialogs[0].result)
+        assert dialogs[0].result[0] == "done"
+        written = sorted(p.name for p in (tmp_path / "out").iterdir())
+        recorded = sorted(Path(entry["path"]).name for entry in settings.get_history())
+        assert len(written) == 3
+        assert recorded == written
+    finally:
+        editor.range_queue.set_ranges([])
+        settings.clear_history()

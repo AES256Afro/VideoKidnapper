@@ -2066,16 +2066,22 @@ class TrimTab(ctk.CTkFrame):
                             Path(p).unlink()
                         except OSError:
                             pass
+            # Every file left on disk goes into History: the joined file,
+            # or each clip when they were not joined (or the join failed).
+            saved = [final_path] if final_path else list(produced)
             if not final_path:
                 final_path = produced[-1] if produced else None
-            self._post(finished, final_path)
+            self._post(finished, final_path, saved)
 
-        def finished(final_path):
+        def finished(final_path, saved=()):
             if not dialog.winfo_exists():
                 return
             if final_path:
                 settings.set("last_export", final_path)
-                self._record_history(final_path, fmt, preset, options)
+                # Only the last clip used to be recorded, so the others
+                # from a multi-range export were missing from History.
+                for path in saved or [final_path]:
+                    self._record_history(path, fmt, preset, options)
                 dialog.export_complete(final_path)
                 self._notify(f"Exported {len(ranges)} clip(s)", "success")
             else:
