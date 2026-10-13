@@ -534,3 +534,29 @@ def test_a_crashing_download_does_not_wedge_the_bar(root, download_bar, monkeypa
     bar._download()
     _run_until(root, lambda: not bar.busy())
     assert "disk full" in bar.status_label.cget("text")
+
+
+def test_subtitles_after_the_end_are_left_out(editor, tmp_path, monkeypatch):
+    """Cues past the end of the video were clamped to zero length at the
+    very end: invisible, but counted as imported."""
+    from tkinter import filedialog
+
+    srt = tmp_path / "long.srt"
+    srt.write_text("1\n00:00:01,000 --> 00:00:02,000\nin\n\n"
+                   "2\n00:00:05,500 --> 00:00:08,000\nruns past the end\n\n"
+                   "3\n00:00:30,000 --> 00:00:32,000\nafter the end\n", encoding="utf-8")
+    monkeypatch.setattr(filedialog, "askopenfilename", lambda **_k: str(srt))
+    toasts = []
+    monkeypatch.setattr(editor, "_notify", lambda m, level="info": toasts.append((level, m)))
+    editor.text_layers._add_layer(preset_data={"text": "already here", "start": 0, "end": 1})
+    try:
+        editor._import_srt()
+        texts = [layer.get_layer_data()["text"] for layer in editor.text_layers.layers]
+        assert texts == ["already here", "in", "runs past the end"]
+        # The first imported caption is selected, not the one already there.
+        assert editor.selected_text_index == 1
+        assert "1 after the end" in toasts[-1][1]
+    finally:
+        editor.text_layers.clear_layers()
+        editor.selected_text_index = None
+        editor._sync_timeline_clips()

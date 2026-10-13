@@ -1337,9 +1337,7 @@ class TrimTab(ctk.CTkFrame):
         if not entries:
             self._notify("Whisper produced no text (silent clip?)", "warn")
             return
-        self.text_layers.import_srt_layers(srt_to_text_layers(entries))
-        self.select_layer("text", 0)
-        self._notify(f"Imported {len(entries)} caption line(s)", "success")
+        self._add_captions(entries, "caption line(s)")
 
     def _on_captions_failed(self, error):
         self.captions_btn.configure(state="normal")
@@ -1360,11 +1358,31 @@ class TrimTab(ctk.CTkFrame):
             if not entries:
                 self._notify("No subtitle entries found", "warn")
                 return
-            self.text_layers.import_srt_layers(srt_to_text_layers(entries))
-            self.select_layer("text", 0)
-            self._notify(f"Imported {len(entries)} subtitle line(s)", "success")
+            self._add_captions(entries, "subtitle line(s)")
         except Exception as e:
             self._notify(f"SRT import failed: {e}", "error")
+
+    def _add_captions(self, entries, what):
+        """Add timed lines as captions and select the first one added.
+
+        Lines that start after the end of the video are left out: they
+        used to be squeezed to zero length at the very end, invisible
+        but counted as imported.
+        """
+        duration = float((self.video_info or {}).get("duration") or 0.0)
+        inside = [e for e in entries if duration <= 0 or e["start"] < duration]
+        late = len(entries) - len(inside)
+        if not inside:
+            self._notify(f"All {len(entries)} {what} start after the end of "
+                         "this video; nothing was added", "warn")
+            return
+        first = len(self.text_layers.layers)
+        self.text_layers.import_srt_layers(srt_to_text_layers(inside))
+        self.select_layer("text", first)
+        message = f"Imported {len(inside)} {what}"
+        if late:
+            message += f"; {late} after the end of the video left out"
+        self._notify(message, "success")
 
     # ------------------------------------------------------------------
     def _record_screen(self):
