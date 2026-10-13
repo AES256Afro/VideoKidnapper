@@ -565,8 +565,18 @@ class App(ctk.CTk):
             return False
         return cls in ("Entry", "Text", "TEntry", "TCombobox")
 
+    def _modal_open(self):
+        """True while a dialog holds the input grab (the export window,
+        say). Its grab blocks clicks but not ``bind_all`` shortcuts, so
+        Ctrl+O could open another video under a running export."""
+        try:
+            grab = self.grab_current()
+        except Exception:
+            return False
+        return grab is not None and grab.winfo_toplevel() is not self
+
     def _shortcut(self, event, method, *args):
-        if self._editing_in_entry(event):
+        if self._editing_in_entry(event) or self._modal_open():
             return None
         editor = getattr(self, "trim_tab", None)
         if editor is None:
@@ -587,7 +597,7 @@ class App(ctk.CTk):
         regardless of the current workspace. Everything else (images,
         plain text) defers to the editor's own paste handler.
         """
-        if self._editing_in_entry(event):
+        if self._editing_in_entry(event) or self._modal_open():
             return
         try:
             data = self.clipboard_get()
@@ -605,15 +615,18 @@ class App(ctk.CTk):
         self._open_shortcuts_dialog()
 
     def _save_project_shortcut(self, _event):
-        self.trim_tab.save_project()
+        if not self._modal_open():
+            self.trim_tab.save_project()
         return "break"
 
     def _save_project_as_shortcut(self, _event):
-        self.trim_tab.save_project(save_as=True)
+        if not self._modal_open():
+            self.trim_tab.save_project(save_as=True)
         return "break"
 
     def _open_project_shortcut(self, _event):
-        self.trim_tab.choose_and_open_project()
+        if not self._modal_open():
+            self.trim_tab.choose_and_open_project()
         return "break"
 
     # ------------------------------------------------------------------

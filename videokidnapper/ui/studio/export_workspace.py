@@ -294,6 +294,14 @@ class ExportWorkspace(ctk.CTkFrame):
     def refresh(self):
         if self.current != "project" or not self.winfo_exists():
             return
+        # The editor calls this on every selection change, including each
+        # motion event of an in/out drag, and the range list is rebuilt
+        # from new widgets every time: about 0.1 s per saved range, per
+        # event, while nobody could see the page. Switching to Export
+        # refreshes it (App._on_workspace_switched).
+        workspaces = getattr(self.app, "workspaces", None)
+        if workspaces is not None and workspaces.get() != "export":
+            return
         ed = self.editor
         opts = ed.options
         has_video = bool(ed.video_path)

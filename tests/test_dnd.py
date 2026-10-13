@@ -44,12 +44,26 @@ def test_bare_word_escapes():
     assert parse_dnd_files("C:/odd\\{brace.mp4") == ["C:/odd{brace.mp4"]
 
 
+@pytest.fixture(scope="module")
+def tcl():
+    # One interpreter for the module. Starting one sometimes fails to read
+    # Tcl's own init.tcl on a busy Windows machine (several test runs at
+    # once); retry, then skip rather than report a product failure.
+    import time
+    for attempt in range(5):
+        try:
+            return tkinter.Tcl()
+        except tkinter.TclError as exc:
+            error = exc
+            time.sleep(0.2 * (attempt + 1))
+    pytest.skip(f"Tcl would not start: {error}")
+
+
 @pytest.mark.parametrize("name", [
     "C:/Videos/Take {2}.mp4", "C:/odd{brace.mp4", "C:/a b/x}.mp4",
     "C:/plain.mp4", "C:/my video.mp4", "D:/x/{nested {deep}} y.mov",
 ])
-def test_fallback_matches_tcl(name):
-    tcl = tkinter.Tcl()
+def test_fallback_matches_tcl(name, tcl):
     # The string form Tcl gives a two-item list, as tkdnd builds its payload.
     tcl.call("set", "files", (name, "C:/second file.mp4"))
     payload = tcl.eval("string cat $files")

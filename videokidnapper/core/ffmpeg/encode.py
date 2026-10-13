@@ -65,6 +65,27 @@ def _output_duration(start, end, speed):
     return max(0.001, (end - start) / coerce_speed(speed))
 
 
+def _palette_pass(cmd, duration, progress_callback, cancel_event):
+    """Run a GIF's first pass (palettegen) with progress and Stop.
+
+    It used to be a blocking ``subprocess.run`` with a 180 s timeout: Stop
+    did nothing until the pass finished, and a long or high-resolution
+    GIF hit the timeout and failed with a raw TimeoutExpired. Its share
+    of the progress bar is the first 30 %. A failure is left for the
+    second pass to report, as before; it fails without a palette.
+    """
+    def progress(p):
+        if progress_callback:
+            progress_callback(p * 0.3)
+
+    process = subprocess.Popen(
+        cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL,
+        text=True, encoding="utf-8", errors="replace", **_run_kwargs(),
+    )
+    _parse_progress(process, duration, progress, cancel_event)
+    process.wait()
+
+
 def _discard(path):
     """Remove what a failed or cancelled ffmpeg left at ``path``."""
     try:
@@ -380,7 +401,7 @@ def trim_to_gif(input_path, start, end, preset_name, output_path,
             "-vf", f"{filter_str},{palettegen}",
             str(palette_path),
         ]
-        subprocess.run(cmd1, capture_output=True, timeout=180, **_run_kwargs())
+        _palette_pass(cmd1, out_duration, progress_callback, cancel_event)
 
         if cancel_event and cancel_event.is_set():
             return None
@@ -517,7 +538,7 @@ def frames_to_gif(frame_dir, fps, preset_name, output_path,
             "-vf", f"{filter_str},{palettegen}",
             str(palette_path),
         ]
-        subprocess.run(cmd1, capture_output=True, timeout=180, **_run_kwargs())
+        _palette_pass(cmd1, duration, progress_callback, cancel_event)
 
         if cancel_event and cancel_event.is_set():
             return None
