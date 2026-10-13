@@ -6,7 +6,7 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Changed
 
-- **Faster timeline and much less memory.** The filmstrip under the timeline loads about twice as fast and uses a few hundred kilobytes instead of up to 800 MB for 4K video, because it now fetches small frames several at a time instead of full-size frames one by one. The preview's frame cache is now capped by memory as well as by count. The waveform for an hour-long video is drawn in a fraction of a second instead of several seconds.
+- **Faster timeline and much less memory.** The filmstrip under the timeline loads about twice as fast and uses a few hundred kilobytes instead of up to 800 MB for 4K video, because it now fetches small frames several at a time instead of full-size frames one by one. The preview's frame cache is now capped by memory as well as by count. The waveform for an hour-long video is drawn in a fraction of a second instead of several seconds. Loading a clip no longer asks ffprobe about the same file eight times.
 
 ### Fixed
 
