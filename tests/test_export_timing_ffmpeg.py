@@ -131,3 +131,20 @@ def test_failed_export_leaves_no_file(source, tmp_path, monkeypatch):
         str(source), 0.0, 1.0, "Low", str(out), text_layers=[caption],
         options=_OPTIONS) is None
     assert not Path(out).exists()
+
+
+def test_stop_during_the_gif_palette_pass(source, tmp_path):
+    import threading
+    out = tmp_path / "out.gif"
+    cancel = threading.Event()
+    seen = []
+
+    def progress(p):
+        seen.append(p)
+        cancel.set()   # Stop as soon as the first pass reports anything
+
+    assert ffmpeg_backend.trim_to_gif(
+        str(source), 0.0, 6.0, "Low", str(out),
+        progress_callback=progress, cancel_event=cancel) is None
+    assert seen and max(seen) <= 0.3, "stopped inside the first pass"
+    assert not out.exists()

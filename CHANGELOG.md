@@ -16,6 +16,7 @@ All notable changes to this project are documented here. The format is based on 
 - **A manual crop with a frame shape was stretched.** With a manual crop and a preset such as 9:16, the export squeezed the crop into the preset's box. The manual crop now keeps its own shape, as it does in the preview.
 - **Some manual crops could not be exported.** A crop with an odd width or height failed with an encoder error unless the export also downscaled. It is now trimmed by a pixel to an even size.
 - **A failed or stopped export left a broken file behind.** It is now removed.
+- **Stop did nothing during the first part of a GIF export,** and a long GIF could fail after three minutes. The first pass now shows progress, stops when asked and has no time limit.
 - **Non-English file names could stop an export.** On Windows, ffmpeg messages containing such names were read with the wrong text encoding.
 - **An export kept running in the background** if its progress window failed partway. ffmpeg is now stopped.
 - **A file with sound but no picture** now gets a clear message pointing to Audio only instead of an empty video. A file ffprobe describes strangely now gives a clear "cannot read" error instead of a crash.
@@ -29,6 +30,16 @@ All notable changes to this project are documented here. The format is based on 
 - **Check for updates said "You're up to date" when it could not reach GitHub.** It now says the check failed. A pip install inside another git folder is no longer mistaken for a source checkout.
 - **Dropping a file with braces in its name**, such as "Take {2}.mp4", now works.
 - **Command line:** `--audio-only` now writes an `.mp3`, `--audio-only` with `--format GIF` and a speed outside 0.25–4 are refused, and an unreadable file prints an error instead of a traceback.
+- **Pausing could close the app.** Pausing playback, or anything that stops it (clicking the timeline, stepping with J or L, opening another file), could crash the app without a word. Closing the window while a clip played left the sound running and crashed on the way out. Playback now stops cleanly.
+- **Videos without sound would not play.** Screen recordings, GIFs and other silent videos stopped a fraction of a second after pressing Play. They now play to the end, as does a clip whose sound ends before its picture.
+- **Playback ignored rotation, frame shape and stickers.** While a clip played, the preview showed the original video without the rotation, frame shape, crop, blur fill or image overlays, and stayed that way after pausing, so a caption dragged just after pausing landed in the wrong place. Playback now shows what the export will.
+- **Dragging the in or out point on a zoomed-in timeline went the wrong way.** The timeline scrolled under the mouse while you dragged, so the edge ran off, often towards the start of the video. The edge now follows the mouse.
+- **The preview ignored a finished crop.** After cropping by hand, the preview laid captions out on the whole picture while the export placed them inside the crop. The preview now shows the cropped frame, so captions land where they will be exported.
+- **Dragging a sticker could move a different one.** If an earlier image overlay's file had gone missing, dragging the visible sticker moved the missing one instead. The sticker you drag is now the one that moves.
+- **"Follow an object" reset the caption's look.** After tracking, the caption went back to the default size, color, box, outline and shadow. It now keeps its style.
+- **Dragging the in or out point lagged** once ranges were saved, up to a second per mouse movement with ten ranges, because the hidden Export page rebuilt its range list on every move. It now updates when you open it.
+- **Empty clips were exported as broken files.** Pressing O at the very start or I at the very end made an empty selection, and a project reopened with a shorter video kept an Out point and saved ranges past its end. Both exported tiny files with no picture and called it a success. The mark keys now keep a selection at least a twentieth of a second long, a reopened project's ranges are fitted to the video, and an export that comes out empty is reported as failed.
+- **Work that finished after you opened another video landed in it.** Captions from speech and "Follow an object" applied their results to whatever was open when they finished, and a multi-part export cut its remaining parts from a video opened with Ctrl+O in the meantime. Each now sticks to the video it started with, and Ctrl+O, Ctrl+E and the other shortcuts wait while the export window is open.
 
 ## [1.9.1] — 2026-10-07
 
