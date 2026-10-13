@@ -160,23 +160,29 @@ def _display_rotation(stream):
         return 0
 
 
-def extract_frame(input_path, timestamp_seconds):
+def extract_frame(input_path, timestamp_seconds, max_height=None):
     """Pull a single PNG-encoded frame at ``timestamp_seconds``.
 
     Used by the preview cache and thumbnail strip. Returns a PIL
     ``Image`` or ``None`` on failure. No exception on missing frames —
     the caller just shows a placeholder.
+
+    ``max_height`` scales the frame down inside ffmpeg (never up), for
+    thumbnails: a 4K frame is 25 MB decoded, a filmstrip cell a few KB.
     """
     from PIL import Image
     import io
 
     cmd = [
         _get_ffmpeg(),
-        "-ss", str(timestamp_seconds),
+        "-ss", f"{max(0.0, float(timestamp_seconds)):.3f}",
         "-i", str(input_path),
         "-vframes", "1",
     ]
     vf = preview_color_filter(input_path)
+    if max_height:
+        shrink = f"scale=-2:'min({int(max_height)},ih)':flags=bilinear"
+        vf = f"{vf},{shrink}" if vf else shrink
     if vf:
         cmd += ["-vf", vf]
     cmd += [
@@ -191,7 +197,7 @@ def extract_frame(input_path, timestamp_seconds):
             # zscale rejected the HDR conversion on this ffmpeg build;
             # show the frame with the plain conversion instead of none.
             _preview_filter_cache.clear()
-            return extract_frame(input_path, timestamp_seconds)
+            return extract_frame(input_path, timestamp_seconds, max_height)
     if result.returncode != 0 or not result.stdout:
         return None
     return Image.open(io.BytesIO(result.stdout))
@@ -230,13 +236,26 @@ def extract_waveform(input_path, buckets=400, duration=None):
     if result.returncode != 0 or not result.stdout:
         return []
 
-    import struct
-    raw = result.stdout
-    total_samples = len(raw) // 2
+    return _peaks(result.stdout, buckets)
+
+
+def _peaks(raw, buckets):
+    """Peak level per bucket of signed 16-bit little-endian samples.
+
+    ``array`` plus the built-in ``max``/``min`` keep the scan in C. The
+    old per-sample generator took seconds for an hour of audio (14
+    million samples at 4 kHz) on the thread that feeds the timeline.
+    """
+    import sys
+    from array import array
+
+    samples = array("h")
+    samples.frombytes(raw[: len(raw) - len(raw) % 2])
+    if sys.byteorder != "little":
+        samples.byteswap()
+    total_samples = len(samples)
     if total_samples < buckets:
         return []
-
-    samples = struct.unpack(f"<{total_samples}h", raw)
     window = total_samples // buckets
     peaks = []
     for i in range(buckets):
@@ -244,7 +263,8 @@ def extract_waveform(input_path, buckets=400, duration=None):
         if not chunk:
             peaks.append(0.0)
             continue
-        peak = max(abs(s) for s in chunk) / 32767.0
+        # -32768 has no positive twin in 16 bits; the min() caps it.
+        peak = max(max(chunk), -min(chunk)) / 32767.0
         peaks.append(min(1.0, peak))
     return peaks
 
