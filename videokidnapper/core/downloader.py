@@ -46,13 +46,32 @@ def has_internet(timeout=2.0):
     return False
 
 
+def url_host(url):
+    """The lower-case host name of a link, with or without ``https://``."""
+    from urllib.parse import urlsplit
+
+    text = str(url or "").strip()
+    if "://" not in text:
+        text = "//" + text
+    try:
+        return (urlsplit(text).hostname or "").rstrip(".")
+    except ValueError:
+        return ""
+
+
 def detect_platform(url):
-    """Return the matching platform name from SUPPORTED_PLATFORMS, or None."""
-    if not url:
+    """Return the matching platform name from SUPPORTED_PLATFORMS, or None.
+
+    Matched on the link's host. A search anywhere in the text took
+    dropbox.com, netflix.com or xbox.com for X ("x.com/"), which chose
+    X's download format and blamed X for their errors.
+    """
+    host = url_host(url)
+    if not host:
         return None
-    for name, patterns in SUPPORTED_PLATFORMS.items():
-        for pat in patterns:
-            if re.search(pat, url, re.IGNORECASE):
+    for name, domains in SUPPORTED_PLATFORMS.items():
+        for domain in domains:
+            if host == domain or host.endswith("." + domain):
                 return name
     return None
 
