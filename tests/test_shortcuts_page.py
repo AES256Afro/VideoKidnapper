@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shortcut registry contract.
 
-The overlay advertises what the user can press. These tests guard against
+The shortcuts page advertises what the user can press. These tests guard against
 the two ways that contract rots:
 
 1. **Registry drift** — an entry in ``SHORTCUTS`` gets renamed or loses
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from videokidnapper.ui.shortcuts_dialog import SHORTCUTS, Shortcut
+from videokidnapper.ui.shortcuts_page import SHORTCUTS, Shortcut
 
 
 def test_registry_categories_are_non_empty():
@@ -68,7 +68,7 @@ class _BindRecorder:
     def __init__(self):
         self.bound: set[str] = set()
 
-    def bind_all(self, sequence, handler):
+    def bind_all(self, sequence, handler, add=None):
         self.bound.add(sequence.strip("<>"))
 
     def __getattr__(self, name):
@@ -114,17 +114,14 @@ _LABEL_TO_KEYSYM = {
     "Ctrl+E":        "Control-e",
     "Ctrl+V":        "Control-v",
     "?":             "Key-question",
-    "Shift+/":       "Key-question",  # same physical key on US layouts
+    "Esc":           "Escape",
 }
 
 
 def test_every_advertised_key_is_actually_bound():
     bound = _bound_keysyms()
-    unadvertised_ok = {"Esc"}  # handled locally by the dialog, not globally
     for shortcuts in SHORTCUTS.values():
         for shortcut in shortcuts:
-            if shortcut.keys in unadvertised_ok:
-                continue
             keysym = _LABEL_TO_KEYSYM.get(shortcut.keys)
             assert keysym is not None, (
                 f"{shortcut.keys!r} advertised but missing from "

@@ -32,7 +32,8 @@ TAB_DEBUG = "log"
 # Back to return, instead of opening windows of their own, and are
 # built the first time they are shown.
 TAB_SETUP = "setup"
-PAGES = (TAB_SETUP,)
+TAB_SHORTCUTS = "shortcuts"
+PAGES = (TAB_SETUP, TAB_SHORTCUTS)
 # Shortcuts that only make sense while looking at the editor.
 _EDIT_ONLY = {
     "keyboard_play_pause", "keyboard_nudge", "keyboard_mark_in",
@@ -211,7 +212,7 @@ class App(ctk.CTk):
         self.quick_export_btn.pack(side="right", padx=(8, 0))
         self.settings_btn = icon_button(right, "settings", command=self._open_settings_menu)
         self.settings_btn.pack(side="right", padx=1)
-        icon_button(right, "help", command=self._open_shortcuts_dialog).pack(side="right", padx=1)
+        icon_button(right, "help", command=self._toggle_shortcuts_page).pack(side="right", padx=1)
         icon_button(right, "redo",
                     command=lambda: self.trim_tab.keyboard_redo()).pack(side="right", padx=1)
         icon_button(right, "undo",
@@ -274,12 +275,13 @@ class App(ctk.CTk):
         # (Batch 365 ms, History 93 ms, measured in situ), for two pages
         # most sessions never open. The Export workspace asks for them
         # through _ensure_tab when one of its sub-tabs is picked. Setup
-        # is deferred the same way: its checks import yt-dlp, which is
-        # slow.
+        # and the shortcuts page are deferred the same way: Setup's
+        # checks import yt-dlp, which is slow.
         self._lazy_tabs = {
             TAB_BATCH: self._construct_batch_tab,
             TAB_HISTORY: self._construct_history_tab,
             TAB_SETUP: self._construct_setup_page,
+            TAB_SHORTCUTS: self._construct_shortcuts_page,
         }
         self._built_tabs = {}
         self.export_workspace = ExportWorkspace(self.workspaces.add("export"), self, self.trim_tab)
@@ -377,6 +379,13 @@ class App(ctk.CTk):
         page.pack(fill="both", expand=True)
         return page
 
+    def _construct_shortcuts_page(self):
+        from videokidnapper.ui.shortcuts_page import ShortcutsPage
+
+        page = ShortcutsPage(self.workspaces.add(TAB_SHORTCUTS), on_back=self._close_page)
+        page.pack(fill="both", expand=True)
+        return page
+
     @property
     def batch_export_tab(self):
         return self._ensure_tab(TAB_BATCH)
@@ -423,7 +432,8 @@ class App(ctk.CTk):
         menu.add_separator()
         menu.add_cascade(label="Theme", menu=self._build_theme_menu(menu))
         menu.add_separator()
-        menu.add_command(label="Keyboard shortcuts", command=self._open_shortcuts_dialog)
+        menu.add_command(label="Keyboard shortcuts",
+                         command=lambda: self._open_page(TAB_SHORTCUTS))
         menu.add_command(label="Export history", command=self._show_history)
         menu.add_command(label="Debug log", command=lambda: self.show_workspace("log"))
         btn = self.settings_btn
@@ -533,9 +543,12 @@ class App(ctk.CTk):
                          both_cases=False)
         self._bind_accel("Shift-z", lambda e: self._shortcut(e, "keyboard_redo"))
         self._bind_accel("y", lambda e: self._shortcut(e, "keyboard_redo"))
-        # `?` opens the shortcuts overlay. Not routed through _shortcut()
-        # because the target is the app itself, not the editor.
+        # `?` shows or hides the shortcuts page. Not routed through
+        # _shortcut() because the target is the app itself, not the editor.
         self.bind_all("<Key-question>", self._shortcut_shortcuts_overlay)
+        # Esc leaves Setup or the shortcuts page. Added alongside any
+        # other Esc binding rather than replacing it.
+        self.bind_all("<Escape>", self._escape_shortcut, add="+")
 
     def _editing_in_entry(self, event):
         widget = event.widget
@@ -583,8 +596,17 @@ class App(ctk.CTk):
     def _shortcut_shortcuts_overlay(self, event):
         # `?` inside a text entry should still type a literal `?`.
         if self._editing_in_entry(event):
-            return
-        self._open_shortcuts_dialog()
+            return None
+        # One handler, one toggle per key press. The old shortcuts window
+        # closed itself on `?` and then this binding opened it again.
+        self._toggle_shortcuts_page()
+        return "break"
+
+    def _escape_shortcut(self, _event):
+        if self.workspaces.get() in PAGES:
+            self._close_page()
+            return "break"
+        return None
 
     def _save_project_shortcut(self, _event):
         self.trim_tab.save_project()
@@ -813,15 +835,15 @@ class App(ctk.CTk):
         else:
             self._open_page(TAB_SETUP)
 
-    # Older name, kept for anything still calling it.
-    _open_setup_dialog = _open_setup_page
+    def _toggle_shortcuts_page(self):
+        if self.workspaces.get() == TAB_SHORTCUTS:
+            self._close_page()
+        else:
+            self._open_page(TAB_SHORTCUTS)
 
-    # ------------------------------------------------------------------
-    # Shortcuts overlay (? key / header chip)
-    # ------------------------------------------------------------------
-    def _open_shortcuts_dialog(self):
-        from videokidnapper.ui.shortcuts_dialog import ShortcutsDialog
-        ShortcutsDialog(self)
+    # Older names, kept for anything still calling them.
+    _open_setup_dialog = _open_setup_page
+    _open_shortcuts_dialog = _toggle_shortcuts_page
 
     # ------------------------------------------------------------------
     # Theme picker
