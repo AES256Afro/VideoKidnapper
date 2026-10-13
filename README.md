@@ -79,7 +79,9 @@ Every successful export, from Edit or Batch, is persisted to `~/.videokidnapper_
 
 ![Project save and recent-file hub](assets/screenshots/projects.png)
 
-Press `Ctrl+S` to save a `.vidkid` project, `Ctrl+Shift+S` to save a copy, or `Ctrl+Shift+O` to open one. Project files keep the source video reference, trim and queued ranges, crop, text and image layers, plus export choices. Relative media paths travel with a project folder when possible. Unsaved edits are written atomically to a recovery file, and the next launch offers to recover it after an interrupted session.
+Press `Ctrl+S` to save a `.vidkid` project, `Ctrl+Shift+S` to save a copy, or `Ctrl+Shift+O` to open one. Project files keep the source video reference, trim and queued ranges, crop, text and image layers, plus export choices. Relative media paths travel with a project folder when possible. Unsaved edits are written atomically to a recovery file. After an interrupted session, a bar at the top of the window offers to **Recover** or **Discard** it; close the bar with ✕ to be asked again next time.
+
+Questions like this never open a separate window. Saving before you close, stopping an export that is still running, and restarting after a theme change are all asked in that same bar.
 
 ### App updates
 
