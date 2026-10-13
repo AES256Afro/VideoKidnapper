@@ -21,6 +21,7 @@ moves, and the Stop button all behave the same regardless of which
 path started the playback.
 """
 
+import threading
 import tkinter as tk
 
 import customtkinter as ctk
@@ -30,9 +31,12 @@ from videokidnapper.utils.text_wrap import drawtext_layout
 
 from videokidnapper.utils.coerce import coerce_float, coerce_int
 from videokidnapper.core import playback
-from videokidnapper.core.preview import get_frame_at
+from videokidnapper.core.preview import get_frame_at, peek_frame
 from videokidnapper.ui import theme as T
 from videokidnapper.utils.snap import apply_snap, build_targets
+
+# How often the Tk thread checks for a frame the scrub worker fetched.
+_FRAME_POLL_MS = 15
 
 
 class VideoPlayer(ctk.CTkFrame):
@@ -70,6 +74,14 @@ class VideoPlayer(ctk.CTkFrame):
         self._color_provider = None
         self._playing = False
         self._play_after_id = None
+        # Scrubbing fetches frames on one background worker (see
+        # request_frame). Guarded by _frame_lock: what is wanted next,
+        # what has arrived, and whether the worker is still running.
+        self._frame_lock = threading.Lock()
+        self._frame_wanted = None
+        self._frame_ready = None
+        self._frame_worker_running = False
+        self._frame_poll_id = None
         self._play_end = None
         # Real-time A/V player (None until play() creates one). The
         # decode threads leave the newest frame and the end-of-clip
@@ -382,7 +394,7 @@ class VideoPlayer(ctk.CTkFrame):
 
     def _on_resize(self, _event=None):
         if self.video_path:
-            self.show_frame(self.current_time)
+            self.request_frame(self.current_time)
         else:
             self._draw_placeholder()
 
@@ -398,9 +410,15 @@ class VideoPlayer(ctk.CTkFrame):
             self.canvas.delete(item)
         self._placeholder_ids.clear()
         self.canvas.configure(cursor="crosshair")
-        self.show_frame(0)
+        self.request_frame(0)
 
     def show_frame(self, timestamp):
+        """Show the frame at ``timestamp`` now, waiting for ffmpeg if needed.
+
+        For redraws of the frame already on screen (an overlay edit, a
+        resize), which the cache answers at once. Moving to a new time goes
+        through :meth:`request_frame`, which never blocks the window.
+        """
         if not self.video_path:
             return
         self.current_time = timestamp
@@ -408,6 +426,72 @@ class VideoPlayer(ctk.CTkFrame):
         if frame is None:
             return
         self._render_frame(frame, timestamp)
+
+    def request_frame(self, timestamp):
+        """Show the frame at ``timestamp`` without freezing the window.
+
+        Fetching an uncached frame starts ffmpeg, 0.1–0.2 s a time, and
+        scrubbing did that on the Tk thread for every position, so the
+        whole window stuttered while dragging. A cached frame still shows
+        at once. Otherwise one worker fetches the newest position asked
+        for, skipping any it has not reached yet, and each frame shows as
+        it arrives.
+        """
+        if not self.video_path:
+            return
+        self.current_time = timestamp
+        cached = peek_frame(self.video_path, timestamp)
+        if cached is not None:
+            self._render_frame(cached, timestamp)
+            return
+        with self._frame_lock:
+            self._frame_wanted = (self.video_path, timestamp)
+            start = not self._frame_worker_running
+            self._frame_worker_running = True
+        if start:
+            threading.Thread(target=self._fetch_frames, daemon=True,
+                             name="preview-frames").start()
+        if self._frame_poll_id is None:
+            self._frame_poll_id = self.after(_FRAME_POLL_MS, self._poll_frames)
+
+    def _fetch_frames(self):
+        """Worker: fetch the newest wanted frame until nothing is wanted.
+
+        Touches no widgets; results go through ``_frame_ready``.
+        """
+        while True:
+            with self._frame_lock:
+                wanted = self._frame_wanted
+                self._frame_wanted = None
+                if wanted is None:
+                    # Decided under the lock, so a request made from now
+                    # on starts a new worker instead of being missed.
+                    self._frame_worker_running = False
+                    return
+            path, timestamp = wanted
+            try:
+                frame = get_frame_at(path, timestamp)
+                if frame is not None:
+                    # Decode here rather than on the Tk thread.
+                    frame.load()
+            except Exception:
+                frame = None
+            with self._frame_lock:
+                self._frame_ready = (path, timestamp, frame)
+
+    def _poll_frames(self):
+        self._frame_poll_id = None
+        with self._frame_lock:
+            ready, self._frame_ready = self._frame_ready, None
+            busy = self._frame_worker_running
+        if ready is not None:
+            path, timestamp, frame = ready
+            # A frame from a video that has since been replaced, or one
+            # arriving after playback started, is dropped.
+            if frame is not None and path == self.video_path and not self._playing:
+                self._render_frame(frame, timestamp)
+        if busy:
+            self._frame_poll_id = self.after(_FRAME_POLL_MS, self._poll_frames)
 
     def _render_frame(self, frame, timestamp):
         """Show a source-sized ``frame`` as the export will produce it.
