@@ -573,13 +573,25 @@ class TrimTab(ctk.CTkFrame):
 
         self._preview_after_id = self.after(_PREVIEW_REFRESH_MS, run)
 
+    def _refresh_inspector_pages(self, *kinds, details=False):
+        """Bring the named Inspector pages up to date, if they exist yet.
+
+        The Text and Image pages are built on first use; one that has not
+        been built reads the current state when it is.
+        """
+        inspector = getattr(self, "inspector", None)
+        if inspector is None:
+            return
+        for kind in kinds:
+            page = inspector.pages.get(kind)
+            if page is not None:
+                (page.refresh_details if details else page.refresh)()
+
     def _on_text_layers_changed(self):
         self._schedule_preview_refresh()
         self._sync_timeline_clips()
         self._clamp_selection_indices()
-        page = getattr(self, "inspector", None)
-        if page is not None:
-            page.pages["text"].refresh_details()
+        self._refresh_inspector_pages("text", details=True)
         self._request_snapshot(immediate=False)
 
     def _on_image_layers_changed(self):
@@ -589,9 +601,7 @@ class TrimTab(ctk.CTkFrame):
         self._schedule_preview_refresh()
         self._sync_timeline_clips()
         self._clamp_selection_indices()
-        page = getattr(self, "inspector", None)
-        if page is not None:
-            page.pages["image"].refresh_details()
+        self._refresh_inspector_pages("image", details=True)
         # Debounce: typing into a text entry fires on every keystroke —
         # we only want one undo entry per "pause".
         self._request_snapshot(immediate=False)
@@ -711,7 +721,7 @@ class TrimTab(ctk.CTkFrame):
             self.selected_image_index = new_index
         self.timeline.set_selected(kind if new_index is not None else None,
                                    new_index if new_index is not None else 0)
-        self.inspector.pages[kind].refresh()
+        self._refresh_inspector_pages(kind)
         self._request_snapshot(immediate=True)
 
     def set_layer_time(self, kind, index, start, end, final=True):
@@ -731,7 +741,7 @@ class TrimTab(ctk.CTkFrame):
             self._request_snapshot(immediate=True)
         else:
             self._schedule_preview_refresh()
-            self.inspector.pages[kind].refresh_details()
+            self._refresh_inspector_pages(kind, details=True)
 
     def _on_text_dragged(self, index, source_x, source_y):
         """Preview drag: motion-armed layers record a keyframe at the
@@ -1135,8 +1145,7 @@ class TrimTab(ctk.CTkFrame):
             self.image_layers.set_duration(dur)
             self.range_queue.clear()
             self._sync_timeline_clips()
-            self.inspector.pages["text"].refresh()
-            self.inspector.pages["image"].refresh()
+            self._refresh_inspector_pages("text", "image")
 
             self.player.load_video(path, dur)
             self.preview_name.configure(text=name)
@@ -1802,8 +1811,10 @@ class TrimTab(ctk.CTkFrame):
             self._clamp_selection_indices()
             self._sync_timeline_clips()
             for kind in ("text", "image"):
-                self.inspector.pages[kind].layer = None
-                self.inspector.pages[kind].refresh()
+                page = self.inspector.pages.get(kind)
+                if page is not None:
+                    page.layer = None
+            self._refresh_inspector_pages("text", "image")
 
             # Show the frame at the playhead and refresh the overlay.
             self.player.show_frame(self.playhead)
@@ -2189,13 +2200,15 @@ class TrimTab(ctk.CTkFrame):
     def _export(self):
         if not self.video_path:
             return
+        # Progress shows under the Export button, so go there: an export
+        # started from Edit (Ctrl+E, Quick export) is then in view too.
+        # Showing it also builds the Export workspace, and its progress
+        # panel with it, the first time.
+        self._show_export_progress()
         panel = self.export_progress
         if panel is None:
             self._notify("Export isn't ready yet", "warn")
             return
-        # Progress shows under the Export button, so go there: an export
-        # started from Edit (Ctrl+E, Quick export) is then in view too.
-        self._show_export_progress()
         if panel.running or self.export_in_progress():
             self._notify("An export is already running. Stop it first.", "warn")
             return

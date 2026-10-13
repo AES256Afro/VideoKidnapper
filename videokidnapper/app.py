@@ -240,7 +240,6 @@ class App(ctk.CTk):
 
     def _build_workspaces(self):
         from videokidnapper.ui.debug_tab import DebugTab
-        from videokidnapper.ui.studio.export_workspace import ExportWorkspace
         from videokidnapper.ui.studio.import_workspace import ImportWorkspace
         from videokidnapper.ui.trim_tab import TrimTab
 
@@ -280,13 +279,27 @@ class App(ctk.CTk):
             TAB_SHORTCUTS: self._construct_shortcuts_page,
         }
         self._built_tabs = {}
-        self.export_workspace = ExportWorkspace(self.workspaces.add("export"), self, self.trim_tab)
-        self.export_workspace.pack(fill="both", expand=True)
+        # The Export workspace is built the first time it is needed, like
+        # the pages above: it was about a quarter of the startup time,
+        # for a page nobody sees until they have a clip to export.
+        self._export_frame = self.workspaces.add("export")
+        self._export_workspace = None
 
         self.trim_tab.add_state_listener(self._refresh_quick_export)
         self.trim_tab.options.add_listener(self._refresh_quick_export)
         self._refresh_quick_export()
         self.show_workspace("edit" if self.trim_tab.video_path else "import")
+
+    @property
+    def export_workspace(self):
+        """The Export workspace, built on first use."""
+        if self._export_workspace is None:
+            from videokidnapper.ui.studio.export_workspace import ExportWorkspace
+
+            workspace = ExportWorkspace(self._export_frame, self, self.trim_tab)
+            workspace.pack(fill="both", expand=True)
+            self._export_workspace = workspace
+        return self._export_workspace
 
     def show_workspace(self, key):
         # Pages are built on first view. One that fails to build is
