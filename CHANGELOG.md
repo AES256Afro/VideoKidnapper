@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format is based on 
 
 - **Exporting no longer opens a separate window.** Progress, Stop and the finished file now appear right under the Export button: open the file, show it in its folder, or share it from there. While an export runs the button turns into Stop, so pressing it again can't start a second export. Quick export and `Ctrl+E` take you to Export so you can watch it.
 - **Captions from speech is now in the Text tab.** Pick the Whisper model and press **Generate captions**; progress, Stop and the result show in the same place, and the model you chose is remembered. **Captions ▾ ▸ Captions from speech** opens it.
+- **Screen recording is set up on the Import page.** Type how many seconds and press **Start recording**. The window still hides while it records; open it again to stop early, and what was recorded so far is kept. The Record buttons in Edit take you there.
 - **Text colour no longer opens the system colour picker.** The Text tab shows the eight preset swatches and a box for any hex code, such as `#FF8800`, next to the current colour.
 
 ### Fixed
