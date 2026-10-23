@@ -103,7 +103,7 @@ file currently gets handed straight to `xdg-open`/`explorer`/`open`.
 
 - Tests run with the Kimi managed Python; this session installed
   `pytest`, `customtkinter`, `mss`, `yt-dlp` into it. Command:
-  `cd /Users/chris/Projects/VideoKidnapper && python -m pytest tests/ -q`
+  `cd ~/Projects/VideoKidnapper && python -m pytest tests/ -q`
 - One skipped test is pre-existing (not from this session).
 - `tests/test_tempfile_hygiene.py` resolves the temp dir on both sides
   because `/var` is a symlink to `/private/var` on macOS — don't

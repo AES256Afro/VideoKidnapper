@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+<!-- SPDX-FileCopyrightText: 2026 AES256Afro <https://github.com/AES256Afro>
      SPDX-License-Identifier: Apache-2.0
 
      MSIX manifest template. build-msix.ps1 substitutes the {{...}}
