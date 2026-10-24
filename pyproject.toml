@@ -17,7 +17,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [
-    { name = "Christopher Courtney", email = "noreply@github.com" },
+    { name = "AES256Afro", email = "noreply@github.com" },
 ]
 keywords = [
     "video", "gif", "ffmpeg", "yt-dlp", "trim", "clip", "subtitle",

@@ -10,12 +10,12 @@ Publisher: AES256Afro
 PublisherUrl: https://github.com/AES256Afro
 PublisherSupportUrl: https://github.com/AES256Afro/VideoKidnapper/issues
 
-Author: Christopher Courtney
+Author: AES256Afro
 PackageName: VideoKidnapper
 PackageUrl: https://videokidnapper.com
 License: Apache-2.0
 LicenseUrl: https://github.com/AES256Afro/VideoKidnapper/blob/main/LICENSE
-Copyright: Copyright (c) 2026 Christopher Courtney
+Copyright: Copyright (c) 2026 AES256Afro
 PrivacyUrl: https://videokidnapper.com/privacy.html
 
 ShortDescription: Dark-themed desktop tool for trimming videos, downloading clips from the open web, and exporting polished GIFs or MP4s with text overlays.

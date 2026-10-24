@@ -114,7 +114,7 @@ Checking DeveloperID.p12
       use this for the MACOS_NOTARY_TEAM_ID secret
 
   Signing identity the build will resolve:
-    Developer ID Application: Christopher Courtney (U7X9DNSQ7Z)
+    Developer ID Application: <YOUR NAME> (<YOUR TEAM ID>)
 
   Ready to upload.
 ```
