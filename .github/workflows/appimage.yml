@@ -264,7 +264,7 @@ jobs:
         run: |
           cd apt-repo
           git config user.name "videokidnapper-ci"
-          git config user.email "sinth.tek@gmail.com"
+          git config user.email "AES256Afro@users.noreply.github.com"
           git add -A
           git commit -m "videokidnapper $(basename ../dist/videokidnapper_*_amd64.deb .deb | cut -d_ -f2)"
           GIT_SSH_COMMAND="ssh -i ~/.ssh/apt_deploy" git push
