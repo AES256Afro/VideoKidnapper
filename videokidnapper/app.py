@@ -41,9 +41,27 @@ PAGES = (TAB_SETUP, TAB_SHORTCUTS)
 _EDIT_ONLY = {
     "keyboard_play_pause", "keyboard_nudge", "keyboard_mark_in",
     "keyboard_mark_out", "keyboard_save_range", "keyboard_paste_url",
+    "keyboard_step_frame", "keyboard_delete",
 }
+# Widget classes the user types into. Plain-key shortcuts stand aside in
+# them, a click anywhere else takes the keyboard back, and so does Esc.
+_TEXT_CLASSES = ("Entry", "Text", "TEntry", "TCombobox", "Spinbox", "TSpinbox")
+# Tk's old Emacs-style keys in text boxes. Ctrl+O inserted a line break
+# instead of opening a file, Ctrl+K deleted to the end of the line and
+# Ctrl+D and Ctrl+T deleted and swapped characters, which nobody on
+# Windows expects. Ctrl+H (Backspace) and Ctrl+A (select all) stay.
+_TK_TEXT_KEYS_TO_DROP = ("<Control-Key-o>", "<Control-Key-k>",
+                         "<Control-Key-d>", "<Control-Key-t>",
+                         "<Control-Key-e>")
 # How many recent projects the header's project menu lists.
 _MENU_RECENT = 8
+
+
+def _is_text_widget(widget):
+    try:
+        return widget.winfo_class() in _TEXT_CLASSES
+    except Exception:
+        return False
 
 
 def _accel(keys):
@@ -85,6 +103,8 @@ class App(ctk.CTk):
 
         self._build_ui()
         self._bind_keyboard_shortcuts()
+        self._drop_tk_text_keys()
+        self._bind_text_menu()
         self._install_exception_handler()
         self._load_plugins()
         self._note_version_change()
@@ -314,6 +334,7 @@ class App(ctk.CTk):
 
     def _on_workspace_switched(self, key):
         self.switcher.select(key)
+        self.after_idle(self._drop_hidden_focus)
         if key == "import":
             self.import_workspace.refresh()
         elif key == "export":
@@ -581,8 +602,18 @@ class App(ctk.CTk):
         self.bind_all("<Key-O>",   lambda e: self._shortcut(e, "keyboard_mark_out"))
         self.bind_all("<Key-q>",   lambda e: self._shortcut(e, "keyboard_save_range"))
         self.bind_all("<Key-Q>",   lambda e: self._shortcut(e, "keyboard_save_range"))
-        self._bind_accel("e", lambda e: self._shortcut(e, "keyboard_export"))
-        self._bind_accel("o", lambda e: self._shortcut(e, "keyboard_open"))
+        # Frame by frame for trimming on the exact frame; Shift for a second.
+        self.bind_all("<Left>",    lambda e: self._shortcut(e, "keyboard_step_frame", -1))
+        self.bind_all("<Right>",   lambda e: self._shortcut(e, "keyboard_step_frame", 1))
+        self.bind_all("<Shift-Left>",  lambda e: self._shortcut(e, "keyboard_nudge", -1.0))
+        self.bind_all("<Shift-Right>", lambda e: self._shortcut(e, "keyboard_nudge", 1.0))
+        # Remove the caption or image picked on the timeline.
+        self.bind_all("<Delete>",    lambda e: self._shortcut(e, "keyboard_delete"))
+        self.bind_all("<BackSpace>", lambda e: self._shortcut(e, "keyboard_delete"))
+        # Ctrl+E and Ctrl+O work while typing too, as in any other app;
+        # nothing types on them once _drop_tk_text_keys has run.
+        self._bind_accel("e", lambda e: self._shortcut(e, "keyboard_export", typing_ok=True))
+        self._bind_accel("o", lambda e: self._shortcut(e, "keyboard_open", typing_ok=True))
         self._bind_accel("s", self._save_project_shortcut)
         self._bind_accel("Shift-s", self._save_project_as_shortcut)
         self._bind_accel("Shift-o", self._open_project_shortcut)
@@ -605,19 +636,86 @@ class App(ctk.CTk):
         # `?` shows or hides the shortcuts page. Not routed through
         # _shortcut() because the target is the app itself, not the editor.
         self.bind_all("<Key-question>", self._shortcut_shortcuts_overlay)
-        # Esc leaves Setup or the shortcuts page. Added alongside any
-        # other Esc binding rather than replacing it.
+        # Esc leaves a text box, Setup or the shortcuts page. Added
+        # alongside any other Esc binding rather than replacing it.
         self.bind_all("<Escape>", self._escape_shortcut, add="+")
+        # A text box kept the keyboard until another text box was
+        # clicked: after typing a caption and clicking the preview,
+        # Space typed a space instead of playing, and I, O, J, K, L and Q
+        # quietly went into the caption. Clicking anything that isn't a
+        # text box now takes the keyboard back for the shortcuts (and
+        # commits a typed time, which applies when its box loses focus).
+        self.bind_all("<ButtonPress-1>", self._release_text_focus, add="+")
+
+    def _bind_text_menu(self):
+        """Right-click Cut, Copy, Paste and Select all in every text box."""
+        menu = tk.Menu(
+            self, tearoff=0, bg=T.BG_SURFACE, fg=T.TEXT,
+            activebackground=T.ACCENT_SOFT, activeforeground=T.TEXT,
+            font=(T.FONT_FAMILY, 10), bd=1, relief="solid",
+        )
+        target = {}
+        for label, virtual in (("Cut", "<<Cut>>"), ("Copy", "<<Copy>>"),
+                               ("Paste", "<<Paste>>"), (None, None),
+                               ("Select all", "<<SelectAll>>")):
+            if label is None:
+                menu.add_separator()
+                continue
+            menu.add_command(
+                label=label,
+                command=lambda v=virtual: target["widget"].event_generate(v))
+        self._text_menu = menu
+
+        def show(event):
+            target["widget"] = event.widget
+            try:
+                event.widget.focus_set()
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                menu.grab_release()
+            return "break"
+
+        buttons = ("<Button-2>", "<Button-3>") if sys.platform == "darwin" else ("<Button-3>",)
+        for cls in ("Entry", "Text"):
+            for button_seq in buttons:
+                self.bind_class(cls, button_seq, show, add="+")
+
+    def _drop_tk_text_keys(self):
+        """Remove Tk's Emacs-style keys from every text box (see the list)."""
+        for cls in ("Text", "Entry"):
+            for sequence in _TK_TEXT_KEYS_TO_DROP:
+                self.bind_class(cls, sequence, "")
 
     def _editing_in_entry(self, event):
         widget = event.widget
         if not widget:
             return False
+        return _is_text_widget(widget)
+
+    def _release_text_focus(self, event):
+        """A click outside the text box being typed in takes the keyboard back."""
+        if _is_text_widget(event.widget):
+            return
         try:
-            cls = widget.winfo_class()
+            focused = self.focus_get()
+        except Exception:      # focus is in a menu or another app
+            return
+        if focused is not None and _is_text_widget(focused):
+            self.focus_set()
+
+    def _drop_hidden_focus(self):
+        """Take the keyboard back from a text box that's no longer on screen.
+
+        Tk only moves focus when a widget is destroyed, not when it is
+        hidden. After a download handed the clip to Edit, Space and J/K/L
+        typed into the hidden Import link box instead of playing.
+        """
+        try:
+            focused = self.focus_get()
+            if focused is not None and not focused.winfo_viewable():
+                self.focus_set()
         except Exception:
-            return False
-        return cls in ("Entry", "Text", "TEntry", "TCombobox")
+            pass
 
     def _modal_open(self):
         """True while a dialog holds the input grab (the export window,
@@ -629,8 +727,8 @@ class App(ctk.CTk):
             return False
         return grab is not None and grab.winfo_toplevel() is not self
 
-    def _shortcut(self, event, method, *args):
-        if self._editing_in_entry(event) or self._modal_open():
+    def _shortcut(self, event, method, *args, typing_ok=False):
+        if (self._editing_in_entry(event) and not typing_ok) or self._modal_open():
             return None
         editor = getattr(self, "trim_tab", None)
         if editor is None:
@@ -671,7 +769,10 @@ class App(ctk.CTk):
         self._toggle_shortcuts_page()
         return "break"
 
-    def _escape_shortcut(self, _event):
+    def _escape_shortcut(self, event):
+        if self._editing_in_entry(event):
+            self.focus_set()
+            return "break"
         if self.workspaces.get() in PAGES:
             self._close_page()
             return "break"

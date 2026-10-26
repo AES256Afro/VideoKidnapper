@@ -260,9 +260,17 @@ class TextPage(ctk.CTkScrollableFrame):
             self.form, height=54, wrap="word", font=T.font(T.SIZE_LG),
             fg_color=T.BG_SURFACE, border_color=T.BORDER_STRONG, border_width=1,
             text_color=T.TEXT, corner_radius=T.RADIUS_SM,
+            # Ctrl+Z inside the box undoes typing; it had no undo at all.
+            undo=True, maxundo=200,
         )
         self.textbox.pack(fill="x", padx=_PAD, pady=(8, 0))
         self.textbox.bind("<KeyRelease>", self._text_changed)
+        # Text pasted, cut or undone without a key going up (the right-click
+        # menu, say) never reached the caption. The box changes after these
+        # bindings run, so read it once it has.
+        for virtual in ("<<Paste>>", "<<Cut>>", "<<Undo>>", "<<Redo>>"):
+            self.textbox.bind(
+                virtual, lambda _e: self.after_idle(self._text_changed), add="+")
 
         style = _group(self.form, "Style")
         self.style_seg = C.segmented(style, list(TEXT_STYLES.keys()),
@@ -362,6 +370,9 @@ class TextPage(ctk.CTkScrollableFrame):
             self.style_seg.set(layer.style_var.get())
             self.textbox.delete("1.0", "end")
             self.textbox.insert("1.0", layer.text_var.get())
+            # Undo starts afresh for each caption, so it can't bring back
+            # the text of the one shown before.
+            self.textbox._textbox.edit_reset()
         self._place_speech()
         self.refresh_details()
 
