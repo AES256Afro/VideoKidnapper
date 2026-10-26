@@ -16,7 +16,7 @@ from videokidnapper.ui.studio.chrome import WorkspaceHost, WorkspaceSwitcher
 from videokidnapper.ui.studio.icons import icon_button
 from videokidnapper.ui.theme import button
 from videokidnapper.ui.widgets import Toast
-from videokidnapper.utils import project_files, settings
+from videokidnapper.utils import crash_log, project_files, settings
 from videokidnapper.utils.dnd import enable_dnd_for
 from videokidnapper.utils.ffmpeg_check import check_ffmpeg
 from videokidnapper.utils.github_update import check_async, is_newer
@@ -88,6 +88,7 @@ class App(ctk.CTk):
         self._install_exception_handler()
         self._load_plugins()
         self._note_version_change()
+        self._note_previous_crash()
         self._maybe_check_for_update()
         self._maybe_offer_recovery()
 
@@ -800,6 +801,23 @@ class App(ctk.CTk):
         # The portable build's *.old file and the downloaded installer.
         threading.Thread(target=self_update.cleanup_after_update, daemon=True).start()
 
+    def _note_previous_crash(self):
+        """The last run ended unexpectedly: say so, and keep what it logged.
+
+        Its log goes into the Debug log so it can be read or copied from
+        there; the unsaved work itself is offered by the recovery banner.
+        """
+        previous = crash_log.previous_crash()
+        if not previous:
+            return
+        self.debug_tab.add_log(
+            f"The last session closed unexpectedly. Its log "
+            f"({crash_log.LOG_PATH}):\n{previous.strip()}", "WARN")
+        if self.status_bar:
+            self.status_bar.show(
+                "VideoKidnapper closed unexpectedly last time. "
+                "What it logged is in Settings › Debug log.", "warn")
+
     def install_downloaded_update(self, path, channel, on_cancel=None, on_error=None):
         """Close the app safely, then install a verified download.
 
@@ -835,6 +853,7 @@ class App(ctk.CTk):
                     on_error(message)
                 return
             self.destroy()
+            crash_log.finish()
             # Exit now, not when stray worker threads finish: the installer
             # replaces this executable and waits for it to close.
             os._exit(0)
@@ -1118,6 +1137,7 @@ class App(ctk.CTk):
     def _install_exception_handler(self):
         def report(exc_type, exc_value, tb):
             text = "".join(traceback.format_exception(exc_type, exc_value, tb))
+            crash_log.write(f"Uncaught exception:\n{text}")
             try:
                 self.debug_tab.add_log(f"Uncaught exception:\n{text}", "ERROR")
             except Exception:

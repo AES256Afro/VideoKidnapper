@@ -111,6 +111,7 @@ def detect_hardware_encoders():
         result = subprocess.run(
             [_get_ffmpeg(), "-hide_banner", "-encoders"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8,
+            **_run_kwargs(),
         )
         out = result.stdout + result.stderr
     except Exception:

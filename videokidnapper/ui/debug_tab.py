@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import sys
 import threading
+from collections import deque
 from datetime import datetime
 
 import customtkinter as ctk
@@ -38,6 +39,8 @@ class LogCapture:
 
 
 class DebugTab(ctk.CTkFrame):
+    MAX_LINES = 5000
+    FLUSH_MS = 200
     _LEVEL_COLORS = {
         "INFO":    T.ACCENT_GLOW,
         "WARN":    T.WARN,
@@ -49,11 +52,15 @@ class DebugTab(ctk.CTkFrame):
     def __init__(self, master, app, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
         self.app = app
-        self._logs = []
+        self._logs = deque(maxlen=self.MAX_LINES)
+        # Lines waiting to be shown: queued from any thread, drained on
+        # the Tk thread by _flush.
+        self._pending = []
         self._lock = threading.Lock()
 
         self._build_ui()
         self._install_log_capture()
+        self._flush()
 
     def _build_ui(self):
         # Header card
@@ -133,21 +140,46 @@ class DebugTab(ctk.CTkFrame):
         sys.stderr = LogCapture(sys.__stderr__, self.add_log, "ERROR")
 
     def add_log(self, message, tag="INFO"):
+        """Record a line. Safe to call from any thread.
+
+        stdout and stderr come here, so worker threads call this too: a
+        print, a warning, the traceback of a thread that failed. It used
+        to call winfo_exists() and after() straight away, and Tk called
+        from a worker thread can hang the app or crash it outright. Now
+        the line is queued and the Tk thread shows it on its next flush.
+        """
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        entry = (timestamp, tag, message)
         with self._lock:
-            entry = (timestamp, tag, message)
             self._logs.append(entry)
+            self._pending.append(entry)
 
-        if self.winfo_exists():
-            self.after(0, self._append_to_display, timestamp, tag, message)
+    def _flush(self):
+        """Show queued lines. Runs on the Tk thread a few times a second."""
+        with self._lock:
+            pending, self._pending = self._pending, []
+        if pending:
+            try:
+                self._append_to_display(pending)
+            except Exception:
+                pass
+        try:
+            self.after(self.FLUSH_MS, self._flush)
+        except Exception:
+            pass  # destroyed
 
-    def _append_to_display(self, timestamp, tag, message):
+    def _append_to_display(self, entries):
         tk_text = self.log_text._textbox
         self.log_text.configure(state="normal")
-        tk_text.insert("end", f"[{timestamp}] ", ("timestamp",))
-        level_tag = f"level_{tag}" if tag in self._LEVEL_COLORS else "level_INFO"
-        tk_text.insert("end", f"[{tag:5s}] ", (level_tag,))
-        tk_text.insert("end", f"{message}\n")
+        for timestamp, tag, message in entries:
+            tk_text.insert("end", f"[{timestamp}] ", ("timestamp",))
+            level_tag = f"level_{tag}" if tag in self._LEVEL_COLORS else "level_INFO"
+            tk_text.insert("end", f"[{tag:5s}] ", (level_tag,))
+            tk_text.insert("end", f"{message}\n")
+        # Keep the page from growing without end in a long session.
+        lines = int(tk_text.index("end-1c").split(".")[0])
+        if lines > self.MAX_LINES:
+            tk_text.delete("1.0", f"{lines - self.MAX_LINES}.0")
         self.log_text.configure(state="disabled")
 
         if self.autoscroll_var.get():
@@ -156,6 +188,7 @@ class DebugTab(ctk.CTkFrame):
     def _clear_logs(self):
         with self._lock:
             self._logs.clear()
+            self._pending.clear()
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")

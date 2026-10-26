@@ -7,6 +7,7 @@ All notable changes to this project are documented here. The format is based on 
 ### Added
 
 - **Updates install themselves on Windows.** When a new version is out, the bar at the top of the window asks whether to **Restart to update** (Setup, winget and portable installs). The new version downloads from the GitHub release with a progress bar in that same bar, is checked against the SHA-256 checksum GitHub publishes, and after you're asked to save your project the app closes, installs it and opens again. Setup and winget installs upgrade silently in the same per-user or all-users scope they were installed with (an all-users install still shows the Windows admin prompt); the portable build swaps its own .exe. You can cancel the download at any time, and the first start after an update says which version you're on. This works from 1.9.2 onward: updating to 1.9.2 itself still goes through the release page once.
+- **A crash leaves a note behind.** If the app ever closes unexpectedly, the next start says so in the status bar and puts what it logged (including where every thread was when it died) in **Settings › Debug log**. The log is kept in `.videokidnapper_crash.log` in your home folder and trimmed to the last few runs.
 
 ### Changed
 
@@ -26,6 +27,8 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Fixed
 
+- **A terminal window popped up when you pressed Play** (Windows). The sound for playback comes from ffmpeg, a console program, and it was started without hiding its window, so a black console window opened over the editor and took the focus. It now runs hidden, like every other ffmpeg the app starts, and a test checks every place the app starts a program. The first export on a new PC and Captions from speech could flash a console the same way.
+- **The app could hang or close to the desktop when something printed in the background.** Everything printed goes to the Debug log, and the log updated the window straight from whichever thread printed. Background work (playback, downloads, exports) now only queues its lines, and the window picks them up.
 - **Typing with Num Lock on triggered shortcuts on Windows.** A capital S typed into a caption opened Save As, a lowercase s saved the project, O opened a file instead of marking the out point, and outside text fields E could start an export. The ⌘ shortcuts meant for macOS were bound on every platform, and Windows reports Num Lock as the same modifier. They are now bound only on macOS; Ctrl shortcuts work as before.
 - **Captions and stickers appeared at the wrong moment.** The editor times them on the full video, but the export counted from the start of the clip, so any clip that did not start at 0:00 showed them late or not at all. They now appear exactly where the preview shows them, at any speed, and a motion-tracked caption follows the same path.
 - **A speed change made the clip the wrong length.** At 2x the export ran on past the end of the selection, and at 0.5x it stopped halfway through. MP4, GIF and MP3 exports now cover exactly the selection.
