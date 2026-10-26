@@ -58,6 +58,15 @@ def _pump(app, seconds):
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
 def test_real_app_plays_pauses_and_closes(tmp_path, monkeypatch):
+    import tkinter
+
+    # Like the other window tests: skipped where there is no display
+    # (the Linux CI runners), checked before anything is set up.
+    try:
+        tkinter.Tk().destroy()
+    except tkinter.TclError as exc:
+        pytest.skip(f"no usable display: {exc}")
+
     from videokidnapper.utils import settings, crash_log
     settings.set("auto_update_check", False)
     crash_log.start("smoke", path=tmp_path / "crash.log")
