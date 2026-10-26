@@ -17,6 +17,7 @@ crossfade lines up perfectly: transition k starts at
 ``sum(durations[0..k-1]) - k * transition_duration``.
 """
 
+import os
 import subprocess
 import threading
 
@@ -56,6 +57,23 @@ def _wait_for_concat(process, cancel_event, progress_callback):
                 progress_callback(0.5)
     drain.join(timeout=1.0)
     return True
+
+
+def _finish_concat(process, output_path, cancel_event, progress_callback):
+    """Wait for a join; the joined file, or None with no half-written file left.
+
+    A stopped or failed join used to leave its partial output on disk.
+    """
+    ok = _wait_for_concat(process, cancel_event, progress_callback)
+    if ok and process.returncode == 0:
+        if progress_callback:
+            progress_callback(1.0)
+        return output_path
+    try:
+        os.remove(output_path)
+    except OSError:
+        pass
+    return None
 
 
 # Supported transition kinds for ``concat_clips_with_transition``:
@@ -228,11 +246,7 @@ def concat_clips_with_transition(
         cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
         **_run_kwargs(),
     )
-    if not _wait_for_concat(process, cancel_event, progress_callback):
-        return None
-    if progress_callback:
-        progress_callback(1.0)
-    return output_path if process.returncode == 0 else None
+    return _finish_concat(process, output_path, cancel_event, progress_callback)
 
 
 def concat_clips(input_paths, output_path, progress_callback=None, cancel_event=None):
@@ -268,10 +282,6 @@ def concat_clips(input_paths, output_path, progress_callback=None, cancel_event=
             **_run_kwargs(),
         )
         # No accurate progress for copy-only concat — just tick the bar.
-        if not _wait_for_concat(process, cancel_event, progress_callback):
-            return None
-        if progress_callback:
-            progress_callback(1.0)
-        return output_path if process.returncode == 0 else None
+        return _finish_concat(process, output_path, cancel_event, progress_callback)
     finally:
         list_path.unlink(missing_ok=True)

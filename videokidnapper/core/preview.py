@@ -79,12 +79,14 @@ def get_frame_at(video_path, timestamp_seconds, cache_key=None, max_height=None)
     else:
         frame = extract_frame(video_path, timestamp_seconds)
     if frame:
-        if max_height:
-            # Decode now, on the worker thread, rather than on first use.
-            try:
-                frame.load()
-            except Exception:
-                return None
+        # Decode now, on this worker thread, before anyone else can see
+        # it. A frame cached still undecoded was decoded by the scrub
+        # worker and the Tk thread at the same time, which raised in both
+        # and left a garbled frame in the cache until it was evicted.
+        try:
+            frame.load()
+        except Exception:
+            return None
         _cache_put(key, frame)
     return frame
 

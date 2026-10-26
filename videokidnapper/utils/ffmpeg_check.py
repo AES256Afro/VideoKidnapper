@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -54,22 +53,14 @@ def check_ffmpeg():
     users on the "Prerequisites Missing" landing while Setup insisted
     everything was installed).
 
-    The ``-version`` call is a best-effort sanity probe only. A windowed
-    PyInstaller build has flaky subprocess stdio, so a probe hiccup must
-    NOT hide a working install — if the binaries are on disk we trust
-    them and let the encode path surface any real ffmpeg error.
+    It used to run ``ffmpeg -version`` too and ignore the answer: a
+    windowed PyInstaller build has flaky subprocess stdio, so a probe
+    hiccup must not hide a working install. That cost about 40 ms before
+    the window appeared for nothing; the encode path surfaces any real
+    ffmpeg error.
     """
     ffmpeg = find_ffmpeg()
     ffprobe = find_ffprobe()
     if not (ffmpeg and ffprobe):
         return None, None
-    try:
-        subprocess.run(
-            [str(ffmpeg), "-version"],
-            capture_output=True, timeout=8,
-            stdin=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-    except Exception:
-        pass  # trust the on-disk binary
     return str(ffmpeg), str(ffprobe)

@@ -24,6 +24,7 @@ timeline draws them all as clips.
 
 import os
 import subprocess
+import shutil
 import threading
 import time
 import tkinter as tk
@@ -636,9 +637,10 @@ class TrimTab(ctk.CTkFrame):
         self._request_snapshot(immediate=False)
 
     def _on_image_layers_changed(self):
-        # Drop the image cache so newly-picked files aren't shadowed by a
-        # previous failure, and re-render the current frame.
-        self.player._image_cache.clear()
+        # Keep the stickers still in use; drop the rest, and any failed
+        # load, so a newly picked file isn't shadowed by an old failure.
+        self.player.forget_images(
+            layer.path_var.get() for layer in self.image_layers.layers)
         self._schedule_preview_refresh()
         self._sync_timeline_clips()
         self._clamp_selection_indices()
@@ -779,12 +781,21 @@ class TrimTab(ctk.CTkFrame):
         layer = panel.layers[index]
         layer.time_slider.set_values(start, end)
         if final:
+            layer._drag_visible = None
             # The panel wraps _on_time_change to notify; that refreshes the
             # preview, timeline and inspector and records an undo step.
             layer._on_time_change(start, end)
             self._request_snapshot(immediate=True)
         else:
-            self._schedule_preview_refresh()
+            # Mid-drag, the picture only changes if the clip is (or was)
+            # on screen at the playhead; repainting it ~25 times a second
+            # for a clip elsewhere on the timeline cost up to 75 ms a go.
+            t = self.player.current_time
+            before = getattr(layer, "_drag_visible", None)
+            now = start <= t <= end
+            layer._drag_visible = now
+            if now or before or before is None:
+                self._schedule_preview_refresh()
             self._refresh_inspector_pages(kind, details=True)
 
     def _on_text_dragged(self, index, source_x, source_y):
@@ -1605,18 +1616,26 @@ class TrimTab(ctk.CTkFrame):
                 return
             # Stop ends the recording early; what was captured is kept.
             self._post(self._on_record_encoding)
-            # A screen recording has no source video, so the title
-            # styles fall back to "clip" — which is the honest answer.
-            output = generate_export_path(
-                "record", "mp4",
-                base_dir=output_folder,
-                source_name="screen recording",
-            )
             try:
+                # A screen recording has no source video, so the title
+                # styles fall back to "clip" — which is the honest answer.
+                # Inside the try: a folder that can't be made left the
+                # window minimised and the page stuck on "Encoding…".
+                output = generate_export_path(
+                    "record", "mp4",
+                    base_dir=output_folder,
+                    source_name="screen recording",
+                )
                 result = frames_to_video(str(frame_dir), fps, preset, str(output))
             except Exception as e:
                 self._post(self._on_record_failed, str(e))
                 return
+            finally:
+                # The full-screen PNGs are only needed for the encode; they
+                # stayed on disk until the app closed. Only ever the
+                # recorder's own record_* folder.
+                if Path(frame_dir).name.startswith("record_"):
+                    shutil.rmtree(frame_dir, ignore_errors=True)
             self._post(self._on_record_done, str(result) if result else None)
 
         self._record_thread = threading.Thread(target=worker, daemon=True)
@@ -1679,9 +1698,22 @@ class TrimTab(ctk.CTkFrame):
         begin = self.playhead if start <= self.playhead < end - 0.05 else start
         self.player.play(start=begin, end=end)
         self.play_btn.configure(text=glyph("pause"))
-        self.after(_PLAY_POLL_MS, self._poll_play_state)
+        self._cancel_play_poll()
+        self._play_poll_id = self.after(_PLAY_POLL_MS, self._poll_play_state)
+
+    def _cancel_play_poll(self):
+        """Play, pause, play within one poll used to leave two poll loops
+        running for the rest of the session, each moving the playhead."""
+        poll_id = getattr(self, "_play_poll_id", None)
+        self._play_poll_id = None
+        if poll_id is not None:
+            try:
+                self.after_cancel(poll_id)
+            except Exception:
+                pass
 
     def _stop_playback(self):
+        self._cancel_play_poll()
         self.player.stop()
         self.play_btn.configure(text=glyph("play"))
         self.playhead = float(self.player.current_time)
@@ -1695,9 +1727,10 @@ class TrimTab(ctk.CTkFrame):
         self.timeline.set_playhead(self.playhead)
         self._update_timecode()
         if not self.player._playing:
+            self._play_poll_id = None
             self.play_btn.configure(text=glyph("play"))
             return
-        self.after(_PLAY_POLL_MS, self._poll_play_state)
+        self._play_poll_id = self.after(_PLAY_POLL_MS, self._poll_play_state)
 
     # ------------------------------------------------------------------
     # Keyboard shortcuts bound by App
@@ -2307,7 +2340,16 @@ class TrimTab(ctk.CTkFrame):
         ext = "mp3" if options.get("audio_only") else ("gif" if fmt == "GIF" else "mp4")
 
         output_dir = Path(self.export_options.get_output_folder())
-        output_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            # A mistyped or unplugged folder showed a raw WinError in the
+            # status bar. Say what to do instead.
+            reason = exc.strerror or str(exc)
+            self._notify(
+                f"Can't save to {output_dir}: {reason}. "
+                "Pick another folder with Change, next to Save to.", "error")
+            return
 
         layers = self.text_layers.get_all_layers()
         image_layers = self.image_layers.get_all_layers()
@@ -2338,6 +2380,15 @@ class TrimTab(ctk.CTkFrame):
                     self._notify(toast, "error")
 
         def run_export():
+            # Anything that escapes (a drive that vanished between clips,
+            # say) used to end the thread silently, leaving the panel on
+            # "Stop export" and refusing new exports until a restart.
+            try:
+                export_clips()
+            except BaseException as exc:
+                self._post(failed, f"Error: {exc}", f"Export error: {exc}")
+
+        def export_clips():
             produced = []
             for i, (start, end) in enumerate(ranges, 1):
                 if dialog.cancel_event.is_set():
@@ -2402,6 +2453,7 @@ class TrimTab(ctk.CTkFrame):
                 return
 
             final_path = None
+            join_failed = False
             if concat and len(produced) > 1:
                 combined = str(generate_export_path(
                     "trim_concat", ext, base_dir=output_dir,
@@ -2412,10 +2464,16 @@ class TrimTab(ctk.CTkFrame):
                 # re-encodes via filter_complex xfade + acrossfade.
                 transition = options.get("concat_transition", "cut")
                 trans_dur = options.get("concat_transition_duration", 0.5)
+                self._post(dialog.update_progress, 0.99,
+                           f"Joining {len(produced)} clips…")
                 merged = concat_clips_with_transition(
                     produced, combined,
                     transition=transition, duration=trans_dur,
+                    cancel_event=dialog.cancel_event,
                 )
+                if dialog.cancel_event.is_set():
+                    self._post(stopped)
+                    return
                 if merged:
                     final_path = str(merged)
                     for p in produced:
@@ -2423,19 +2481,23 @@ class TrimTab(ctk.CTkFrame):
                             Path(p).unlink()
                         except OSError:
                             pass
+                else:
+                    # Reported as a plain success before, with the clips
+                    # quietly left as separate files.
+                    join_failed = True
             # Every file left on disk goes into History: the joined file,
             # or each clip when they were not joined (or the join failed).
             saved = [final_path] if final_path else list(produced)
             if not final_path:
                 final_path = produced[-1] if produced else None
-            self._post(finished, final_path, saved)
+            self._post(finished, final_path, saved, join_failed)
 
         def stopped():
             if dialog.winfo_exists():
                 dialog.export_failed("Cancelled")
             self._notify("Export stopped", "warn")
 
-        def finished(final_path, saved=()):
+        def finished(final_path, saved=(), join_failed=False):
             if not dialog.winfo_exists():
                 return
             if final_path:
@@ -2445,7 +2507,12 @@ class TrimTab(ctk.CTkFrame):
                 for path in saved or [final_path]:
                     self._record_history(path, fmt, preset, options)
                 dialog.export_complete(final_path)
-                self._notify(f"Exported {len(ranges)} clip(s)", "success")
+                if join_failed:
+                    self._notify(f"Couldn't join the clips into one file, so "
+                                 f"the {len(saved)} clips were saved separately.",
+                                 "warn")
+                else:
+                    self._notify(f"Exported {len(ranges)} clip(s)", "success")
             else:
                 dialog.export_failed("Cancelled")
                 self._notify("Export cancelled", "warn")
