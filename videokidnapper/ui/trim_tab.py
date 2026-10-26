@@ -226,6 +226,7 @@ class TrimTab(ctk.CTkFrame):
         self.selected_text_index = None
         self.selected_image_index = None
         self.size_estimate_text = ""
+        self.size_estimate_bytes = 0
         self.download_bar = None          # set by the Import workspace
         self.export_progress = None       # set by the Export workspace
         self.record_panel = None          # set by the Import workspace
@@ -317,7 +318,7 @@ class TrimTab(ctk.CTkFrame):
         panel.pack_propagate(False)
         header, right = C.panel_header(panel, "Media")
         header.pack(fill="x")
-        icon_button(right, "back", size=28, icon_size=11,
+        icon_button(right, "back", size=28, icon_size=11, hint="Hide the Media panel",
                     command=lambda: self._set_media_collapsed(True)).pack()
         C.divider(panel).pack(fill="x")
 
@@ -376,13 +377,15 @@ class TrimTab(ctk.CTkFrame):
         """Collapsed Media panel: a thin strip that keeps the quick actions."""
         rail = ctk.CTkFrame(self, fg_color=T.BG_SURFACE, corner_radius=0, width=MEDIA_RAIL_W)
         rail.pack_propagate(False)
-        icon_button(rail, "forward", size=32, icon_size=11,
+        icon_button(rail, "forward", size=32, icon_size=11, hint="Show the Media panel",
                     command=lambda: self._set_media_collapsed(False)).pack(pady=(6, 10))
         C.divider(rail).pack(fill="x", padx=8, pady=(0, 8))
-        for name, cmd in (("folder", self._open_file),
-                          ("link", lambda: self._show_workspace("import")),
-                          ("screen", self._record_screen)):
-            icon_button(rail, name, size=32, icon_size=14, command=cmd).pack(pady=2)
+        for name, cmd, hint in (
+                ("folder", self._open_file, "Open a video file  (Ctrl+O)"),
+                ("link", lambda: self._show_workspace("import"), "Download from a link"),
+                ("screen", self._record_screen, "Record your screen")):
+            icon_button(rail, name, size=32, icon_size=14, command=cmd,
+                        hint=hint).pack(pady=2)
         return rail
 
     def _set_media_collapsed(self, collapsed, persist=True):
@@ -410,13 +413,16 @@ class TrimTab(ctk.CTkFrame):
         tools = ctk.CTkFrame(head, fg_color=T.BG_RAISED, corner_radius=T.RADIUS_SM)
         tools.pack(side="right", padx=(0, 10))
         icon_button(tools, "open_new", command=self._play_in_system, size=28,
-                    icon_size=12).pack(side="right", padx=2, pady=2)
+                    icon_size=12, hint="Play the video in your usual video player"
+                    ).pack(side="right", padx=2, pady=2)
         icon_button(tools, "image", command=self.add_image_layer, size=28,
-                    icon_size=13).pack(side="right", padx=2, pady=2)
+                    icon_size=13, hint="Add an image or sticker"
+                    ).pack(side="right", padx=2, pady=2)
         icon_button(tools, "text", command=self.add_text_layer, size=28,
-                    icon_size=13).pack(side="right", padx=2, pady=2)
+                    icon_size=13, hint="Add text at the playhead"
+                    ).pack(side="right", padx=2, pady=2)
         self.crop_btn = icon_button(tools, "crop", command=self._toggle_crop_mode,
-                                    size=28, icon_size=13)
+                                    size=28, icon_size=13, hint="Crop the picture by hand")
         self.crop_btn.pack(side="right", padx=2, pady=2)
         C.divider(pv).pack(fill="x")
 
@@ -479,8 +485,10 @@ class TrimTab(ctk.CTkFrame):
         self._transport_play = play
         self._compact_timecode = False
         transport.bind("<Configure>", self._fit_transport, add="+")
-        icon_button(play, "to_start", command=self._go_to_in, size=32).pack(side="left", padx=2)
+        icon_button(play, "to_start", command=self._go_to_in, size=32,
+                    hint="Go to the start of the part to keep").pack(side="left", padx=2)
         icon_button(play, "back", command=lambda: self.keyboard_nudge(-1.0),
+                    hint="Back 1 second  (J)   ·   one frame: ←",
                     size=32).pack(side="left", padx=2)
         self.play_btn = ctk.CTkButton(
             play, text=glyph("play"), width=42, height=42, corner_radius=21,
@@ -489,8 +497,10 @@ class TrimTab(ctk.CTkFrame):
         )
         self.play_btn.pack(side="left", padx=6)
         icon_button(play, "forward", command=lambda: self.keyboard_nudge(1.0),
+                    hint="Forward 1 second  (L)   ·   one frame: →",
                     size=32).pack(side="left", padx=2)
-        icon_button(play, "to_end", command=self._go_to_out, size=32).pack(side="left", padx=2)
+        icon_button(play, "to_end", command=self._go_to_out, size=32,
+                    hint="Go to the end of the part to keep").pack(side="left", padx=2)
         return pv
 
     def _build_timeline(self):
@@ -1278,6 +1288,7 @@ class TrimTab(ctk.CTkFrame):
     def _update_size_estimate(self):
         if not self.video_path or not self.video_info or not hasattr(self, "timeline"):
             self.size_estimate_text = ""
+            self.size_estimate_bytes = 0
             self._emit_state()
             return
         ranges = self._gather_ranges()
@@ -1292,6 +1303,7 @@ class TrimTab(ctk.CTkFrame):
             audio_only=opts.get("audio_only"),
         )
         self.size_estimate_text = f"about {human_bytes(est)}"
+        self.size_estimate_bytes = est
         self._emit_state()
 
     # ------------------------------------------------------------------

@@ -250,15 +250,32 @@ class Toast(ctk.CTkFrame):
             text_color=T.TEXT_MUTED, anchor="w",
         )
         self._label.pack(side="left", fill="x", expand=True)
+        self._saved = None   # the message a hover hint covers up
 
     def show(self, message, level="info"):
+        self._saved = None
         color = self._COLORS.get(level, T.TEXT_MUTED)
         self._dot.configure(text_color=color)
         self._label.configure(text=message, text_color=color)
 
     def clear(self):
+        self._saved = None
         self._dot.configure(text_color=T.TEXT_DIM)
         self._label.configure(text="Ready", text_color=T.TEXT_MUTED)
+
+    def show_hint(self, text):
+        """Say what the button under the mouse does; ``None`` takes it back."""
+        if text:
+            if self._saved is None:
+                self._saved = (self._label.cget("text"), self._label.cget("text_color"),
+                               self._dot.cget("text_color"))
+            self._dot.configure(text_color=T.TEXT_DIM)
+            self._label.configure(text=text, text_color=T.TEXT_MUTED)
+        elif self._saved is not None:
+            text, color, dot = self._saved
+            self._saved = None
+            self._dot.configure(text_color=dot)
+            self._label.configure(text=text, text_color=color)
 
 
 # ---------------------------------------------------------------------------
