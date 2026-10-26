@@ -146,8 +146,12 @@ jobs:
           # 3. Upgrade exactly as the app does.
           $upgrade = python -c "from videokidnapper.utils.self_update import installer_args; print('\n'.join(installer_args('x', 'user')[1:]))"
           Write-Host "Installer arguments: $upgrade"
-          $p = Start-Process $setup -ArgumentList $upgrade -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "the silent upgrade failed (exit $($p.ExitCode))" }
+          $log = Join-Path $env:RUNNER_TEMP "upgrade-setup.log"
+          $p = Start-Process $setup -ArgumentList (@($upgrade) + "/LOG=`"$log`"") -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            if (Test-Path $log) { Get-Content $log -Tail 60 }
+            throw "the silent upgrade failed (exit $($p.ExitCode))"
+          }
 
           # 4. The old copy closed and the new one opened.
           $after = @()

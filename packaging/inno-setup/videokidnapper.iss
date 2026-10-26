@@ -110,3 +110,77 @@ function RelaunchRequested: Boolean;
 begin
   Result := ExpandConstant('{param:relaunch|0}') = '1';
 end;
+
+// How many copies of the app are running from where it is installed.
+// With Ask, each is asked to close (a window close, as clicking X does);
+// with Force, each is ended.
+function RunningCopies(Ask, Force: Boolean): Integer;
+var
+  Locator, Service, Processes, Process: Variant;
+  Target, Args: String;
+  I, Pid, ResultCode: Integer;
+begin
+  Result := 0;
+  Target := ExpandConstant('{app}\{#MyAppExeName}');
+  try
+    Locator := CreateOleObject('WbemScripting.SWbemLocator');
+    Service := Locator.ConnectServer('.', 'root\CIMV2');
+    Processes := Service.ExecQuery('SELECT ProcessId, ExecutablePath FROM Win32_Process ' +
+                                   'WHERE Name = ''{#MyAppExeName}''');
+    for I := 0 to Processes.Count - 1 do
+    begin
+      Process := Processes.ItemIndex(I);
+      if VarIsNull(Process.ExecutablePath) then
+        Continue;
+      if CompareText(Process.ExecutablePath, Target) <> 0 then
+        Continue;
+      Result := Result + 1;
+      Pid := Process.ProcessId;
+      Args := '/PID ' + IntToStr(Pid);
+      if Force then
+        Args := '/F ' + Args;
+      if Ask or Force then
+        Exec(ExpandConstant('{sys}\taskkill.exe'), Args, '', SW_HIDE,
+             ewWaitUntilTerminated, ResultCode);
+    end;
+  except
+    Log('Could not list running copies: ' + GetExceptionMessage);
+  end;
+end;
+
+// Wait up to Ms milliseconds for every running copy to be gone.
+function AllClosed(Ms: Integer): Boolean;
+var
+  Waited: Integer;
+begin
+  Waited := 0;
+  while (RunningCopies(False, False) > 0) and (Waited < Ms) do
+  begin
+    Sleep(250);
+    Waited := Waited + 250;
+  end;
+  Result := RunningCopies(False, False) = 0;
+end;
+
+// The in-app updater starts this installer and then closes the app, so it
+// can still be closing. Wait for it, then ask it to close, then end it.
+// Restart Manager (/CLOSEAPPLICATIONS) could not do this on its own: the
+// one-file .exe runs as a windowless launcher plus the app, the launcher
+// can't be asked to close, the .exe stayed in use, and the silent upgrade
+// stopped with exit code 5, leaving the app closed and not updated.
+// Installs started by hand are left to Setup's usual "close applications".
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if not RelaunchRequested then
+    Exit;
+  if AllClosed(8000) then
+    Exit;
+  Log('The app is still running; asking it to close.');
+  RunningCopies(True, False);
+  if AllClosed(8000) then
+    Exit;
+  Log('The app did not close; ending it.');
+  RunningCopies(False, True);
+  AllClosed(5000);
+end;
