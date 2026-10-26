@@ -6,17 +6,26 @@ One canvas draws every lane so the playhead and the in/out selection can
 run straight through all of them:
 
     ruler   · time labels, playhead head, in/out brackets
-    ranges  · saved ranges (click one to load it back into the selection)
+    ranges  · saved ranges (click one to load it back into the selection);
+              drag across its empty space to choose a new selection
     text    · caption clips (click to select, drag to move, drag an edge
               to retime)
     image   · image-overlay clips (same gestures as text)
     video   · filmstrip of thumbnails
     audio   · waveform
 
-Clicking or dragging anywhere that isn't a clip or a selection edge
-moves the playhead. Thumbnails and waveform peaks load on worker threads
-and are handed to Tk through ``after`` polling — PhotoImage construction
-must stay on the main thread.
+The selection is the part that gets exported. Its two trim handles are
+solid tabs on the video and audio lanes, drawn inside the selection so
+they can be grabbed even at the very ends of the clip, and the video and
+audio outside it are washed out. Shift-dragging anywhere that isn't a
+clip also draws a new selection. Clicking or dragging anywhere else
+moves the playhead.
+
+The video and audio lanes are each drawn as one picture made with PIL
+(the washed-out parts included) rather than as a thousand canvas items.
+Thumbnails and waveform peaks load on worker threads and are handed to
+Tk through ``after`` polling — PhotoImage construction must stay on the
+main thread.
 
 The time↔pixel math lives in module-level functions so it can be tested
 without a display.
@@ -27,7 +36,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 
 import customtkinter as ctk
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 
 from videokidnapper.ui import theme as T
 
@@ -43,8 +52,13 @@ LANES = (
     ("audio",  "Audio",  42),
 )
 EDGE_GRAB_PX = 6        # how close to a clip edge counts as "resize"
-HANDLE_GRAB_PX = 6      # how close to an in/out line counts as "drag it"
+HANDLE_GRAB_PX = 10     # how close to an in/out line counts as "drag it"
+HANDLE_W = 12           # width of the trim handles' tabs on the media lanes
+MEDIA_LANES = ("video", "audio")
+DRAG_SLOP_PX = 3        # a press that moves less than this is a click
 MIN_CLIP_S = 0.1        # shortest a clip can be resized to
+MIN_SELECTION_S = 0.05  # shortest selection a drag can make
+FADE_OUTSIDE = 0.62     # how far the cut-away video and audio fade out
 TICK_STEPS = (0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800)
 MAX_ZOOM = 40.0
 
@@ -124,6 +138,122 @@ def clamp_clip(start, end, duration, mode, delta):
         new_end = min(duration, max(start + MIN_CLIP_S, end + delta))
         return start, new_end
     return start, end
+
+
+def clip_grab_mode(x, xa, xb, edge_px=EDGE_GRAB_PX):
+    """``"start"``, ``"end"`` or ``"move"`` for a press at ``x`` on a clip.
+
+    The edge zones shrink on a short clip so its middle third always
+    moves it. With fixed 6 px zones a clip under about 12 px wide (a
+    two-second caption on a long video) could only ever be resized.
+    """
+    width = max(0.0, xb - xa)
+    edge = min(edge_px, width / 3)
+    if x <= xa + edge:
+        return "start"
+    if x >= xb - edge:
+        return "end"
+    return "move"
+
+
+def handle_at(x, lane, sx1, sx2):
+    """Which trim handle a press at ``x`` in ``lane`` grabs: "in", "out" or None.
+
+    On the video and audio lanes each handle is a tab drawn just inside
+    the selection, so it can be grabbed at the very ends of the clip;
+    elsewhere it is the line itself, give or take :data:`HANDLE_GRAB_PX`.
+    When both are in reach (a very short selection), the side of the
+    middle the press is on decides.
+    """
+    if lane in MEDIA_LANES:
+        in_hit = sx1 - 3 <= x <= sx1 + HANDLE_W + 2
+        out_hit = sx2 - HANDLE_W - 2 <= x <= sx2 + 3
+    else:
+        in_hit = abs(x - sx1) <= HANDLE_GRAB_PX
+        out_hit = abs(x - sx2) <= HANDLE_GRAB_PX
+    if in_hit and out_hit:
+        return "in" if x < (sx1 + sx2) / 2 else "out"
+    if in_hit:
+        return "in"
+    if out_hit:
+        return "out"
+    return None
+
+
+def drag_selection(anchor, t, duration, min_len=MIN_SELECTION_S):
+    """``(start, end)`` for a selection dragged from ``anchor`` to ``t``.
+
+    Either direction works, the result stays inside the clip, and it is
+    never shorter than ``min_len`` (it grows the way the mouse went).
+    """
+    duration = max(0.0, float(duration))
+    lo, hi = sorted((max(0.0, min(anchor, duration)), max(0.0, min(t, duration))))
+    if hi - lo < min_len:
+        if t >= anchor:
+            hi = min(duration, lo + min_len)
+            lo = max(0.0, hi - min_len)
+        else:
+            lo = max(0.0, hi - min_len)
+            hi = min(duration, lo + min_len)
+    return lo, hi
+
+
+def render_filmstrip(thumbs, duration, view, width, height, background):
+    """The video lane as one picture: thumbnails laid along ``view``.
+
+    Each thumbnail covers an equal share of the clip and is repeated
+    across its share when zoomed in, as the canvas tiles used to be.
+    """
+    strip = Image.new("RGB", (max(1, int(width)), max(1, int(height))), background)
+    if not thumbs or duration <= 0:
+        return strip
+    v0, v1 = view
+    cell = duration / len(thumbs)
+    for i, thumb in enumerate(thumbs):
+        cs = time_to_x(i * cell, v0, v1, 0, width)
+        ce = time_to_x((i + 1) * cell, v0, v1, 0, width)
+        if ce < 0 or cs > width:
+            continue
+        tile_w = max(1, thumb.width)
+        x = max(0.0, cs)
+        while x < ce and x < width:
+            # Clip the tile to its own share so the next one isn't covered.
+            visible = min(tile_w, int(round(ce - x)) or 1)
+            piece = thumb if visible >= tile_w else thumb.crop((0, 0, visible, thumb.height))
+            strip.paste(piece, (int(x), max(0, (strip.height - thumb.height) // 2)))
+            x += tile_w
+    return strip
+
+
+def render_waveform(peaks, duration, view, width, height, fill, wave):
+    """The audio lane as one picture: one bar per two pixels of width."""
+    width, height = max(1, int(width)), max(1, int(height))
+    img = Image.new("RGB", (width, height), fill)
+    if not peaks or duration <= 0:
+        return img
+    draw = ImageDraw.Draw(img)
+    v0, v1 = view
+    n = len(peaks)
+    mid = (height - 1) / 2
+    half = max(1.0, height / 2 - 2)
+    bars = max(1, width // 2)
+    for b in range(bars):
+        t = v0 + (b + 0.5) / bars * (v1 - v0)
+        idx = min(n - 1, max(0, int(t / duration * n)))
+        amp = max(0.04, min(1.0, float(peaks[idx]))) * half
+        x = int(b * width / bars)
+        draw.line([(x, mid - amp), (x, mid + amp)], fill=wave)
+    return img
+
+
+def fade_outside(img, keep_from, keep_to, toward, amount=FADE_OUTSIDE):
+    """``img`` faded toward ``toward`` except the columns ``[keep_from, keep_to)``."""
+    faded = Image.blend(img, Image.new("RGB", img.size, toward), amount)
+    a = max(0, min(img.width, int(round(keep_from))))
+    b = max(a, min(img.width, int(round(keep_to))))
+    if b > a:
+        faded.paste(img.crop((a, 0, b, img.height)), (a, 0))
+    return faded
 
 
 def lane_at(y):
@@ -207,7 +337,8 @@ class TimelineView(ctk.CTkFrame):
 
     Callbacks (all optional):
       - ``on_seek(t)`` — playhead moved by a click or scrub
-      - ``on_selection_change(start, end)`` — an in/out edge was dragged
+      - ``on_selection_change(start, end)`` — a trim handle was dragged or
+        a new selection drawn
       - ``on_clip_select(kind, index)`` — a text/image clip was clicked
       - ``on_clip_change(kind, index, start, end, final)`` — a clip was
         moved or resized; ``final`` is True on mouse release
@@ -237,11 +368,17 @@ class TimelineView(ctk.CTkFrame):
         self.image_clips = []
         self.selected = None     # ("text" | "image", index) or None
 
-        self._thumbs = []        # [PhotoImage] kept alive here
+        self._thumb_images = []  # PIL thumbnails, lane height
         self._peaks = []
         self._media_gen = 0
         self._loading = False
         self._drag = None
+        self._hover_edge = None  # trim handle under the mouse
+        # Rendered video/audio lanes, keyed on what they show, and the
+        # PhotoImages on the canvas (kept alive here).
+        self._media_base = {}
+        self._media_shown = {}
+        self._redraw_after = None
 
         self._font = tkfont.Font(family=T.FONT_FAMILY, size=9)
         self._font_bold = tkfont.Font(family=T.FONT_FAMILY, size=9, weight="bold")
@@ -252,11 +389,12 @@ class TimelineView(ctk.CTkFrame):
             highlightthickness=0, cursor="hand2",
         )
         self.canvas.pack(fill="both", expand=True)
-        self.canvas.bind("<Configure>", lambda _e: self.redraw())
+        self.canvas.bind("<Configure>", self._on_configure)
         self.canvas.bind("<ButtonPress-1>", self._on_press)
         self.canvas.bind("<B1-Motion>", self._on_motion)
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
         self.canvas.bind("<Motion>", self._on_hover)
+        self.canvas.bind("<Leave>", lambda _e: self._set_hover_edge(None))
         self.canvas.bind("<MouseWheel>", self._on_wheel)
         self.canvas.bind("<Control-MouseWheel>", self._on_ctrl_wheel)
 
@@ -273,12 +411,13 @@ class TimelineView(ctk.CTkFrame):
         self.zoom = 1.0
         self.ranges, self.text_clips, self.image_clips = [], [], []
         self.selected = None
-        self._thumbs, self._peaks = [], []
+        self._thumb_images, self._peaks = [], []
+        self._media_base, self._media_shown = {}, {}
         self._loading = True
         self.redraw()
 
-        # Workers only touch this dict; the main-thread poll below turns
-        # results into PhotoImages and redraws.
+        # Workers only touch this dict; the main-thread poll below picks
+        # the results up and redraws.
         state = {"thumbs": None, "peaks": None,
                  "thumbs_done": False, "peaks_done": False}
         lane_h = lane_top("video")[1] - 10
@@ -307,7 +446,7 @@ class TimelineView(ctk.CTkFrame):
                             fw, fh = frame.size
                             if fh <= 0:
                                 continue
-                            resized.append(frame.resize(
+                            resized.append(frame.convert("RGB").resize(
                                 (max(1, int(fw * lane_h / fh)), lane_h), Image.LANCZOS))
                         except Exception:
                             continue
@@ -329,7 +468,7 @@ class TimelineView(ctk.CTkFrame):
                 return
             changed = False
             if state["thumbs_done"] and state["thumbs"] is not None:
-                self._thumbs = [ImageTk.PhotoImage(img) for img in state["thumbs"]]
+                self._thumb_images = list(state["thumbs"])
                 state["thumbs"] = None
                 changed = True
             if state["peaks_done"] and state["peaks"] is not None:
@@ -355,7 +494,8 @@ class TimelineView(ctk.CTkFrame):
         self.sel_start = self.sel_end = self.playhead = 0.0
         self.ranges, self.text_clips, self.image_clips = [], [], []
         self.selected = None
-        self._thumbs, self._peaks = [], []
+        self._thumb_images, self._peaks = [], []
+        self._media_base, self._media_shown = {}, {}
         self._loading = False
         self.redraw()
 
@@ -429,6 +569,20 @@ class TimelineView(ctk.CTkFrame):
     # ------------------------------------------------------------------
     # Drawing
     # ------------------------------------------------------------------
+    def _on_configure(self, _event=None):
+        """Redraw once a window resize settles, not on every pixel of it."""
+        if self._redraw_after is not None:
+            try:
+                self.after_cancel(self._redraw_after)
+            except Exception:
+                pass
+
+        def run():
+            self._redraw_after = None
+            self.redraw()
+
+        self._redraw_after = self.after(30, run)
+
     def redraw(self):
         c = self.canvas
         c.delete("all")
@@ -488,19 +642,9 @@ class TimelineView(ctk.CTkFrame):
                          T.TRACK_TEXT_EDGE, T.TRACK_TEXT_INK)
         self._draw_clips("image", self.image_clips, T.TRACK_IMAGE_FILL,
                          T.TRACK_IMAGE_EDGE, T.TRACK_IMAGE_INK)
-        self._draw_video()
-        self._draw_audio()
-
-        # In/out lines + ruler brackets on top of the lanes.
-        for x, side in ((sx1, "in"), (sx2, "out")):
-            if x0 - 1 <= x <= x1 + 1:
-                c.create_line(x, RULER_H, x, h, fill=T.ACCENT, width=2)
-                if side == "in":
-                    pts = (x, 4, x + 9, 4, x + 9, 8, x + 3, 8, x + 3, RULER_H - 2, x, RULER_H - 2)
-                else:
-                    pts = (x, 4, x - 9, 4, x - 9, 8, x - 3, 8, x - 3, RULER_H - 2, x, RULER_H - 2)
-                c.create_polygon(*pts, fill=T.ACCENT, outline="")
-
+        self._draw_media(sx1 - x0, sx2 - x0)
+        self._draw_trim(sx1, sx2, h)
+        self._draw_drag_time()
         self._draw_playhead()
 
     def _draw_ruler(self, x0, width):
@@ -533,6 +677,15 @@ class TimelineView(ctk.CTkFrame):
     def _draw_ranges(self):
         c = self.canvas
         top, height = lane_top("ranges")
+        if not self.ranges:
+            x0, width = self._lanes_box()
+            hint = self._clip_label(
+                "Drag here to choose the part to keep, or drag the blue handles",
+                width - 24)
+            if hint:
+                c.create_text(x0 + width / 2, top + height / 2, text=hint,
+                              fill=T.TEXT_DIM, font=self._font)
+            return
         for i, (s, e) in enumerate(self.ranges):
             xa, xb = self._t2x(s), self._t2x(e)
             if xb < HEADER_W or xa > self.canvas.winfo_width():
@@ -568,62 +721,111 @@ class TimelineView(ctk.CTkFrame):
                 c.create_text(xa + 7, top + height / 2, text=label, anchor="w",
                               fill=ink, font=self._font_bold if selected else self._font)
 
-    def _draw_video(self):
-        c = self.canvas
-        top, height = lane_top("video")
-        xa, xb = self._t2x(0.0), self._t2x(self.duration)
-        xa = max(HEADER_W + 1, xa)
-        y1, y2 = top + 5, top + height - 5
-        if not self._thumbs:
-            c.create_rectangle(xa, y1, xb, y2, fill=T.ACCENT_SOFT,
-                               outline=T.TRACK_VIDEO_EDGE)
-            c.create_text(xa + 8, (y1 + y2) / 2, anchor="w",
-                          text="Loading frames…" if self._loading else "",
-                          fill=T.ACCENT_SOFT_TEXT, font=self._font)
-            return
-        n = len(self._thumbs)
-        cell = self.duration / n
-        right_edge = min(xb, self.canvas.winfo_width())
-        for i, photo in enumerate(self._thumbs):
-            cs, ce = self._t2x(i * cell), self._t2x((i + 1) * cell)
-            if ce < HEADER_W or cs > right_edge:
-                continue
-            tile_w = max(1, photo.width())
-            x = max(HEADER_W + 1, cs)
-            while x < ce and x < right_edge:
-                c.create_image(x, y1, image=photo, anchor="nw")
-                x += tile_w
-        # Mask the overhang of the last tile and frame the strip.
-        c.create_rectangle(right_edge, y1 - 1, self.canvas.winfo_width(), y2 + 1,
-                           fill=T.BG_SURFACE, outline="")
-        c.create_rectangle(xa, y1, right_edge, y2, outline=T.TRACK_VIDEO_EDGE, width=1)
+    def _media_picture(self, lane, keep_from, keep_to):
+        """The PhotoImage for a media lane, faded outside the selection.
 
-    def _draw_audio(self):
+        The lane itself is rendered once per view and width; a redraw for
+        a moved handle only redoes the fade, and one that changes neither
+        (a caption edit, say) reuses the PhotoImage already made.
+        """
+        _x0, width = self._lanes_box()
+        _top, lane_h = lane_top(lane)
+        height = lane_h - 10
+        base_key = (lane, self._view, width, height, self.duration,
+                    len(self._thumb_images) if lane == "video" else len(self._peaks))
+        base = self._media_base.get(lane)
+        if base is None or base[0] != base_key:
+            if lane == "video":
+                img = render_filmstrip(self._thumb_images, self.duration, self._view,
+                                       width, height, T.ACCENT_SOFT)
+            else:
+                img = render_waveform(self._peaks, self.duration, self._view,
+                                      width, height, T.TRACK_AUDIO_FILL,
+                                      T.TRACK_AUDIO_WAVE)
+            base = (base_key, img)
+            self._media_base[lane] = base
+        shown_key = (base_key, int(round(keep_from)), int(round(keep_to)))
+        shown = self._media_shown.get(lane)
+        if shown is None or shown[0] != shown_key:
+            img = fade_outside(base[1], keep_from, keep_to, T.BG_BASE)
+            shown = (shown_key, ImageTk.PhotoImage(img, master=self.canvas))
+            self._media_shown[lane] = shown
+        return shown[1]
+
+    def _draw_media(self, keep_from, keep_to):
+        """Filmstrip and waveform, washed out where the export cuts them."""
         c = self.canvas
-        top, height = lane_top("audio")
-        xa, xb = self._t2x(0.0), self._t2x(self.duration)
-        xa = max(HEADER_W + 1, xa)
-        y1, y2 = top + 5, top + height - 5
-        c.create_rectangle(xa, y1, xb, y2, fill=T.TRACK_AUDIO_FILL,
-                           outline=T.TRACK_AUDIO_WAVE)
-        if not self._peaks:
-            c.create_text(xa + 8, (y1 + y2) / 2, anchor="w",
-                          text="Loading audio…" if self._loading else "No audio track",
-                          fill=T.TRACK_AUDIO_WAVE, font=self._font)
-            return
-        mid = (y1 + y2) / 2
-        half = (y2 - y1) / 2 - 2
-        n = len(self._peaks)
         x0, width = self._lanes_box()
-        start, end = self._view
-        # One bar per ~2px of visible width, sampling the peak buckets.
-        bars = max(1, int(width / 2))
-        for b in range(bars):
-            t = start + (b + 0.5) / bars * (end - start)
-            idx = min(n - 1, max(0, int(t / self.duration * n)))
-            amp = max(0.04, float(self._peaks[idx])) * half
-            x = x0 + b * width / bars
-            c.create_line(x, mid - amp, x, mid + amp, fill=T.TRACK_AUDIO_WAVE)
+        for lane, edge in (("video", T.TRACK_VIDEO_EDGE), ("audio", T.TRACK_AUDIO_WAVE)):
+            top, height = lane_top(lane)
+            y1, y2 = top + 5, top + height - 5
+            empty = not (self._thumb_images if lane == "video" else self._peaks)
+            if empty:
+                fill = T.ACCENT_SOFT if lane == "video" else T.TRACK_AUDIO_FILL
+                c.create_rectangle(x0, y1, x0 + width, y2, fill=fill, outline=edge)
+                if lane == "video":
+                    text = "Loading frames…" if self._loading else ""
+                    ink = T.ACCENT_SOFT_TEXT
+                else:
+                    text = "Loading audio…" if self._loading else "No audio track"
+                    ink = T.TRACK_AUDIO_WAVE
+                c.create_text(x0 + 8, (y1 + y2) / 2, anchor="w", text=text,
+                              fill=ink, font=self._font)
+                continue
+            photo = self._media_picture(lane, keep_from, keep_to)
+            c.create_image(x0, y1, image=photo, anchor="nw")
+            c.create_rectangle(x0, y1, x0 + width, y2, outline=edge, width=1)
+
+    def _draw_trim(self, sx1, sx2, h):
+        """The selection's lines, ruler brackets and grab tabs."""
+        c = self.canvas
+        x0, width = self._lanes_box()
+        x1 = x0 + width
+        top = lane_top("video")[0] + 2
+        a_top, a_h = lane_top("audio")
+        bottom = a_top + a_h - 2
+
+        # A frame along the kept part of the video and audio.
+        fl, fr = max(x0, sx1), min(x1, sx2)
+        if fr > fl:
+            c.create_line(fl, top, fr, top, fill=T.ACCENT, width=3)
+            c.create_line(fl, bottom, fr, bottom, fill=T.ACCENT, width=3)
+
+        for edge, x in (("in", sx1), ("out", sx2)):
+            if not (x0 - 1 <= x <= x1 + 1):
+                continue
+            c.create_line(x, RULER_H, x, h, fill=T.ACCENT, width=2)
+            if edge == "in":
+                pts = (x, 4, x + 9, 4, x + 9, 8, x + 3, 8, x + 3, RULER_H - 2, x, RULER_H - 2)
+                tab = (x, top - 1, x + HANDLE_W, bottom + 1)
+            else:
+                pts = (x, 4, x - 9, 4, x - 9, 8, x - 3, 8, x - 3, RULER_H - 2, x, RULER_H - 2)
+                tab = (x - HANDLE_W, top - 1, x, bottom + 1)
+            c.create_polygon(*pts, fill=T.ACCENT, outline="")
+            active = self._hover_edge == edge or (self._drag or {}).get("edge") == edge
+            c.create_rectangle(*tab, fill=T.ACCENT_ACTIVE if active else T.ACCENT,
+                               outline="", tags=("handle", f"handle:{edge}"))
+            cx, cy = (tab[0] + tab[2]) / 2, (tab[1] + tab[3]) / 2
+            for dx in (-2, 2):
+                c.create_line(cx + dx, cy - 8, cx + dx, cy + 8,
+                              fill=T.TEXT_ON_ACCENT, tags=("handle", f"handle:{edge}"))
+
+    def _draw_drag_time(self):
+        """While a handle moves, show where it is in the ruler."""
+        drag = self._drag or {}
+        if drag.get("kind") not in ("handle", "select") or not drag.get("moved"):
+            return
+        t = self.sel_start if drag.get("edge") == "in" else self.sel_end
+        x = self._t2x(t)
+        text = f"{_clock(t, self.duration >= 3600)}  ·  {self.sel_end - self.sel_start:.1f}s"
+        x0, width = self._lanes_box()
+        half = self._font_bold.measure(text) / 2 + 7
+        cx = max(x0 + half, min(x0 + width - half, x))
+        c = self.canvas
+        c.create_rectangle(cx - half, 2, cx + half, RULER_H - 3,
+                           fill=T.ACCENT, outline="")
+        c.create_text(cx, (RULER_H - 1) / 2, text=text, fill=T.TEXT_ON_ACCENT,
+                      font=self._font_bold)
 
     def _draw_playhead(self):
         c = self.canvas
@@ -642,7 +844,7 @@ class TimelineView(ctk.CTkFrame):
     # ------------------------------------------------------------------
     # Hit-testing
     # ------------------------------------------------------------------
-    def _hit(self, x, y):
+    def _hit(self, x, y, shift=False):
         """What a press at (x, y) grabs, as a drag-state dict or None."""
         if self.duration <= 0 or x < HEADER_W:
             return None
@@ -653,40 +855,60 @@ class TimelineView(ctk.CTkFrame):
             for i in range(len(clips) - 1, -1, -1):
                 xa, xb = self._t2x(clips[i]["start"]), self._t2x(clips[i]["end"])
                 if xa - EDGE_GRAB_PX <= x <= xb + EDGE_GRAB_PX:
-                    if abs(x - xa) <= EDGE_GRAB_PX:
-                        mode = "start"
-                    elif abs(x - xb) <= EDGE_GRAB_PX:
-                        mode = "end"
-                    else:
-                        mode = "move"
-                    return {"kind": lane, "index": i, "mode": mode,
+                    return {"kind": lane, "index": i,
+                            "mode": clip_grab_mode(x, xa, xb),
                             "x": x, "start": clips[i]["start"],
                             "end": clips[i]["end"]}
-        if lane == "ranges":
+        if lane == "ranges" and not shift:
             for i, (s, e) in enumerate(self.ranges):
                 if self._t2x(s) <= x <= self._t2x(e):
                     return {"kind": "range", "index": i}
-        for edge, t in (("in", self.sel_start), ("out", self.sel_end)):
-            if abs(x - self._t2x(t)) <= HANDLE_GRAB_PX:
-                # The view stays put for the whole drag (see redraw).
-                return {"kind": "handle", "edge": edge, "view": self._view}
+        sx1, sx2 = self._t2x(self.sel_start), self._t2x(self.sel_end)
+        edge = None if shift else handle_at(x, lane, sx1, sx2)
+        if edge:
+            # The view stays put for the whole drag (see redraw), and the
+            # handle keeps its offset from the mouse instead of jumping.
+            return {"kind": "handle", "edge": edge, "view": self._view,
+                    "grab_dx": x - (sx1 if edge == "in" else sx2)}
+        if shift or lane == "ranges":
+            return {"kind": "select", "x": x, "anchor": self._x2t(x),
+                    "view": self._view}
         return {"kind": "seek"}
 
+    def _set_hover_edge(self, edge):
+        if edge == self._hover_edge:
+            return
+        self._hover_edge = edge
+        for side in ("in", "out"):
+            on = side == edge
+            for item in self.canvas.find_withtag(f"handle:{side}"):
+                if self.canvas.type(item) == "rectangle":
+                    self.canvas.itemconfigure(
+                        item, fill=T.ACCENT_ACTIVE if on else T.ACCENT)
+
     def _on_hover(self, event):
-        hit = self._hit(event.x, event.y)
+        hit = self._hit(event.x, event.y, shift=bool(getattr(event, "state", 0) & 0x1))
         cursor = "hand2"
+        edge = None
         if hit:
-            if hit["kind"] == "handle" or hit.get("mode") in ("start", "end"):
+            if hit["kind"] == "handle":
+                cursor = "sb_h_double_arrow"
+                edge = hit["edge"]
+            elif hit.get("mode") in ("start", "end"):
                 cursor = "sb_h_double_arrow"
             elif hit.get("mode") == "move":
                 cursor = "fleur"
+            elif hit["kind"] == "select":
+                cursor = "crosshair"
+        self._set_hover_edge(edge)
         self.canvas.configure(cursor=cursor)
 
     # ------------------------------------------------------------------
     # Gestures
     # ------------------------------------------------------------------
     def _on_press(self, event):
-        hit = self._hit(event.x, event.y)
+        shift = bool(getattr(event, "state", 0) & 0x1)
+        hit = self._hit(event.x, event.y, shift=shift)
         self._drag = hit
         if not hit:
             return
@@ -711,12 +933,27 @@ class TimelineView(ctk.CTkFrame):
         if kind == "seek":
             self._seek_to(self._x2t(event.x))
         elif kind == "handle":
-            t = self._x2t(event.x)
+            t = self._x2t(event.x - drag.get("grab_dx", 0))
             if drag["edge"] == "in":
-                self.sel_start = max(0.0, min(t, self.sel_end - 0.05))
+                self.sel_start = max(0.0, min(t, self.sel_end - MIN_SELECTION_S))
             else:
-                self.sel_end = min(self.duration, max(t, self.sel_start + 0.05))
+                self.sel_end = min(self.duration, max(t, self.sel_start + MIN_SELECTION_S))
             self.playhead = self.sel_start if drag["edge"] == "in" else self.sel_end
+            drag["moved"] = True
+            self.redraw()
+            if self._on_selection_change:
+                self._on_selection_change(self.sel_start, self.sel_end)
+        elif kind == "select":
+            if not drag.get("moved") and abs(event.x - drag["x"]) < DRAG_SLOP_PX:
+                return
+            drag["moved"] = True
+            t = self._x2t(event.x)
+            self.sel_start, self.sel_end = drag_selection(
+                drag["anchor"], t, self.duration)
+            # The playhead follows the end being drawn, so the preview
+            # shows the frame there; the label in the ruler names it.
+            drag["edge"] = "out" if t >= drag["anchor"] else "in"
+            self.playhead = self.sel_end if drag["edge"] == "out" else self.sel_start
             self.redraw()
             if self._on_selection_change:
                 self._on_selection_change(self.sel_start, self.sel_end)
@@ -734,12 +971,20 @@ class TimelineView(ctk.CTkFrame):
 
     def _on_release(self, _event):
         drag, self._drag = self._drag, None
-        if drag and drag["kind"] in ("text", "image") and drag.get("moved"):
+        if not drag:
+            return
+        if drag["kind"] in ("text", "image") and drag.get("moved"):
             clips = self.text_clips if drag["kind"] == "text" else self.image_clips
             if drag["index"] < len(clips) and self._on_clip_change:
                 clip = clips[drag["index"]]
                 self._on_clip_change(drag["kind"], drag["index"],
                                      clip["start"], clip["end"], True)
+        elif drag["kind"] == "select" and not drag.get("moved"):
+            # A click on the empty Ranges lane moves the playhead, as a
+            # click anywhere else does.
+            self._seek_to(drag["anchor"])
+        elif drag["kind"] in ("handle", "select"):
+            self.redraw()          # drop the time label from the ruler
 
     def _seek_to(self, t):
         self.playhead = t

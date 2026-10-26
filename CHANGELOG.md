@@ -7,6 +7,15 @@ All notable changes to this project are documented here. The format is based on 
 ### Added
 
 - **Updates install themselves on Windows.** When a new version is out, the bar at the top of the window asks whether to **Restart to update** (Setup, winget and portable installs). The new version downloads from the GitHub release with a progress bar in that same bar, is checked against the SHA-256 checksum GitHub publishes, and after you're asked to save your project the app closes, installs it and opens again. Setup and winget installs upgrade silently in the same per-user or all-users scope they were installed with (an all-users install still shows the Windows admin prompt); the portable build swaps its own .exe. You can cancel the download at any time, and the first start after an update says which version you're on. This works from 1.9.2 onward: updating to 1.9.2 itself still goes through the release page once.
+- **Trimming is easier to see and to do.**
+  - The two trim handles are now solid blue tabs on the video and audio lanes. They sit just inside the part being kept, so you can grab them even at the very start and end of the clip, and they light up under the mouse. The video and audio that will be cut are washed out.
+  - While you drag a handle, the ruler shows exactly where it is and how long the part is.
+  - Drag across the empty **Ranges** lane, or Shift-drag anywhere on the timeline, to draw the part to keep in one go.
+  - The timeline bar says what will be exported, for example "Keeping 1:55.0 – 2:07.2 · 12.2 s", and **Whole video** puts the full clip back.
+  - Under the preview, **Mark in** and **Mark out** are now **Start here** and **End here**, in the trim colour.
+  - **←** and **→** step one frame for a cut on the exact frame; **Shift+←/→** move a second.
+- **Delete** (or Backspace) removes the caption or image picked on the timeline, and Ctrl+Z brings it back.
+- **Right-click a text box** for Cut, Copy, Paste and Select all.
 - **A crash leaves a note behind.** If the app ever closes unexpectedly, the next start says so in the status bar and puts what it logged (including where every thread was when it died) in **Settings › Debug log**. The log is kept in `.videokidnapper_crash.log` in your home folder and trimmed to the last few runs.
 
 ### Changed
@@ -29,6 +38,11 @@ All notable changes to this project are documented here. The format is based on 
 
 - **A terminal window popped up when you pressed Play** (Windows). The sound for playback comes from ffmpeg, a console program, and it was started without hiding its window, so a black console window opened over the editor and took the focus. It now runs hidden, like every other ffmpeg the app starts, and a test checks every place the app starts a program. The first export on a new PC and Captions from speech could flash a console the same way.
 - **The app could hang or close to the desktop when something printed in the background.** Everything printed goes to the Debug log, and the log updated the window straight from whichever thread printed. Background work (playback, downloads, exports) now only queues its lines, and the window picks them up.
+- **A caption box kept the keyboard after you clicked away.** After typing a caption and clicking the preview, Space typed a space instead of playing, and I, O, J, K, L and Q went into the caption. Clicking anything that isn't a text box, or pressing **Esc**, now hands the keys back, and a time typed into a "Shows from" or "Until" box is applied when you click away. Switching between Import, Edit and Export does the same for a box that's no longer on screen.
+- **Ctrl+O in a caption inserted a line break** instead of opening a file, and Ctrl+K, Ctrl+D and Ctrl+T deleted or swapped letters. These leftover Unix editing keys are gone from every text box; Ctrl+O and Ctrl+E now open and export from inside one too.
+- **Ctrl+Z inside the caption box did nothing.** It now undoes your typing there. Text pasted with the mouse now reaches the caption, too.
+- **Undoing a delete skipped back past your last edit** if you deleted within a moment of making it.
+- **Short clips on the timeline could only be resized, never moved.** A clip narrower than about 12 pixels was all edge; its middle now always moves it.
 - **Typing with Num Lock on triggered shortcuts on Windows.** A capital S typed into a caption opened Save As, a lowercase s saved the project, O opened a file instead of marking the out point, and outside text fields E could start an export. The ⌘ shortcuts meant for macOS were bound on every platform, and Windows reports Num Lock as the same modifier. They are now bound only on macOS; Ctrl shortcuts work as before.
 - **Captions and stickers appeared at the wrong moment.** The editor times them on the full video, but the export counted from the start of the clip, so any clip that did not start at 0:00 showed them late or not at all. They now appear exactly where the preview shows them, at any speed, and a motion-tracked caption follows the same path.
 - **A speed change made the clip the wrong length.** At 2x the export ran on past the end of the selection, and at 0.5x it stopped halfway through. MP4, GIF and MP3 exports now cover exactly the selection.

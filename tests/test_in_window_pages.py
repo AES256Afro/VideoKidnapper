@@ -116,6 +116,7 @@ _APP_METHODS = (
     "_open_page", "_close_page", "_return_target", "_workspace_title",
     "_open_setup_page", "_toggle_shortcuts_page",
     "_shortcut_shortcuts_overlay", "_escape_shortcut", "_editing_in_entry",
+    "_release_text_focus",
     "_bind_keyboard_shortcuts", "_bind_accel", "_shortcut", "_paste_shortcut",
     "_save_project_shortcut", "_save_project_as_shortcut",
     "_open_project_shortcut", "register_tab",

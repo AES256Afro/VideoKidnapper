@@ -82,6 +82,27 @@ def short_duration(seconds):
     return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
 
 
+def clip_time(seconds):
+    """A time to a tenth of a second: ``0:07.5``, ``1:55.0``, ``1:02:03.4``."""
+    tenths = int(round(max(0.0, float(seconds or 0)) * 10))
+    whole, tenth = divmod(tenths, 10)
+    minutes, secs = divmod(whole, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}.{tenth}"
+    return f"{minutes}:{secs:02d}.{tenth}"
+
+
+def selection_summary(start, end, duration):
+    """What the timeline bar says about the part that will be exported."""
+    if duration <= 0:
+        return "  Open a video to trim it  "
+    if start <= 0.001 and end >= duration - 0.001:
+        return f"  Keeping the whole video  ·  {clip_time(duration)}  "
+    return (f"  Keeping {clip_time(start)} – {clip_time(end)}"
+            f"  ·  {max(0.0, end - start):.1f} s  ")
+
+
 def clamp_range(start, end, duration):
     """``(start, end)`` limited to ``[0, duration]``, or None if too little
     of it is left to export.
@@ -265,6 +286,7 @@ class TrimTab(ctk.CTkFrame):
 
         self._update_project_status()
         self._update_timecode()
+        self._update_keep_label(0.0, 0.0)
 
     def _build_models(self):
         self.options = EditorOptions(self)
@@ -429,14 +451,22 @@ class TrimTab(ctk.CTkFrame):
         )
         self.timecode_label.pack(side="left", padx=(14, 0))
 
+        # Trimming: the part between these two is what gets exported. They
+        # were plain grey "Mark in / Mark out" buttons that read as jargon
+        # and blended in; now they say what they do, in the trim colour.
         marks = ctk.CTkFrame(transport, fg_color="transparent")
         marks.pack(side="right", padx=(0, 12))
-        button(marks, "Mark in  I", variant="secondary", width=86, height=30,
-               font=T.font(T.SIZE_SM, "bold"),
-               command=self.keyboard_mark_in).pack(side="left", padx=(0, 6))
-        button(marks, "Mark out  O", variant="secondary", width=92, height=30,
-               font=T.font(T.SIZE_SM, "bold"),
-               command=self.keyboard_mark_out).pack(side="left")
+        trim_style = dict(
+            variant="secondary", height=32, font=T.font(T.SIZE_SM, "bold"),
+            fg_color=T.ACCENT_SOFT, hover_color=T.SELECTION,
+            text_color=T.ACCENT_SOFT_TEXT, border_color=T.ACCENT,
+        )
+        self.start_here_btn = button(marks, "[  Start here   I", width=112,
+                                     command=self.keyboard_mark_in, **trim_style)
+        self.start_here_btn.pack(side="left", padx=(0, 6))
+        self.end_here_btn = button(marks, "End here   O  ]", width=108,
+                                   command=self.keyboard_mark_out, **trim_style)
+        self.end_here_btn.pack(side="left")
 
         play = ctk.CTkFrame(transport, fg_color="transparent")
         play.place(relx=0.5, rely=0.5, anchor="center")
@@ -478,6 +508,17 @@ class TrimTab(ctk.CTkFrame):
                                    command=self._open_captions_menu, **small)
         self.captions_btn.pack(side="left", padx=(0, 6))
         C.divider(bar, horizontal=False).pack(side="left", fill="y", pady=10, padx=6)
+        # What will be exported, in words, kept up to date as the handles
+        # move, with a one-click way back to the whole video.
+        self.keep_label = ctk.CTkLabel(
+            bar, text="", height=28, corner_radius=T.RADIUS_SM,
+            fg_color=T.ACCENT_SOFT, text_color=T.ACCENT_SOFT_TEXT,
+            font=T.font(T.SIZE_SM, "bold"),
+        )
+        self.keep_label.pack(side="left", padx=(0, 6))
+        self.whole_video_btn = button(bar, "Whole video", width=92,
+                                      command=self.reset_selection, **small)
+        self.whole_video_btn.pack(side="left", padx=(0, 6))
         button(bar, "+ Save range  Q", width=118, command=self._queue_range,
                **small).pack(side="left")
 
@@ -712,6 +753,9 @@ class TrimTab(ctk.CTkFrame):
         panel = self.text_layers if kind == "text" else self.image_layers
         if not (0 <= index < len(panel.layers)):
             return
+        # An edit still waiting for its undo step (typing, a drag) gets it
+        # now; otherwise undoing the delete skipped back past that edit.
+        self._flush_pending_snapshot()
         panel._remove_layer(panel.layers[index])
         remaining = len(panel.layers)
         new_index = min(index, remaining - 1) if remaining else None
@@ -831,7 +875,29 @@ class TrimTab(ctk.CTkFrame):
         self._update_duration_label(start, end)
         if not from_timeline:
             self.timeline.set_selection(start, end)
+        self._update_keep_label(start, end)
         self._update_size_estimate()
+
+    def _update_keep_label(self, start=None, end=None):
+        if start is None:
+            start, end = self.timeline.get_values()
+        duration = (self.video_info or {}).get("duration", 0.0) if self.video_path else 0.0
+        whole = duration > 0 and start <= 0.001 and end >= duration - 0.001
+        self.keep_label.configure(text=selection_summary(start, end, duration))
+        self.whole_video_btn.configure(
+            state="disabled" if whole or not duration else "normal")
+
+    def reset_selection(self):
+        """Select the whole video again (the timeline's Whole video button)."""
+        if not self.video_path:
+            return
+        duration = self.video_info["duration"]
+        if self.timeline.get_values() == (0.0, duration):
+            return
+        self._flush_pending_snapshot()
+        self._apply_selection(0.0, duration)
+        self._request_snapshot(immediate=True)
+        self._notify("Selected the whole video", "info")
 
     def _on_timeline_selection(self, start, end):
         """An in/out edge was dragged; the timeline moved the playhead to it."""
@@ -1139,6 +1205,7 @@ class TrimTab(ctk.CTkFrame):
             self.start_entry.set_value(seconds_to_hms(0))
             self.end_entry.set_value(seconds_to_hms(dur))
             self._update_duration_label(0, dur)
+            self._update_keep_label(0.0, dur)
             self.text_layers.clear_layers()
             self.text_layers.set_duration(dur)
             self.image_layers.clear_layers()
@@ -1229,6 +1296,7 @@ class TrimTab(ctk.CTkFrame):
             self._request_snapshot(immediate=True)
 
     def remove_range(self, index):
+        self._flush_pending_snapshot()
         self.range_queue.remove(index)
         self._request_snapshot(immediate=True)
 
@@ -1642,6 +1710,26 @@ class TrimTab(ctk.CTkFrame):
         if not self.video_path:
             return
         self._seek(self.playhead + delta_seconds)
+
+    def keyboard_step_frame(self, frames):
+        """← / →: one frame back or forward, for trimming on the exact frame."""
+        if not self.video_path:
+            return
+        try:
+            fps = float(self.video_info.get("fps") or 0)
+        except (TypeError, ValueError):
+            fps = 0.0
+        self._seek(self.playhead + frames / (fps if fps > 1 else 30.0))
+
+    def keyboard_delete(self):
+        """Delete / Backspace: remove the caption or image picked on the timeline."""
+        selected = self.timeline.selected
+        if not self.video_path or not selected:
+            return
+        kind, index = selected
+        self.delete_layer(kind, index)
+        what = "Caption" if kind == "text" else "Image"
+        self._notify(f"{what} deleted. Ctrl+Z brings it back.", "info")
 
     def keyboard_mark_in(self):
         if not self.video_path:
