@@ -41,6 +41,49 @@ import time
 
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
+# PortAudio keeps its open streams in one global list with no lock of its
+# own. Every Play makes a new player, so the audio thread of the session
+# just paused can still be closing its stream while the next one opens
+# its own; both calls drop the GIL and really do run at once. Opening and
+# closing streams therefore go through this lock, in every player.
+_SOUND_LOCK = threading.Lock()
+# Audio threads still running, from any player, so the app can wait for
+# all of them before the sound library shuts down at exit.
+_AUDIO_THREADS = set()
+_AUDIO_THREADS_LOCK = threading.Lock()
+
+
+def wait_for_sound(timeout=1.0):
+    """Wait up to ``timeout`` seconds for every playback's sound to close."""
+    deadline = time.monotonic() + timeout
+    with _AUDIO_THREADS_LOCK:
+        threads = list(_AUDIO_THREADS)
+    for thread in threads:
+        if thread is threading.current_thread():
+            continue
+        thread.join(max(0.0, deadline - time.monotonic()))
+
+
+def _app_ffmpeg():
+    """The ffmpeg the rest of the app uses (it may not be on PATH)."""
+    try:
+        from videokidnapper.utils.ffmpeg_check import find_ffmpeg
+        found = find_ffmpeg()
+    except Exception:
+        found = None
+    return str(found) if found else (shutil.which("ffmpeg") or "ffmpeg")
+
+
+def _decode_pictures_with(ffmpeg_path):
+    """Have imageio_ffmpeg decode the picture with the same ffmpeg.
+
+    It otherwise uses its own bundled copy, a different version from the
+    one the sound, the colour filter and the export are built for.
+    """
+    if (ffmpeg_path and os.path.isfile(ffmpeg_path)
+            and not os.environ.get("IMAGEIO_FFMPEG_EXE")):
+        os.environ["IMAGEIO_FFMPEG_EXE"] = ffmpeg_path
+
 
 # ---------------------------------------------------------------------------
 # Availability probe
@@ -175,14 +218,15 @@ class AudioVideoPlayer:
             stop. Fired once per ``play()``, from a worker thread on a
             natural end, so the same rule applies.
         ffmpeg_path : str, optional
-            Path to ffmpeg binary. Defaults to the system ``ffmpeg`` —
-            callers that already resolved a portable copy should pass
-            it here.
+            Path to ffmpeg binary. Defaults to the one the app found,
+            which may be a bundled copy that isn't on PATH; playback
+            used to look on PATH only and played without sound then.
         """
         self.video_path = video_path
         self.render_callback = render_callback
         self.on_finished = on_finished
-        self.ffmpeg_path = ffmpeg_path or shutil.which("ffmpeg") or "ffmpeg"
+        self.ffmpeg_path = ffmpeg_path or _app_ffmpeg()
+        _decode_pictures_with(self.ffmpeg_path)
 
         self._clock = AudioClock(sample_rate=self.SAMPLE_RATE)
         self._stop_event = threading.Event()
@@ -232,6 +276,8 @@ class AudioVideoPlayer:
             name="AudioVideoPlayer-audio",
             daemon=True,
         )
+        with _AUDIO_THREADS_LOCK:
+            _AUDIO_THREADS.add(self._audio_thread)
         self._video_thread = threading.Thread(
             target=self._video_worker,
             args=(start, end, stop_event, clock),
@@ -370,18 +416,29 @@ class AudioVideoPlayer:
                 if stream is None:
                     # Opened on the first audio, so a file without an
                     # audio track never takes the sound device.
+                    opened = None
                     try:
-                        stream = sd.OutputStream(
-                            samplerate=self.SAMPLE_RATE,
-                            channels=self.CHANNELS,
-                            dtype="int16",
-                        )
-                        stream.start()
+                        with _SOUND_LOCK:
+                            if stop_event.is_set():
+                                break
+                            opened = sd.OutputStream(
+                                samplerate=self.SAMPLE_RATE,
+                                channels=self.CHANNELS,
+                                dtype="int16",
+                            )
+                            opened.start()
+                        stream = opened
                     except Exception:
                         # Audio device not available (headless CI, no
                         # speakers). Silent fallback — the video thread
-                        # still plays via the wall clock.
-                        stream = None
+                        # still plays via the wall clock. A stream that
+                        # opened but wouldn't start is still closed.
+                        if opened is not None:
+                            with _SOUND_LOCK:
+                                try:
+                                    opened.close()
+                                except Exception:
+                                    pass
                         return
                 arr = np.frombuffer(
                     raw[: samples_this_chunk * bytes_per_sample],
@@ -399,14 +456,15 @@ class AudioVideoPlayer:
             # drops what is still queued, so the sound cuts at once; a
             # natural end lets the last of it play out.
             if stream is not None:
-                try:
-                    if stop_event.is_set():
-                        stream.abort()
-                    else:
-                        stream.stop()
-                    stream.close()
-                except Exception:
-                    pass
+                with _SOUND_LOCK:
+                    try:
+                        if stop_event.is_set():
+                            stream.abort()
+                        else:
+                            stream.stop()
+                        stream.close()
+                    except Exception:
+                        pass
             if proc is not None:
                 try:
                     proc.terminate()
@@ -416,6 +474,8 @@ class AudioVideoPlayer:
                     self._audio_proc = None
             clock.finish()
             self._worker_done("audio", stop_event)
+            with _AUDIO_THREADS_LOCK:
+                _AUDIO_THREADS.discard(threading.current_thread())
 
     def _video_worker(self, start, end, stop_event, clock):
         """Pull decoded frames, wait for audio clock, hand off to Tk."""

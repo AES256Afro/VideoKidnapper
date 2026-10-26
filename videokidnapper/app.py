@@ -525,28 +525,42 @@ class App(ctk.CTk):
     def _check_updates_now(self):
         self.status_bar.show("Checking GitHub for a newer version…", "info")
 
-        def on_update(tag, link):
-            if self.winfo_exists():
-                self.after(0, self._show_update_chip, tag, link)
-
-        # The worker only drops the outcome here; the main thread picks it
-        # up. Tk calls from a worker thread fail unless mainloop is running.
-        result = {}
-
-        def poll(waited=0):
-            outcome = result.get("outcome")
-            if outcome is None and waited < 30000:
-                self.after(200, poll, waited + 200)
-            elif outcome == "current":
+        def said(outcome):
+            if outcome == "current":
                 self.status_bar.show(f"You're up to date (v{APP_VERSION})", "success")
             elif outcome in ("failed", None):
                 self.status_bar.show(
                     "Couldn't reach GitHub to check for updates. Try again later.",
                     "warn")
 
+        self._run_update_check(said)
+
+    def _run_update_check(self, on_outcome=None):
+        """Ask GitHub on a worker thread; act on the answer on this one.
+
+        The worker only drops what it learns into ``result``. It used to
+        call winfo_exists() and after() itself, which fails off the main
+        thread before the main loop runs (a quick reply at startup) or as
+        the window closes, and then the update offer was silently lost.
+        """
+        result = {}
+
+        def on_update(tag, link):
+            result["update"] = (tag, link)
+
+        def poll(waited=0):
+            if "update" in result:
+                self._show_update_chip(*result.pop("update"))
+            outcome = result.get("outcome")
+            if outcome is None and waited < 30000:
+                self.after(250, poll, waited + 250)
+                return
+            if on_outcome is not None:
+                on_outcome(outcome)
+
         check_async(APP_VERSION, on_update,
                     on_done=lambda outcome: result.setdefault("outcome", outcome))
-        self.after(200, poll)
+        self.after(250, poll)
 
     # ------------------------------------------------------------------
     # Keyboard shortcuts
@@ -884,11 +898,7 @@ class App(ctk.CTk):
         if not settings.get("auto_update_check", True):
             return
 
-        def on_update(tag, link):
-            if self.winfo_exists():
-                self.after(0, self._show_update_chip, tag, link)
-
-        check_async(APP_VERSION, on_update)
+        self._run_update_check()
 
     def _note_version_change(self):
         """First start after an update: say so, and tidy up after it."""

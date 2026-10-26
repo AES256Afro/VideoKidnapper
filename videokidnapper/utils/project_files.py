@@ -102,7 +102,9 @@ def save_document(path, document):
             json.dump(data, stream, indent=2, ensure_ascii=False)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temp_name, target)
+        # Retried while antivirus, OneDrive or a backup tool has the
+        # project open; a plain replace failed the save (or autosave).
+        settings._replace_with_retry(temp_name, target)
     except Exception:
         try:
             os.unlink(temp_name)

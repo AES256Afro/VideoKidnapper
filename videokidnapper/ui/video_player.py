@@ -21,6 +21,7 @@ moves, and the Stop button all behave the same regardless of which
 path started the playback.
 """
 
+import sys
 import threading
 import tkinter as tk
 
@@ -69,6 +70,11 @@ class VideoPlayer(ctk.CTkFrame):
         # None once a path is known to be a still. Decoding every
         # frame is done once per file, not once per preview tick.
         self._image_anim_cache = {}
+        # (path, frame, size, opacity) → the overlay ready to composite.
+        # Resizing and fading a large sticker cost ~15 ms on every render
+        # (each keystroke, each drag step) though it rarely changes.
+        self._image_scaled_cache = {}
+        self._resize_after_id = None
         # Zero-arg callable → (brightness, contrast, saturation, gamma) so
         # the preview shows the same color grade the export applies.
         self._color_provider = None
@@ -393,16 +399,45 @@ class VideoPlayer(ctk.CTkFrame):
         self.canvas.configure(cursor="fleur" if hit else "crosshair")
 
     def _on_resize(self, _event=None):
+        if not self.video_path:
+            self._draw_placeholder()
+            return
+        # Dragging the window's edge fires this for every pixel, and each
+        # one re-rendered the frame (16-75 ms). Render once it settles.
+        if self._resize_after_id is not None:
+            try:
+                self.after_cancel(self._resize_after_id)
+            except Exception:
+                pass
+        self._resize_after_id = self.after(60, self._resized)
+
+    def _resized(self):
+        self._resize_after_id = None
         if self.video_path:
             self.request_frame(self.current_time)
-        else:
-            self._draw_placeholder()
 
     # ------------------------------------------------------------------
     # Video API
     # ------------------------------------------------------------------
+    def forget_images(self, keep_paths=()):
+        """Drop cached stickers no layer uses, and failed loads to retry.
+
+        The caches used to be cleared on every sticker change, a drag
+        step included, so each step reloaded and resized the file. And
+        nothing ever dropped an animated sticker's frames (up to ~160 MB)
+        once its layer was gone.
+        """
+        keep = set(keep_paths)
+        for cache in (self._image_cache, self._image_anim_cache):
+            for path in [p for p, v in cache.items() if p not in keep or
+                         (cache is self._image_cache and v is None)]:
+                del cache[path]
+        for key in [k for k in self._image_scaled_cache if k[0] not in keep]:
+            del self._image_scaled_cache[key]
+
     def load_video(self, video_path, duration):
         self.stop()
+        self.forget_images()
         self.video_path = video_path
         self.duration = duration
         self.current_time = 0
@@ -542,7 +577,14 @@ class VideoPlayer(ctk.CTkFrame):
         scale = min(cw / fw, ch / fh)
         new_w = max(1, int(fw * scale))
         new_h = max(1, int(fh * scale))
-        rendered = composited.resize((new_w, new_h), Image.LANCZOS)
+        if scale < 1:
+            # Shrinking: reduce by whole steps first, then filter. As sharp
+            # as LANCZOS here and about half the time, which is most of a
+            # 1080p or 4K frame's budget while playing.
+            rendered = composited.resize((new_w, new_h), Image.BILINEAR,
+                                         reducing_gap=2.0)
+        else:
+            rendered = composited.resize((new_w, new_h), Image.LANCZOS)
 
         self._photo = ImageTk.PhotoImage(rendered)
         self.canvas.delete("frame")
@@ -836,14 +878,19 @@ class VideoPlayer(ctk.CTkFrame):
             sw, sh = src.size
             new_w = max(1, int(sw * scale))
             new_h = max(1, int(sh * scale))
-            scaled = src.resize((new_w, new_h), Image.LANCZOS)
-
             # Opacity: pre-multiply alpha into the overlay's alpha band.
             opacity = max(0.0, min(1.0, coerce_float(layer.get("opacity", 1.0), 1.0)))
-            if opacity < 0.999:
-                alpha = scaled.split()[3]
-                alpha = alpha.point(lambda v, o=opacity: int(v * o))
-                scaled.putalpha(alpha)
+            key = (path, id(src), new_w, new_h, round(opacity, 3))
+            scaled = self._image_scaled_cache.get(key)
+            if scaled is None:
+                scaled = src.resize((new_w, new_h), Image.LANCZOS)
+                if opacity < 0.999:
+                    alpha = scaled.split()[3]
+                    alpha = alpha.point(lambda v, o=opacity: int(v * o))
+                    scaled.putalpha(alpha)
+                if len(self._image_scaled_cache) >= 64:
+                    self._image_scaled_cache.clear()
+                self._image_scaled_cache[key] = scaled
 
             # Position — drag-override wins when present; otherwise
             # use the anchor, same way the ffmpeg overlay filter does.
@@ -933,6 +980,11 @@ class VideoPlayer(ctk.CTkFrame):
         # process crashed on exit when the sound library shut down
         # underneath the still-open stream.
         self.stop(wait=1.0)
+        # Sessions paused just before can still be closing their sound.
+        try:
+            playback.wait_for_sound(1.0)
+        except Exception:
+            pass
         super().destroy()
 
     # ------------------------------------------------------------------
@@ -950,6 +1002,7 @@ class VideoPlayer(ctk.CTkFrame):
         self._av_session = session
         self._av_frame = None
         self._av_finished = None
+        self._av_render_failed = False
 
         def on_frame(img, ts):
             if self._av_session is session:
@@ -983,13 +1036,19 @@ class VideoPlayer(ctk.CTkFrame):
         if self._av_player is None or not self._playing:
             return
         frame, self._av_frame = self._av_frame, None
-        if frame is not None:
-            self._av_render_frame(*frame)
-        else:
-            try:
+        try:
+            if frame is not None:
+                self._av_render_frame(*frame)
+            else:
                 self.current_time = self._av_player.current_time()
-            except Exception:
-                pass
+        except Exception as exc:
+            # One frame that fails to draw (an overlay, say) must not end
+            # the pump: the sound played on over a frozen picture, the end
+            # of the clip went unnoticed and the button stayed on Pause.
+            if not getattr(self, "_av_render_failed", False):
+                self._av_render_failed = True
+                print(f"Preview: a playback frame failed to draw: {exc!r}",
+                      file=sys.stderr)
         if self._av_finished is not None:
             reason, self._av_finished = self._av_finished, None
             self._av_on_finished(reason)

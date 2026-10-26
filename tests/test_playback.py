@@ -258,3 +258,56 @@ def test_picture_longer_than_sound_still_reaches_the_end(fake_av):
     names = [name for name, _thread in _FakeStream.calls]
     # A natural end lets the queued sound play out (stop, not abort).
     assert "stop" in names and "abort" not in names and names[-1] == "close"
+
+
+class _OverlapStream(_FakeStream):
+    """A sound stream that notices two threads inside PortAudio at once."""
+
+    inside = 0
+    overlaps = 0
+    guard = threading.Lock()
+
+    def _record(self, name):
+        super()._record(name)
+        if name == "write":
+            return
+        with _OverlapStream.guard:
+            _OverlapStream.inside += 1
+            if _OverlapStream.inside > 1:
+                _OverlapStream.overlaps += 1
+        time.sleep(0.003)       # PortAudio drops the GIL here
+        with _OverlapStream.guard:
+            _OverlapStream.inside -= 1
+
+
+def test_quick_pause_and_play_never_open_and_close_streams_at_once(fake_av, monkeypatch):
+    """Every Play makes a new player. The session just paused can still be
+    closing its stream while the next opens one, and PortAudio's list of
+    streams has no lock of its own."""
+    monkeypatch.setitem(sys.modules, "sounddevice",
+                        types.SimpleNamespace(OutputStream=_OverlapStream))
+    _OverlapStream.overlaps = 0
+    players = []
+    for _ in range(12):
+        p = _player([])
+        p.play(0.0)
+        _wait_for(lambda: ("open", "AudioVideoPlayer-audio") in _FakeStream.calls, 1.0)
+        p.stop()
+        players.append(p)
+    playback.wait_for_sound(10.0)
+    assert not any(p._audio_thread.is_alive() for p in players)
+    assert _OverlapStream.overlaps == 0
+    assert not playback._AUDIO_THREADS
+
+
+def test_playback_uses_the_apps_ffmpeg(fake_av, monkeypatch, tmp_path):
+    """Sound came from whatever ffmpeg was on PATH, so a bundled copy the
+    app found elsewhere meant silent playback."""
+    exe = tmp_path / ("ffmpeg.exe" if sys.platform == "win32" else "ffmpeg")
+    exe.write_bytes(b"")
+    monkeypatch.setattr("videokidnapper.utils.ffmpeg_check.find_ffmpeg", lambda: exe)
+    monkeypatch.delenv("IMAGEIO_FFMPEG_EXE", raising=False)
+    p = _player([])
+    assert p.ffmpeg_path == str(exe)
+    import os
+    assert os.environ["IMAGEIO_FFMPEG_EXE"] == str(exe)
