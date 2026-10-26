@@ -110,11 +110,11 @@ Checking DeveloperID.p12
   ✓ contains a private key
   ✓ certificate type: Developer ID Application
   ✓ valid until Feb  1 12:00:00 2027 GMT
-  ✓ Team ID: U7X9DNSQ7Z
+  ✓ Team ID: <YOUR TEAM ID>
       use this for the MACOS_NOTARY_TEAM_ID secret
 
   Signing identity the build will resolve:
-    Developer ID Application: Christopher Courtney (U7X9DNSQ7Z)
+    Developer ID Application: <YOUR NAME> (<YOUR TEAM ID>)
 
   Ready to upload.
 ```
@@ -142,7 +142,7 @@ secret values into a chat, an issue, or a commit:
 base64 -i ~/Desktop/DeveloperID.p12 | gh secret set MACOS_CERT_P12_BASE64
 gh secret set MACOS_CERT_PASSWORD       # the .p12 export password
 gh secret set MACOS_NOTARY_APPLE_ID     # your Apple ID email
-gh secret set MACOS_NOTARY_TEAM_ID      # 10-char Team ID, e.g. U7X9DNSQ7Z
+gh secret set MACOS_NOTARY_TEAM_ID      # 10-char Team ID, e.g. ABCDE12345
 gh secret set MACOS_NOTARY_PASSWORD     # the app-specific password
 ```
 
@@ -168,7 +168,7 @@ This authenticates against Apple without submitting anything:
 ```bash
 xcrun notarytool history \
   --apple-id "you@example.com" \
-  --team-id "U7X9DNSQ7Z" \
+  --team-id "<YOUR TEAM ID>" \
   --password "your-app-specific-password"
 ```
 

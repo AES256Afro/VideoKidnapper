@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-FileCopyrightText: 2026 AES256Afro <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
 from videokidnapper.utils.size_estimator import (
     estimate_bytes, estimate_gif_bytes, estimate_mp3_bytes, estimate_mp4_bytes,

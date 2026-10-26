@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-FileCopyrightText: 2026 AES256Afro <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
 """The project menu under the project's name, which replaced the
 Projects window. Built against a stand-in menu, so no window opens."""

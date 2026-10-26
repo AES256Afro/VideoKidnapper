@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-FileCopyrightText: 2026 AES256Afro <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
 """Figma-style snap math for dragging text layers on the preview.
 

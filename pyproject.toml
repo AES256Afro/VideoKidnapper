@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-FileCopyrightText: 2026 AES256Afro <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
 #
 # Build + packaging metadata for PyPI.
@@ -17,7 +17,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [
-    { name = "Christopher Courtney", email = "noreply@github.com" },
+    { name = "AES256Afro", email = "noreply@github.com" },
 ]
 keywords = [
     "video", "gif", "ffmpeg", "yt-dlp", "trim", "clip", "subtitle",

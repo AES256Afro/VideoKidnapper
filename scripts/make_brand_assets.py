@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-FileCopyrightText: 2026 AES256Afro <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
 """Regenerate every logo, icon and Store image from the retro-stamp badge.
 

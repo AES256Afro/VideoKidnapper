@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-FileCopyrightText: 2026 Christopher Courtney <https://github.com/AES256Afro>
+# SPDX-FileCopyrightText: 2026 AES256Afro <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
 #
 # Assemble videokidnapper_<version>_amd64.deb from the PyInstaller
@@ -57,7 +57,7 @@ cat > "$ROOT/DEBIAN/control" <<EOF
 Package: videokidnapper
 Version: $VERSION
 Architecture: amd64
-Maintainer: Christopher Courtney <sinth.tek@gmail.com>
+Maintainer: AES256Afro <AES256Afro@users.noreply.github.com>
 Installed-Size: $INSTALLED_SIZE
 Depends: ffmpeg, libc6 (>= 2.35)
 Recommends: xclip
