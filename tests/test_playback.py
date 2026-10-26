@@ -311,3 +311,44 @@ def test_playback_uses_the_apps_ffmpeg(fake_av, monkeypatch, tmp_path):
     assert p.ffmpeg_path == str(exe)
     import os
     assert os.environ["IMAGEIO_FFMPEG_EXE"] == str(exe)
+
+
+def test_frames_are_decoded_at_the_size_asked_for(fake_av, monkeypatch):
+    """4K frames piped over at full size could not keep up with the sound."""
+    asked = {}
+
+    def read_frames(*_a, **kwargs):
+        asked.update(kwargs)
+        yield {"size": (4, 2), "fps": 100.0}
+
+    monkeypatch.setitem(sys.modules, "imageio_ffmpeg",
+                        types.SimpleNamespace(read_frames=read_frames))
+    p = AudioVideoPlayer("clip.mp4", render_callback=lambda *_a: None,
+                         frame_size=(1100, 618))
+    p.play(0.0)
+    assert _wait_for(lambda: "output_params" in asked)
+    p.stop(wait=5.0)
+    params = asked["output_params"]
+    assert params[params.index("-vf") + 1].endswith("scale=1100:618:flags=bilinear")
+
+
+def test_late_frames_are_skipped_but_the_picture_keeps_moving(fake_av, monkeypatch):
+    """Frames that arrive later than the clock are dropped, so the picture
+    catches up with the sound instead of drifting further behind; at
+    least every fourth is still shown."""
+    def slow_reader(*_a, **_k):
+        yield {"size": (4, 2), "fps": 100.0}
+        for _ in range(40):
+            time.sleep(0.03)                 # decodes at a third of real time
+            yield b"\0" * (4 * 2 * 3)
+
+    monkeypatch.setitem(sys.modules, "imageio_ffmpeg",
+                        types.SimpleNamespace(read_frames=slow_reader))
+    fake_av.update(audio_chunks=0)           # silent: the wall clock leads
+    events = []
+    p = _player(events)
+    p.play(0.0)
+    assert _wait_for(lambda: ("finished", "end") in events)
+    shown = [round(ts * 100) for name, ts in events if name == "frame"]
+    assert len(shown) < 40
+    assert all(b - a <= 4 for a, b in zip(shown, shown[1:])), shown

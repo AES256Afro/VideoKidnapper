@@ -248,8 +248,54 @@ def _parse_progress(process, duration, callback, cancel_event):
             watchdog.join(timeout=1.0)
 
 
+# The last failure's plain-words reason, per thread: each export runs on
+# its own worker, and the editor asks right after a clip fails.
+_last_failure = threading.local()
+
+# What ffmpeg says when it fails (lower-cased), and what to tell a person.
+_FAILURE_ADVICE = (
+    (("no space left on device", "disk full"),
+     "The drive is full. Free some space, or pick another Save to folder."),
+    (("permission denied", "access is denied"),
+     "Windows wouldn't let it save there. Pick another Save to folder, or "
+     "close the file if another program has it open."),
+    (("no such file or directory",),
+     "A file it needed has gone: the video, a sticker, or the Save to "
+     "folder. Check they are still there."),
+    (("invalid data found when processing input", "moov atom not found"),
+     "The video seems damaged or only partly downloaded. Try getting it "
+     "again."),
+    (("cannot allocate memory", "out of memory"),
+     "The computer ran out of memory. Close other programs, or pick a "
+     "lower quality."),
+    (("nvenc", "_qsv", "_amf", "videotoolbox"),
+     "The graphics card's encoder failed. Turn off hardware encoding in "
+     "Export, More options, and export again."),
+    (("not divisible by 2",),
+     "The picture's width or height is odd. Change the crop slightly and "
+     "export again."),
+)
+
+
+def explain_ffmpeg_failure(stderr_tail):
+    """Plain words for why ffmpeg failed and what to try, from its output."""
+    text = (stderr_tail or "").lower()
+    for needles, advice in _FAILURE_ADVICE:
+        if any(n in text for n in needles):
+            return advice
+    return "ffmpeg stopped with an error. Settings › Debug log has the details."
+
+
+def take_failure_advice():
+    """The reason the last ffmpeg run on this thread failed, once; or None."""
+    advice = getattr(_last_failure, "advice", None)
+    _last_failure.advice = None
+    return advice
+
+
 def _log_ffmpeg_failure(cmd, returncode, stderr_tail):
     """Print ffmpeg's actual error to stderr (which the Debug tab captures)."""
+    _last_failure.advice = explain_ffmpeg_failure(stderr_tail)
     try:
         print(f"ffmpeg failed (rc={returncode})", file=sys.stderr)
         # Only the last portion of the command — full argv can be huge with filters.

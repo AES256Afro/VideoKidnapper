@@ -88,7 +88,7 @@ class _FakeAV:
     """Stands in for AudioVideoPlayer: one frame, then the end of the clip,
     both delivered from a worker thread like the real decode threads."""
 
-    def __init__(self, _path, render_callback, on_finished):
+    def __init__(self, _path, render_callback, on_finished, **_options):
         self.render, self.finish = render_callback, on_finished
         self.stops = []
 

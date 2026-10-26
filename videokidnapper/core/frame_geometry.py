@@ -145,30 +145,39 @@ class FrameGeometry:
         return image.crop((x, y, x + w, y + h))
 
     def render(self, image):
-        """Turn a source frame into the layout frame, as the export does."""
+        """Turn a source frame into the layout frame, as the export does.
+
+        ``image`` may be the source decoded smaller (playback decodes
+        frames near the size they are shown at). Every step then runs at
+        that scale, and the result is the layout frame shrunk alike,
+        instead of first blowing the frame back up to full size.
+        """
         from PIL import Image, ImageFilter
 
-        if self.src_w and self.src_h and image.size != (self.src_w, self.src_h):
-            image = image.resize((self.src_w, self.src_h), Image.BILINEAR)
         out = image
         for s in self.steps:
+            # How much smaller than the step's input this frame is.
+            kx = out.width / max(1, s.in_w)
+            ky = out.height / max(1, s.in_h)
             if s.kind == "crop":
-                x, y, w, h = s.box
+                x, y, w, h = _scaled_box(s.box, kx, ky)
                 out = out.crop((x, y, x + w, y + h))
             elif s.kind == "blur":
-                cw, ch = s.canvas
+                cw = max(1, round(s.canvas[0] * kx))
+                ch = max(1, round(s.canvas[1] * ky))
                 # Background: cover the canvas, centre-crop, blur twice
                 # (ffmpeg's boxblur applies its box twice by default).
-                scale = max(cw / s.in_w, ch / s.in_h)
-                bw = max(cw, int(round(s.in_w * scale)))
-                bh = max(ch, int(round(s.in_h * scale)))
+                scale = max(cw / out.width, ch / out.height)
+                bw = max(cw, int(round(out.width * scale)))
+                bh = max(ch, int(round(out.height * scale)))
                 bg = out.resize((bw, bh), Image.BILINEAR)
                 left, top = (bw - cw) // 2, (bh - ch) // 2
                 bg = bg.crop((left, top, left + cw, top + ch))
-                if s.radius:
-                    blur = ImageFilter.BoxBlur(s.radius)
+                radius = s.radius and max(1, round(s.radius * kx))
+                if radius:
+                    blur = ImageFilter.BoxBlur(radius)
                     bg = bg.filter(blur).filter(blur)
-                fx, fy, fw, fh = s.box
+                fx, fy, fw, fh = _scaled_box(s.box, kx, ky)
                 bg.paste(out.resize((fw, fh), Image.BILINEAR), (fx, fy))
                 out = bg
             elif s.kind == "rotate":
@@ -178,6 +187,15 @@ class FrameGeometry:
                     270: Image.Transpose.ROTATE_90,
                 }[s.degrees])
         return out
+
+
+def _scaled_box(box, kx, ky):
+    """An (x, y, w, h) box for a frame ``kx`` x ``ky`` times the size."""
+    if kx == 1 and ky == 1:
+        return box
+    x, y, w, h = box
+    return (round(x * kx), round(y * ky),
+            max(1, round(w * kx)), max(1, round(h * ky)))
 
 
 def _crop_box(crop, w, h):
@@ -278,3 +296,32 @@ def export_geometry(info, options=None, include_crop=True):
             steps.append(step)
 
     return FrameGeometry(sw, sh, tuple(steps))
+
+
+def frame_change_note(info, options):
+    """One line on how the frame shape reshapes the picture, or None.
+
+    A platform preset sets the frame shape along with the quality, and
+    the Export page didn't say so: "YouTube 1080p" on a vertical clip
+    cut most of it away, shown only on the Edit preview.
+    """
+    options = options or {}
+    aspect = options.get("aspect_preset")
+    if not aspect or aspect == "Source":
+        return None
+    info = info or {}
+    w, h = int(info.get("width") or 0), int(info.get("height") or 0)
+    if _crop_box(options.get("crop"), w, h):
+        return None  # a manual crop wins over the frame shape
+    step = next((s for s in export_geometry(info, options).steps
+                 if s.kind in ("blur", "crop")), None)
+    if step is None:
+        return None
+    if step.kind == "blur":
+        return f"Frame {aspect}: the whole picture, with blurred bars around it."
+    _x, _y, w, h = step.box
+    if (w, h) == (step.in_w, step.in_h):
+        return None
+    kept = round(100 * w * h / (step.in_w * step.in_h))
+    cut = "the sides" if w < step.in_w else "the top and bottom"
+    return f"Frame {aspect}: cuts off {cut}, keeping {kept}% of the picture."

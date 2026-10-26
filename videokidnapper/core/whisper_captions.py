@@ -27,6 +27,7 @@ responsibility — we just ask for a size and get back a ready model.
 """
 
 import subprocess
+import sys
 
 from videokidnapper.core.ffmpeg._internals import _mkstemp_path, _run_kwargs
 from videokidnapper.utils.ffmpeg_check import find_ffmpeg
@@ -49,6 +50,18 @@ def is_available():
     except Exception:
         return False
     return True
+
+
+def missing_message():
+    """What to tell someone whose copy can't make captions from speech.
+
+    The installed app (Setup, Store, the portable .exe) is a bundle with
+    no pip in it, so "pip install faster-whisper" was a dead end there.
+    """
+    if getattr(sys, "frozen", False):
+        return ("Captions from speech isn't part of this version of the app. "
+                "You can import an SRT or VTT file from Captions instead.")
+    return "This needs faster-whisper. Install it with:  pip install faster-whisper"
 
 
 def extract_audio_segment(video_path, start=None, end=None, ffmpeg=None):

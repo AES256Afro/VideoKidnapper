@@ -285,11 +285,12 @@ class TextPage(ctk.CTkScrollableFrame):
 
         font_row = ctk.CTkFrame(style, fg_color="transparent")
         font_row.pack(fill="x", pady=(8, 0))
-        from videokidnapper.ui.text_layers import _get_system_fonts
-        self.font_menu = C.option_menu(font_row, _get_system_fonts()[:30], width=150)
+        self.font_menu = C.option_menu(font_row, self._font_choices(), width=150)
         self.font_menu.pack(side="left")
         self.size_entry = C.entry(font_row, width=48, justify="center")
         self.size_entry.pack(side="left", padx=(6, 6))
+        # "abc" in the size box quietly became 24; say so in red instead.
+        self.size_entry.bind("<KeyRelease>", lambda _e: self._check_size(), add="+")
         self.bold_cb = C.checkbox(font_row, "B")
         self.bold_cb.configure(font=T.font(T.SIZE_MD, "bold"), width=40)
         self.bold_cb.pack(side="left")
@@ -378,6 +379,7 @@ class TextPage(ctk.CTkScrollableFrame):
             self.layer = layer
             self.font_menu.configure(variable=layer.font_var)
             self.size_entry.configure(textvariable=layer.size_var)
+            self._check_size()
             self.bold_cb.configure(variable=layer.bold_var)
             self.italic_cb.configure(variable=layer.italic_var)
             self.outline_cb.configure(variable=layer.outline_var)
@@ -459,6 +461,37 @@ class TextPage(ctk.CTkScrollableFrame):
         if self.layer is not None:
             self.layer._on_position_choice(value)
             self.layer._fire_change()
+
+    def _font_choices(self):
+        """Every installed font that draws, once the index has read them.
+
+        The menu used to stop at 30 of Tk's names, most of which drew as
+        Arial. Until the index is ready (about a second after start),
+        the common fonts, and the full list replaces them when it is.
+        """
+        from videokidnapper.ui.text_layers import _PREFERRED_FONTS, _get_system_fonts
+        from videokidnapper.utils import font_index
+
+        if font_index.families() is not None:
+            return _get_system_fonts()
+        _get_system_fonts()   # starts the index
+        self.after(300, self._refill_fonts)
+        return list(_PREFERRED_FONTS)
+
+    def _refill_fonts(self):
+        from videokidnapper.utils import font_index
+
+        if font_index.families() is None:
+            self.after(300, self._refill_fonts)
+        else:
+            self.font_menu.configure(values=self._font_choices())
+
+    def _check_size(self):
+        try:
+            ok = int(self.size_entry.get().strip()) > 0
+        except ValueError:
+            ok = False
+        self.size_entry.configure(border_color=T.BORDER_STRONG if ok else T.DANGER)
 
     def _times_changed(self, _value=None):
         if self.layer is None:

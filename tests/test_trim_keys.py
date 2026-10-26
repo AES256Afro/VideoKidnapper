@@ -244,3 +244,86 @@ def test_the_clip_page_fits_without_scrolling(editor):
     page = editor.inspector.pages["clip"]
     total = sum(_unscaled_height(child) for child in page.winfo_children()) + 10 * 5
     assert total <= _INSPECTOR_ROOM
+
+
+def test_a_time_that_isnt_one_is_marked_in_red(editor):
+    from videokidnapper.ui import theme as T
+
+    field = editor.start_entry
+    field.var.set("1:3o")
+    field._check()
+    assert field.entry.cget("border_color") == T.DANGER
+    field.var.set("0:01.5")
+    field._check()
+    assert field.entry.cget("border_color") == T.BORDER_STRONG
+    field._fire()                      # what Enter or clicking away does
+    assert editor.timeline.get_values()[0] == pytest.approx(1.5)
+
+
+def test_a_font_size_that_isnt_a_number_is_marked_in_red(editor):
+    from videokidnapper.ui import theme as T
+
+    editor.add_text_layer()
+    try:
+        page = editor.inspector.pages["text"]
+        page.refresh()
+        editor.text_layers.layers[0].size_var.set("abc")
+        page._check_size()
+        assert page.size_entry.cget("border_color") == T.DANGER
+        editor.text_layers.layers[0].size_var.set("48")
+        page._check_size()
+        assert page.size_entry.cget("border_color") == T.BORDER_STRONG
+    finally:
+        editor.delete_layer("text", 0)
+
+
+def test_a_sticker_drag_step_is_one_change_not_two(editor, tmp_path):
+    from PIL import Image
+
+    sticker = tmp_path / "s.png"
+    Image.new("RGBA", (20, 20), (255, 0, 0, 255)).save(sticker)
+    editor.image_layers._add_layer(preset_data={"path": str(sticker)})
+    changes = []
+    real = editor.image_layers._on_change
+    editor.image_layers._on_change = lambda: (changes.append(1), real())
+    try:
+        editor.image_layers.layers[0].set_position(30, 40)
+        assert changes == [1]
+        assert editor.image_layers.layers[0].get_layer_data()["x"] == 30
+    finally:
+        editor.image_layers._on_change = real
+        editor.delete_layer("image", 0)
+
+
+def test_deleting_says_how_to_get_it_back(editor):
+    said = []
+    editor.set_toast(types.SimpleNamespace(show=lambda msg, level="info": said.append(msg)))
+    editor.add_text_layer()
+    try:
+        editor.delete_layer("text", 0)
+        assert said[-1] == "Caption deleted · Ctrl+Z brings it back"
+    finally:
+        editor.set_toast(None)
+
+
+def test_the_clip_menu_goes_to_duplicates_and_deletes(editor, monkeypatch):
+    import tkinter
+
+    monkeypatch.setattr(tkinter.Menu, "tk_popup", lambda *_a: None)
+    editor.add_text_layer()
+    editor.set_layer_time("text", 0, 1.0, 2.0)
+    try:
+        editor._open_clip_menu("text", 0, 0, 0)
+        menu = editor._clip_menu
+        labels = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1)
+                  if menu.type(i) == "command"]
+        assert labels == ["Go to its start", "Duplicate", "Delete      Del"]
+        menu.invoke(0)
+        assert editor.playhead == pytest.approx(1.0)
+        menu.invoke(1)
+        assert len(editor.text_layers.layers) == 2
+        menu.invoke(menu.index("end"))
+        assert len(editor.text_layers.layers) == 1
+    finally:
+        while editor.text_layers.layers:
+            editor.delete_layer("text", 0)

@@ -234,3 +234,30 @@ def test_media_lanes_are_one_picture_each_and_reused(timeline):
     assert timeline._media_shown["video"][1] is shown["video"][1]
     timeline.set_selection(10.0, 20.0)
     assert timeline._media_shown["video"][1] is not shown["video"][1]
+
+
+def test_right_clicking_a_clip_picks_it_and_offers_its_menu(timeline):
+    asked, picked = [], []
+    timeline._on_clip_menu = lambda *a: asked.append(a)
+    timeline._on_clip_select = lambda kind, index: picked.append((kind, index))
+    timeline.set_clips(text=[{"start": 10.0, "end": 20.0, "label": "hi"}])
+    x = timeline._t2x(15.0)
+    timeline._on_context(types.SimpleNamespace(x=x, y=_y("text"), x_root=500, y_root=400))
+    assert picked == [("text", 0)] and timeline.selected == ("text", 0)
+    assert asked == [("text", 0, 500, 400)]
+    # Nothing on the text lane there: no menu.
+    timeline._on_context(types.SimpleNamespace(x=timeline._t2x(60.0), y=_y("text"),
+                                               x_root=0, y_root=0))
+    assert len(asked) == 1
+
+
+def test_an_unchanged_clip_list_is_not_redrawn(timeline, monkeypatch):
+    """Sticker drags and most keystrokes resend the same clips."""
+    clips = [{"start": 1.0, "end": 2.0, "label": "hi"}]
+    timeline.set_clips(text=clips)
+    redraws = []
+    monkeypatch.setattr(timeline, "redraw", lambda: redraws.append(1))
+    timeline.set_clips(text=[dict(c) for c in clips], images=[])
+    assert redraws == []
+    timeline.set_clips(text=[{"start": 1.0, "end": 2.0, "label": "hi!"}])
+    assert redraws == [1]

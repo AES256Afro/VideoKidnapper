@@ -262,13 +262,21 @@ class ImageLayerWidget(ctk.CTkFrame):
         moves the overlay. Setting the vars triggers the panel's
         ``trace_add`` wiring, so the preview refreshes live.
         """
-        self.x_var.set(max(0, int(source_x)))
-        self.y_var.set(max(0, int(source_y)))
+        self._set_xy(max(0, int(source_x)), max(0, int(source_y)))
 
     def _clear_drag_position(self):
         """Reset drag override so the overlay snaps back to the anchor."""
-        self.x_var.set(-1)
-        self.y_var.set(-1)
+        self._set_xy(-1, -1)
+
+    def _set_xy(self, x, y):
+        # One change, not two: each fired the whole chain (timeline,
+        # inspector, preview, undo) on every mouse move of a drag.
+        self._quiet = True
+        try:
+            self.x_var.set(x)
+        finally:
+            self._quiet = False
+        self.y_var.set(y)
 
     def get_layer_data(self):
         """Return the dict ffmpeg_backend.trim_to_video consumes.
@@ -473,7 +481,8 @@ class ImageLayersPanel(ctk.CTkFrame):
         bypass ``on_change``. Traces on the Tk vars catch every mutation.
         """
         def fire(*_):
-            self._notify_change()
+            if not getattr(layer, "_quiet", False):
+                self._notify_change()
         layer.path_var.trace_add("write", fire)
         layer.position_var.trace_add("write", fire)
         layer.scale_var.trace_add("write", fire)

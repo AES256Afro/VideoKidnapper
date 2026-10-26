@@ -142,13 +142,27 @@ class TimeField(ctk.CTkFrame):
             self.entry.pack(anchor="w", pady=(2, 0))
         self.entry.bind("<Return>", self._fire)
         self.entry.bind("<FocusOut>", self._fire)
+        self.entry.bind("<KeyRelease>", lambda _e: self._check())
 
     def _fire(self, _event=None):
         if self.command:
             self.command(self.var.get())
+        self._check()
+
+    def _check(self):
+        """Red border while the box holds something that isn't a time,
+        as the hex colour box does, instead of quietly ignoring it."""
+        from videokidnapper.utils.time_format import hms_to_seconds
+        try:
+            hms_to_seconds(self.var.get())
+            ok = True
+        except ValueError:
+            ok = False
+        self.entry.configure(border_color=T.BORDER_STRONG if ok else T.DANGER)
 
     def set_value(self, value):
         self.var.set(value)
+        self.entry.configure(border_color=T.BORDER_STRONG)
 
     def get_value(self):
         return self.var.get()

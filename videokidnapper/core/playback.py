@@ -32,6 +32,7 @@ frame-exact seek, does not loop, and is discarded + re-created on each
 ``play()`` call. Export still goes through ffmpeg_backend.py.
 """
 
+import logging
 import os
 import shutil
 import subprocess
@@ -194,6 +195,11 @@ class AudioVideoPlayer:
     # How far ahead of the audio clock we'll render a video frame.
     # Small negative means "render slightly early"; tweaks jitter.
     VIDEO_LOOKAHEAD_S = 0.02
+    # A frame further behind the clock than this many frame lengths, and
+    # than MAX_LATE_S (sleep is that coarse on Windows), is skipped. The
+    # sound leading the picture by ~45 ms is about where people notice.
+    MAX_LATE_FRAMES = 1.5
+    MAX_LATE_S = 0.05
 
     def __init__(
         self,
@@ -201,6 +207,7 @@ class AudioVideoPlayer:
         render_callback,
         on_finished=None,
         ffmpeg_path=None,
+        frame_size=None,
     ):
         """Create a player. Call :meth:`play` to start, :meth:`stop` to end.
 
@@ -221,11 +228,16 @@ class AudioVideoPlayer:
             Path to ffmpeg binary. Defaults to the one the app found,
             which may be a bundled copy that isn't on PATH; playback
             used to look on PATH only and played without sound then.
+        frame_size : (int, int), optional
+            Have ffmpeg shrink the picture to this size, about the size
+            it is shown at. Full-size 4K frames could not be piped over
+            fast enough to keep up with the sound.
         """
         self.video_path = video_path
         self.render_callback = render_callback
         self.on_finished = on_finished
         self.ffmpeg_path = ffmpeg_path or _app_ffmpeg()
+        self.frame_size = frame_size
         _decode_pictures_with(self.ffmpeg_path)
 
         self._clock = AudioClock(sample_rate=self.SAMPLE_RATE)
@@ -498,8 +510,15 @@ class AudioVideoPlayer:
                 vf = preview_color_filter(self.video_path)
             except Exception:
                 vf = None
-            if vf:
-                output_params += ["-vf", vf]
+            filters = [vf] if vf else []
+            if self.frame_size:
+                w, h = self.frame_size
+                filters.append(f"scale={int(w)}:{int(h)}:flags=bilinear")
+                # imageio warns on every play that the frames it reads are
+                # not the source's size, which is the point here.
+                logging.getLogger("imageio_ffmpeg").setLevel(logging.ERROR)
+            if filters:
+                output_params += ["-vf", ",".join(filters)]
 
             try:
                 reader = imageio_ffmpeg.read_frames(
@@ -517,6 +536,8 @@ class AudioVideoPlayer:
             if w <= 0 or h <= 0:
                 return
 
+            late_after = max(self.MAX_LATE_FRAMES / src_fps, self.MAX_LATE_S)
+            skipped = 0
             for i, raw in enumerate(reader):
                 if stop_event.is_set():
                     break
@@ -533,6 +554,15 @@ class AudioVideoPlayer:
 
                 if stop_event.is_set():
                     break
+
+                # Already behind the sound by more than a frame (a slow
+                # machine, a busy window): skip it rather than show every
+                # frame later and later, drifting off the sound. Every
+                # fourth is still shown so the picture never freezes.
+                if (clock.time_now() - frame_t > late_after and skipped < 3):
+                    skipped += 1
+                    continue
+                skipped = 0
 
                 try:
                     img = Image.frombytes("RGB", (w, h), bytes(raw))
