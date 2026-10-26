@@ -190,8 +190,23 @@ def main():
             sys.exit(_selftest())
         sys.exit(_cli_main(args))
 
+    # A crash to the desktop used to leave nothing behind: the Debug log
+    # lives in memory. This file survives it; see utils.crash_log.
+    from videokidnapper import __version__
+    from videokidnapper.utils import crash_log
+    crash_log.start(__version__)
+    crash_log.install_thread_hook()
+
     from videokidnapper.app import App
-    App().mainloop()
+    try:
+        App().mainloop()
+    except SystemExit:
+        crash_log.finish()
+        raise
+    except BaseException:
+        crash_log.record_exception(*sys.exc_info(), where="the main loop")
+        raise
+    crash_log.finish()
 
 
 if __name__ == "__main__":

@@ -28,7 +28,7 @@ responsibility — we just ask for a size and get back a ready model.
 
 import subprocess
 
-from videokidnapper.core.ffmpeg._internals import _mkstemp_path
+from videokidnapper.core.ffmpeg._internals import _mkstemp_path, _run_kwargs
 from videokidnapper.utils.ffmpeg_check import find_ffmpeg
 
 
@@ -75,7 +75,8 @@ def extract_audio_segment(video_path, start=None, end=None, ffmpeg=None):
         "-acodec", "pcm_s16le", # signed 16-bit little-endian
         str(wav_path),
     ]
-    result = subprocess.run(cmd, capture_output=True, timeout=300)
+    result = subprocess.run(
+        cmd, capture_output=True, timeout=300, **_run_kwargs())
     if result.returncode != 0 or not wav_path.exists():
         raise RuntimeError(
             "ffmpeg failed to extract audio for transcription: "

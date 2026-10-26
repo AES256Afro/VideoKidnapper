@@ -32,10 +32,14 @@ frame-exact seek, does not loop, and is discarded + re-created on each
 ``play()`` call. Export still goes through ffmpeg_backend.py.
 """
 
+import os
 import shutil
 import subprocess
 import threading
 import time
+
+
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +325,8 @@ class AudioVideoPlayer:
                 return
 
             cmd = [
-                self.ffmpeg_path, "-hide_banner", "-loglevel", "error",
+                self.ffmpeg_path, "-hide_banner", "-nostdin",
+                "-loglevel", "error",
                 "-ss", str(max(0.0, float(start))),
                 "-i", self.video_path,
             ]
@@ -335,9 +340,15 @@ class AudioVideoPlayer:
                 "pipe:",
             ]
             try:
+                # ffmpeg is a console program. Started from the windowed
+                # app without CREATE_NO_WINDOW, Windows gave it a console
+                # window of its own, which popped up over the editor on
+                # every Play. imageio_ffmpeg already hides the video
+                # decoder's; this is the sound's.
                 proc = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                    bufsize=0,
+                    cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL, bufsize=0,
+                    creationflags=_NO_WINDOW,
                 )
             except Exception:
                 return
