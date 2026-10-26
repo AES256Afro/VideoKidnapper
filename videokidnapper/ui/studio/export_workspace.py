@@ -23,7 +23,7 @@ from videokidnapper.ui.editor_options import (
     GIF_DITHER_CHOICES, GIF_LOOP_CHOICES, GIF_STATS_CHOICES, HW_CHOICES,
     TRANSITION_CHOICES,
 )
-from videokidnapper.ui.platform_presets import PLATFORM_CHOICES
+from videokidnapper.ui.platform_presets import PLATFORM_CHOICES, size_warning
 from videokidnapper.ui.studio import controls as C
 from videokidnapper.ui.studio.export_progress import ExportProgress
 from videokidnapper.ui.theme import button
@@ -375,8 +375,15 @@ class ExportWorkspace(ctk.CTkFrame):
         color = opts.color_summary()
         if color:
             lines.append(color)
+        warning = None
+        if has_video and files == "1 file":
+            warning = size_warning(ed.platform_var.get(),
+                                   getattr(ed, "size_estimate_bytes", 0))
+        if warning:
+            lines.append(warning)
         self.summary_label.configure(text="\n".join(lines) if has_video
-                                     else "Open a video to export.")
+                                     else "Open a video to export.",
+                                     text_color=T.WARN if warning else T.TEXT)
         # While an export runs the button is Stop; this is what it says
         # again afterwards.
         self.progress.set_ready(f"Export {files}" if has_video else "Export", has_video)

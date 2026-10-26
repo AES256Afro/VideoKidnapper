@@ -184,3 +184,63 @@ def test_delete_with_nothing_picked_does_nothing(editor):
     editor.keyboard_delete()
     assert len(editor.text_layers.layers) == 1
     editor.delete_layer("text", 0)
+
+
+# ---------------------------------------------------------------------------
+# Hover hints and panels that fit
+# ---------------------------------------------------------------------------
+
+def test_icon_buttons_say_what_they_do_in_the_status_bar(root):
+    from videokidnapper.ui.studio import icons
+    from videokidnapper.ui.widgets import Toast
+
+    # Enter and Leave only reach a mapped window; conftest keeps this one
+    # invisible and off screen.
+    top = ctk.CTkToplevel(root)
+    bar = Toast(top)
+    icons.set_hint_handler(bar.show_hint)
+    try:
+        bar.show("Saved range 1", "success")
+        btn = icons.icon_button(top, "crop", hint="Crop the picture by hand")
+        btn.pack()
+        top.update()
+        btn._canvas.event_generate("<Enter>")
+        assert bar._label.cget("text") == "Crop the picture by hand"
+        btn._canvas.event_generate("<Leave>")
+        assert bar._label.cget("text") == "Saved range 1"
+        # A real message during the hover isn't undone when the mouse leaves.
+        btn._canvas.event_generate("<Enter>")
+        bar.show("Exported 1 clip", "success")
+        btn._canvas.event_generate("<Leave>")
+        assert bar._label.cget("text") == "Exported 1 clip"
+    finally:
+        icons.set_hint_handler(None)
+        top.destroy()
+
+
+# The Inspector has about 515 px for a page in a 1440x900 window. The Text
+# page needed 688, so its bottom half was always behind a scrollbar.
+_INSPECTOR_ROOM = 510
+
+
+def _unscaled_height(widget):
+    from customtkinter import ScalingTracker
+
+    widget.update_idletasks()
+    return widget.winfo_reqheight() / ScalingTracker.get_widget_scaling(widget)
+
+
+def test_the_text_page_fits_without_scrolling(editor):
+    editor.add_text_layer()
+    try:
+        page = editor.inspector.pages["text"]
+        page.refresh()
+        assert _unscaled_height(page.form) <= _INSPECTOR_ROOM
+    finally:
+        editor.delete_layer("text", 0)
+
+
+def test_the_clip_page_fits_without_scrolling(editor):
+    page = editor.inspector.pages["clip"]
+    total = sum(_unscaled_height(child) for child in page.winfo_children()) + 10 * 5
+    assert total <= _INSPECTOR_ROOM

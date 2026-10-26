@@ -90,10 +90,33 @@ def icon_font(size=14):
     return T.font(size)
 
 
+# Where icon buttons say what they do while the mouse is over them: the
+# status bar (see App). ``handler(text)`` shows it, ``handler(None)`` puts
+# back what was there. Not a tooltip window; the app keeps to one window.
+_hint_handler = None
+
+
+def set_hint_handler(handler):
+    global _hint_handler
+    _hint_handler = handler
+
+
+def _hint(text):
+    if _hint_handler is not None:
+        try:
+            _hint_handler(text)
+        except Exception:
+            pass
+
+
 def icon_button(parent, name, command=None, size=32, icon_size=14,
-                variant="ghost", **kwargs):
-    """A square, icon-only button. Callers pass a tooltip-like ``text``
-    nowhere — the glyph is the label, so keep icon choices obvious."""
+                variant="ghost", hint=None, **kwargs):
+    """A square, icon-only button.
+
+    ``hint`` says in words what it does, in the status bar on hover; a
+    bare glyph (the same arrow collapses a panel, steps a second and
+    picks the next caption) didn't say enough.
+    """
     styles = {
         "ghost": dict(fg_color="transparent", hover_color=T.BG_HOVER,
                       text_color=T.TEXT_MUTED),
@@ -108,7 +131,11 @@ def icon_button(parent, name, command=None, size=32, icon_size=14,
     style = dict(styles.get(variant, styles["ghost"]))
     style.update(kwargs)
     style.setdefault("corner_radius", T.RADIUS_SM)
-    return ctk.CTkButton(
+    btn = ctk.CTkButton(
         parent, text=glyph(name), width=size, height=size,
         font=icon_font(icon_size), command=command, **style,
     )
+    if hint:
+        btn.bind("<Enter>", lambda _e: _hint(hint), add="+")
+        btn.bind("<Leave>", lambda _e: _hint(None), add="+")
+    return btn

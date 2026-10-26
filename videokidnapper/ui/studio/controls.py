@@ -123,16 +123,23 @@ class TimeField(ctk.CTkFrame):
     editor code that drives it didn't have to change.
     """
 
-    def __init__(self, master, label, command=None, width=118, **kwargs):
+    def __init__(self, master, label, command=None, width=118, inline=False, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
         self.command = command
-        ctk.CTkLabel(
+        label_widget = ctk.CTkLabel(
             self, text=label, font=T.font(T.SIZE_SM), text_color=T.TEXT_MUTED,
             anchor="w",
-        ).pack(anchor="w")
+        )
         self.var = ctk.StringVar(value="00:00:00.000")
         self.entry = entry(self, textvariable=self.var, width=width, mono=True)
-        self.entry.pack(anchor="w", pady=(2, 0))
+        if inline:
+            # Label beside the box: one row instead of two, for panels
+            # that must fit without scrolling.
+            label_widget.pack(side="left", padx=(0, 6))
+            self.entry.pack(side="left")
+        else:
+            label_widget.pack(anchor="w")
+            self.entry.pack(anchor="w", pady=(2, 0))
         self.entry.bind("<Return>", self._fire)
         self.entry.bind("<FocusOut>", self._fire)
 

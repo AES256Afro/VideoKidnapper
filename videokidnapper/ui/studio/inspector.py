@@ -134,12 +134,14 @@ class ClipPage(ctk.CTkScrollableFrame):
         self.editor = editor
         opts = editor.options
 
-        sel = _group(self, "Selection")
+        sel = _group(self, "Trim: the part to keep")
         row = ctk.CTkFrame(sel, fg_color="transparent")
         row.pack(fill="x")
-        editor.start_entry = C.TimeField(row, "In", command=editor._on_start_entry)
-        editor.start_entry.pack(side="left", padx=(0, 10))
-        editor.end_entry = C.TimeField(row, "Out", command=editor._on_end_entry)
+        editor.start_entry = C.TimeField(row, "Start", command=editor._on_start_entry,
+                                         width=104, inline=True)
+        editor.start_entry.pack(side="left", padx=(0, 8))
+        editor.end_entry = C.TimeField(row, "End", command=editor._on_end_entry,
+                                       width=104, inline=True)
         editor.end_entry.pack(side="left")
         row2 = ctk.CTkFrame(sel, fg_color="transparent")
         row2.pack(fill="x", pady=(8, 0))
@@ -250,11 +252,15 @@ class TextPage(ctk.CTkScrollableFrame):
         self.title = ctk.CTkLabel(head, text="", font=T.font(T.SIZE_MD, "bold"),
                                   text_color=T.TEXT, anchor="w")
         self.title.pack(side="left")
-        for name, cmd in (("delete", self._delete), ("copy", self._duplicate),
-                          ("add", self.editor.add_text_layer),
-                          ("forward", lambda: self._step(1)),
-                          ("back", lambda: self._step(-1))):
-            icon_button(head, name, command=cmd, size=28, icon_size=12).pack(side="right")
+        for name, cmd, hint in (
+                ("delete", self._delete, "Delete this caption  (Delete)"),
+                ("copy", self._duplicate, "Duplicate this caption"),
+                ("add", self.editor.add_text_layer, "Add a caption at the playhead"),
+                ("forward", lambda: self._step(1), "Next caption"),
+                ("back", lambda: self._step(-1), "Previous caption")):
+            # A gap keeps Delete away from the buttons beside it.
+            icon_button(head, name, command=cmd, size=28, icon_size=12, hint=hint).pack(
+                side="right", padx=(10, 0) if name == "delete" else 0)
 
         self.textbox = ctk.CTkTextbox(
             self.form, height=54, wrap="word", font=T.font(T.SIZE_LG),
@@ -307,40 +313,52 @@ class TextPage(ctk.CTkScrollableFrame):
         self.box_cb = C.checkbox(look_row, "Box")
         self.box_cb.pack(side="left", padx=(8, 0))
 
+        # Laid out a row each, so the whole form fits a 1440x900 window
+        # without scrolling (it was 688 px tall in about 515).
         place = _group(self.form, "Position and timing")
+        pos_row = ctk.CTkFrame(place, fg_color="transparent")
+        pos_row.pack(fill="x")
         self.position_menu = C.option_menu(
-            place, list(POSITION_MAP.keys()) + ["Custom (drag)"], width=150,
+            pos_row, list(POSITION_MAP.keys()) + ["Custom (drag)"], width=150,
             command=self._position_changed)
-        self.position_menu.pack(anchor="w")
-        C.hint(place, "Or drag the caption in the preview.").pack(anchor="w", pady=(4, 0))
+        self.position_menu.pack(side="left")
+        C.hint(pos_row, "or drag it in the preview", wrap=150).pack(
+            side="left", padx=(10, 0))
         times = ctk.CTkFrame(place, fg_color="transparent")
         times.pack(fill="x", pady=(8, 0))
-        self.start_field = C.TimeField(times, "Shows from", command=self._times_changed)
-        self.start_field.pack(side="left", padx=(0, 10))
-        self.end_field = C.TimeField(times, "Until", command=self._times_changed)
+        self.start_field = C.TimeField(times, "From", command=self._times_changed,
+                                       width=106, inline=True)
+        self.start_field.pack(side="left", padx=(0, 8))
+        self.end_field = C.TimeField(times, "to", command=self._times_changed,
+                                     width=106, inline=True)
         self.end_field.pack(side="left")
         fade_row = ctk.CTkFrame(place, fg_color="transparent")
         fade_row.pack(fill="x", pady=(8, 0))
-        ctk.CTkLabel(fade_row, text="Fade (all captions)", font=T.font(T.SIZE_SM),
-                     text_color=T.TEXT_MUTED, anchor="w").pack(anchor="w")
+        ctk.CTkLabel(fade_row, text="Fade all", font=T.font(T.SIZE_SM),
+                     text_color=T.TEXT_MUTED, width=56, anchor="w").pack(side="left")
         C.segmented(fade_row, FADE_CHOICES,
-                    variable=self.editor.options.fade_var).pack(fill="x", pady=(2, 0))
+                    variable=self.editor.options.fade_var).pack(
+            side="left", fill="x", expand=True)
 
-        motion = _group(self.form, "Motion")
-        self.motion_switch = C.switch(motion, "Record a motion path",
-                                      command=self._motion_toggled)
-        self.motion_switch.pack(anchor="w")
-        self.motion_hint = C.hint(motion, "")
-        self.motion_hint.pack(anchor="w", pady=(4, 0))
+        # Motion is one row until it's in use; the how-to and Clear path
+        # show once the switch is on or the caption has a path.
+        motion = place
         mrow = ctk.CTkFrame(motion, fg_color="transparent")
-        mrow.pack(fill="x", pady=(6, 12))
-        button(mrow, "Follow an object from here", variant="secondary", height=28,
+        mrow.pack(fill="x", pady=(8, 10))
+        self.motion_switch = C.switch(mrow, "Motion path",
+                                      command=self._motion_toggled)
+        self.motion_switch.pack(side="left")
+        button(mrow, "Follow an object", variant="secondary", height=28,
                font=T.font(T.SIZE_SM, "bold"),
                command=lambda: self.layer and self.layer._request_autotrack()
-               ).pack(side="left")
-        button(mrow, "Clear path", variant="ghost", height=28, width=80,
+               ).pack(side="right")
+        self.motion_more = ctk.CTkFrame(motion, fg_color="transparent")
+        self._motion_more_shown = False
+        self.motion_hint = C.hint(self.motion_more, "")
+        self.motion_hint.pack(side="left", fill="x", expand=True)
+        button(self.motion_more, "Clear path", variant="ghost", height=28, width=80,
                font=T.font(T.SIZE_SM),
-               command=self._clear_path).pack(side="left", padx=(6, 0))
+               command=self._clear_path).pack(side="right", padx=(6, 0))
 
     # -- binding ----------------------------------------------------------
     def refresh(self):
@@ -390,6 +408,13 @@ class TextPage(ctk.CTkScrollableFrame):
         self.start_field.set_value(seconds_to_hms(start))
         self.end_field.set_value(seconds_to_hms(end))
         self.motion_hint.configure(text=_motion_hint(self.layer))
+        in_use = bool(self.layer.motion_var.get() or getattr(self.layer, "_keyframes", None))
+        if in_use != self._motion_more_shown:
+            self._motion_more_shown = in_use
+            if in_use:
+                self.motion_more.pack(fill="x", pady=(0, 10))
+            else:
+                self.motion_more.pack_forget()
         self.palette.set(self.layer.color_value())
 
     # -- captions from speech ---------------------------------------------
@@ -599,11 +624,13 @@ class ImagePage(ctk.CTkScrollableFrame):
         self.title = ctk.CTkLabel(head, text="", font=T.font(T.SIZE_MD, "bold"),
                                   text_color=T.TEXT, anchor="w")
         self.title.pack(side="left")
-        for name, cmd in (("delete", self._delete),
-                          ("add", editor.add_image_layer),
-                          ("forward", lambda: self._step(1)),
-                          ("back", lambda: self._step(-1))):
-            icon_button(head, name, command=cmd, size=28, icon_size=12).pack(side="right")
+        for name, cmd, hint in (
+                ("delete", self._delete, "Delete this image  (Delete)"),
+                ("add", editor.add_image_layer, "Add an image or sticker"),
+                ("forward", lambda: self._step(1), "Next image"),
+                ("back", lambda: self._step(-1), "Previous image")):
+            icon_button(head, name, command=cmd, size=28, icon_size=12, hint=hint).pack(
+                side="right", padx=(10, 0) if name == "delete" else 0)
 
         file_group = _group(self.form, "File")
         frow = ctk.CTkFrame(file_group, fg_color="transparent")

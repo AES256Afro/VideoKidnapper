@@ -13,7 +13,7 @@ from videokidnapper.config import APP_NAME, APP_VERSION, WINDOW_SIZE, MIN_WINDOW
 from videokidnapper.ui import theme as T
 from videokidnapper.ui.studio.banner import InlineBanner
 from videokidnapper.ui.studio.chrome import WorkspaceHost, WorkspaceSwitcher
-from videokidnapper.ui.studio.icons import icon_button
+from videokidnapper.ui.studio.icons import icon_button, set_hint_handler
 from videokidnapper.ui.theme import button
 from videokidnapper.ui.widgets import Toast
 from videokidnapper.utils import crash_log, project_files, settings
@@ -224,12 +224,14 @@ class App(ctk.CTk):
             command=lambda: self.trim_tab.keyboard_export(),
         )
         self.quick_export_btn.pack(side="right", padx=(8, 0))
-        self.settings_btn = icon_button(right, "settings", command=self._open_settings_menu)
+        self.settings_btn = icon_button(right, "settings", command=self._open_settings_menu,
+                                        hint="Settings, theme, updates and the Debug log")
         self.settings_btn.pack(side="right", padx=1)
-        icon_button(right, "help", command=self._toggle_shortcuts_page).pack(side="right", padx=1)
-        icon_button(right, "redo",
+        icon_button(right, "help", command=self._toggle_shortcuts_page,
+                    hint="Keyboard shortcuts  (?)").pack(side="right", padx=1)
+        icon_button(right, "redo", hint=f"Redo  ({_accel('Ctrl+Y')})",
                     command=lambda: self.trim_tab.keyboard_redo()).pack(side="right", padx=1)
-        icon_button(right, "undo",
+        icon_button(right, "undo", hint=f"Undo  ({_accel('Ctrl+Z')})",
                     command=lambda: self.trim_tab.keyboard_undo()).pack(side="right", padx=1)
         self.project_btn = button(
             right, "Untitled project  ▾", variant="ghost", height=32,
@@ -431,6 +433,7 @@ class App(ctk.CTk):
     # ------------------------------------------------------------------
     def _build_statusbar(self):
         self.status_bar = Toast(self)
+        set_hint_handler(self.status_bar.show_hint)
         self.status_bar.pack(fill="x", side="bottom")
         ctk.CTkFrame(self, height=1, fg_color=T.BORDER, corner_radius=0).pack(
             fill="x", side="bottom")

@@ -61,3 +61,16 @@ def test_slack_uses_gif():
 
 def test_no_duplicate_names():
     assert len(PLATFORM_CHOICES) == len(set(PLATFORM_CHOICES))
+
+
+def test_discord_presets_warn_when_the_clip_is_too_big():
+    from videokidnapper.ui.platform_presets import size_warning
+
+    mb = 1024 * 1024
+    assert size_warning("Discord (8 MB)", 14 * mb) == (
+        "Probably over Discord's 8 MB limit. Choose a shorter part or a lower quality.")
+    assert size_warning("Discord (8 MB)", 7 * mb) is None
+    assert "25 MB" in size_warning("Discord (25 MB)", 30 * mb)
+    assert size_warning("YouTube 1080p", 900 * mb) is None
+    assert size_warning("Custom", 900 * mb) is None
+    assert size_warning("Discord (8 MB)", 0) is None
