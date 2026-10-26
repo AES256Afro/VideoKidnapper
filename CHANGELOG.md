@@ -26,6 +26,7 @@ All notable changes to this project are documented here. The format is based on 
 
 ### Fixed
 
+- **Typing with Num Lock on triggered shortcuts on Windows.** A capital S typed into a caption opened Save As, a lowercase s saved the project, O opened a file instead of marking the out point, and outside text fields E could start an export. The ⌘ shortcuts meant for macOS were bound on every platform, and Windows reports Num Lock as the same modifier. They are now bound only on macOS; Ctrl shortcuts work as before.
 - **Captions and stickers appeared at the wrong moment.** The editor times them on the full video, but the export counted from the start of the clip, so any clip that did not start at 0:00 showed them late or not at all. They now appear exactly where the preview shows them, at any speed, and a motion-tracked caption follows the same path.
 - **A speed change made the clip the wrong length.** At 2x the export ran on past the end of the selection, and at 0.5x it stopped halfway through. MP4, GIF and MP3 exports now cover exactly the selection.
 - **A caption with % in it came out wrong.** "100% done" lost its percent sign, "%{pts}" turned into a timestamp, and backslashes were mangled. Caption text is now printed exactly as typed.
