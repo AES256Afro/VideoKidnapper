@@ -37,7 +37,7 @@ import customtkinter as ctk
 from videokidnapper.config import PRESETS, SUPPORTED_VIDEO_EXTENSIONS, EXPORT_FORMATS
 from videokidnapper.core.ffmpeg_backend import (
     concat_clips_with_transition, frames_to_video,
-    get_video_info, trim_to_gif, trim_to_video,
+    get_video_info, take_failure_advice, trim_to_gif, trim_to_video,
 )
 from videokidnapper.core.preview import clear_cache
 from videokidnapper.core.screen_capture import record_screen
@@ -551,6 +551,7 @@ class TrimTab(ctk.CTkFrame):
             on_clip_change=self.set_layer_time,
             on_range_click=self._load_range,
             on_zoom_change=lambda z: self.zoom_slider.set(z),
+            on_clip_menu=self._open_clip_menu,
         )
         self.timeline.pack(fill="x")
 
@@ -562,6 +563,31 @@ class TrimTab(ctk.CTkFrame):
         self._captions_menu.add_command(label="Import SRT or VTT…", command=self._import_srt)
         self._captions_menu.add_command(label="Captions from speech…", command=self._auto_caption)
         return tl
+
+    def _open_clip_menu(self, kind, index, x, y):
+        """What can be done to a caption or image from its timeline clip."""
+        # One menu, refilled each time: Windows runs out of menus.
+        menu = getattr(self, "_clip_menu", None)
+        if menu is None:
+            menu = self._clip_menu = tk.Menu(
+                self, tearoff=0, bg=T.BG_SURFACE, fg=T.TEXT,
+                activebackground=T.ACCENT_SOFT, activeforeground=T.TEXT,
+                font=(T.FONT_FAMILY, 10), bd=1, relief="solid",
+            )
+        menu.delete(0, "end")
+        panel = self.text_layers if kind == "text" else self.image_layers
+        start, _end = panel.layers[index].time_slider.get_values()
+        menu.add_command(label="Go to its start", command=lambda: self._seek(start))
+        if kind == "text":
+            menu.add_command(label="Duplicate",
+                             command=lambda: self.duplicate_text_layer(index))
+        menu.add_separator()
+        menu.add_command(label="Delete      Del",
+                         command=lambda: self.delete_layer(kind, index))
+        try:
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
 
     def _open_captions_menu(self):
         btn = self.captions_btn
@@ -779,6 +805,8 @@ class TrimTab(ctk.CTkFrame):
                                    new_index if new_index is not None else 0)
         self._refresh_inspector_pages(kind)
         self._request_snapshot(immediate=True)
+        self._notify(f"{'Caption' if kind == 'text' else 'Image'} deleted · "
+                     "Ctrl+Z brings it back")
 
     def set_layer_time(self, kind, index, start, end, final=True):
         """Retime a caption/overlay from the timeline or the inspector."""
@@ -1412,14 +1440,10 @@ class TrimTab(ctk.CTkFrame):
         from videokidnapper.core import whisper_captions
 
         if not whisper_captions.is_available():
-            self._notify(
-                "Auto-captions needs faster-whisper. "
-                "Install with:  pip install faster-whisper",
-                "error",
-            )
+            message = whisper_captions.missing_message()
+            self._notify(message, "warn")
             if box is not None:
-                box.set_result("This needs faster-whisper. Install it with:  "
-                               "pip install faster-whisper", "error")
+                box.set_result(message, "warn")
             return
         if model_size not in whisper_captions.MODEL_SIZES:
             model_size = "base"
@@ -2414,6 +2438,7 @@ class TrimTab(ctk.CTkFrame):
                     prog = ((i - 1) + p) / len(ranges)
                     self._post(dialog.update_progress, prog,
                                f"Clip {i}/{len(ranges)} — encoding {fmt}...")
+                take_failure_advice()   # nothing left over from before
                 try:
                     if audio_only:
                         result = trim_to_video(
@@ -2451,7 +2476,12 @@ class TrimTab(ctk.CTkFrame):
                     else:
                         if dialog.cancel_event.is_set():
                             break  # Stopped; reported below.
-                        self._post(failed, f"Clip {i} failed — aborting",
+                        # Why, in words a person can act on; the raw
+                        # ffmpeg output is in the Debug log.
+                        reason = take_failure_advice()
+                        self._post(failed,
+                                   f"Clip {i} failed. {reason}" if reason
+                                   else f"Clip {i} failed — aborting",
                                    f"Export failed on clip {i}")
                         return
                 except Exception as e:

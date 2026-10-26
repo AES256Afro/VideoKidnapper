@@ -9,19 +9,35 @@ import customtkinter as ctk
 
 from videokidnapper.config import TEXT_STYLES, POSITION_MAP, TEXT_COLORS
 from videokidnapper.ui import theme as T
+from videokidnapper.utils import font_index
 from videokidnapper.utils.coerce import coerce_float, coerce_int
 
 
+_PREFERRED_FONTS = ["Arial", "Segoe UI", "Helvetica", "Verdana", "Times New Roman",
+                    "Courier New", "Georgia", "Impact", "Comic Sans MS", "Trebuchet MS"]
+
+
 def _get_system_fonts():
+    """Font families for the caption font menu, common ones first.
+
+    Once the font index is built (utils.font_index) these are the
+    installed families that really draw; until then, Tk's list.
+    """
     try:
-        families = sorted(set(tkfont.families()))
-        preferred = ["Arial", "Segoe UI", "Helvetica", "Verdana", "Times New Roman",
-                      "Courier New", "Georgia", "Impact", "Comic Sans MS", "Trebuchet MS"]
-        top = [f for f in preferred if f in families]
+        start_font_index()
+        families = font_index.families()
+        if families is None:
+            families = sorted(set(tkfont.families()))
+        top = [f for f in _PREFERRED_FONTS if f in families]
         rest = [f for f in families if f not in top and not f.startswith("@")]
         return top + rest
     except Exception:
         return ["Arial", "Segoe UI", "Helvetica", "Verdana", "Times New Roman"]
+
+
+def start_font_index():
+    """Start reading the installed fonts' names, in the background."""
+    font_index.start(_font_dirs())
 
 
 # Style-variant filename suffixes, tried in order against the regular
@@ -72,7 +88,13 @@ def _variant_font_path(regular_path, bold, italic):
 # the font-size control did nothing you could see.
 def _font_dirs():
     if sys.platform == "win32":
-        return [os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts")]
+        dirs = [os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts")]
+        # Fonts installed "for me only" (the default when you double-click
+        # a font file) live here, not in the system folder.
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            dirs.append(os.path.join(local, "Microsoft", "Windows", "Fonts"))
+        return dirs
     if sys.platform == "darwin":
         return [
             os.path.expanduser("~/Library/Fonts"),
@@ -150,6 +172,12 @@ def _find_font_path(font_name, bold=False, italic=False, fonts_dir=None):
     ``fonts_dir`` overrides the platform search path — the tests use it
     to exercise resolution against a temp directory.
     """
+    if fonts_dir is None:
+        # The installed font that really has this family name, when the
+        # index knows it; the guesses below cover the rest.
+        indexed = font_index.lookup(font_name, bold=bold, italic=italic)
+        if indexed:
+            return indexed
     dirs = [fonts_dir] if fonts_dir is not None else _font_dirs()
     name_lower = font_name.lower().replace(" ", "")
 

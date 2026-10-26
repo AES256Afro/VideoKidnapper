@@ -111,6 +111,10 @@ class App(ctk.CTk):
         self._note_previous_crash()
         self._maybe_check_for_update()
         self._maybe_offer_recovery()
+        # Read the installed fonts' names in the background, so the
+        # caption font menu has them all by the time it's opened.
+        from videokidnapper.ui.text_layers import start_font_index
+        self.after(1500, start_font_index)
 
     def _maybe_offer_recovery(self):
         """Offer last session's unsaved work in the banner, if there is any."""

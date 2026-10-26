@@ -520,6 +520,17 @@ def test_missing_faster_whisper_is_explained_inline(root, monkeypatch):
         box.destroy()
 
 
+def test_the_installed_app_never_suggests_pip(monkeypatch):
+    """Setup, Store and portable builds have no pip to run."""
+    import sys
+
+    from videokidnapper.core import whisper_captions
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    message = whisper_captions.missing_message()
+    assert "pip" not in message and "SRT" in message
+
+
 def test_stop_discards_the_partial_transcript(root, whisper, monkeypatch):
     def slow_transcribe(*_a, cancel_event=None, **_kw):
         cancel_event.wait(5)

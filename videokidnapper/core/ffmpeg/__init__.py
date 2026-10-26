@@ -29,7 +29,9 @@ Module map:
 
 from videokidnapper.core.ffmpeg._internals import (
     detect_hardware_encoders,
+    explain_ffmpeg_failure,
     pick_video_encoder,
+    take_failure_advice,
 )
 from videokidnapper.core.ffmpeg.concat import (
     CONCAT_TRANSITIONS,
@@ -62,6 +64,9 @@ __all__ = [
     # encoders
     "detect_hardware_encoders",
     "pick_video_encoder",
+    # failures
+    "explain_ffmpeg_failure",
+    "take_failure_advice",
     # encode
     "frames_to_gif",
     "frames_to_video",

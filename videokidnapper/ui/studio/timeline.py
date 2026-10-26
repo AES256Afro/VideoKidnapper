@@ -31,6 +31,7 @@ The time↔pixel math lives in module-level functions so it can be tested
 without a display.
 """
 
+import sys
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
@@ -348,7 +349,8 @@ class TimelineView(ctk.CTkFrame):
 
     def __init__(self, master, on_seek=None, on_selection_change=None,
                  on_clip_select=None, on_clip_change=None,
-                 on_range_click=None, on_zoom_change=None, **kwargs):
+                 on_range_click=None, on_zoom_change=None, on_clip_menu=None,
+                 **kwargs):
         super().__init__(master, fg_color=T.BG_SURFACE, corner_radius=0, **kwargs)
         self._on_seek = on_seek
         self._on_selection_change = on_selection_change
@@ -356,6 +358,8 @@ class TimelineView(ctk.CTkFrame):
         self._on_clip_change = on_clip_change
         self._on_range_click = on_range_click
         self._on_zoom_change = on_zoom_change
+        # on_clip_menu(kind, index, x_root, y_root): a clip was right-clicked.
+        self._on_clip_menu = on_clip_menu
 
         self.duration = 0.0
         self.sel_start = 0.0
@@ -397,6 +401,9 @@ class TimelineView(ctk.CTkFrame):
         self.canvas.bind("<Leave>", lambda _e: self._set_hover_edge(None))
         self.canvas.bind("<MouseWheel>", self._on_wheel)
         self.canvas.bind("<Control-MouseWheel>", self._on_ctrl_wheel)
+        for button in (("<Button-2>", "<Button-3>") if sys.platform == "darwin"
+                       else ("<Button-3>",)):
+            self.canvas.bind(button, self._on_context)
 
     # ------------------------------------------------------------------
     # Data API
@@ -527,6 +534,7 @@ class TimelineView(ctk.CTkFrame):
         self.redraw()
 
     def set_clips(self, text=None, images=None):
+        before = (self.text_clips, self.image_clips, self.selected)
         if text is not None:
             self.text_clips = list(text)
         if images is not None:
@@ -536,7 +544,9 @@ class TimelineView(ctk.CTkFrame):
             clips = self.text_clips if kind == "text" else self.image_clips
             if index >= len(clips):
                 self.selected = None
-        self.redraw()
+        # Sticker drags and most keystrokes change nothing drawn here.
+        if (self.text_clips, self.image_clips, self.selected) != before:
+            self.redraw()
 
     def set_selected(self, kind, index):
         self.selected = (kind, index) if kind else None
@@ -924,6 +934,18 @@ class TimelineView(ctk.CTkFrame):
             self._drag = None
         elif kind == "seek":
             self._seek_to(self._x2t(event.x))
+
+    def _on_context(self, event):
+        """Right-click on a caption or image clip: pick it, offer its menu."""
+        hit = self._hit(event.x, event.y)
+        if not hit or hit["kind"] not in ("text", "image"):
+            return
+        self.selected = (hit["kind"], hit["index"])
+        if self._on_clip_select:
+            self._on_clip_select(hit["kind"], hit["index"])
+        self.redraw()
+        if self._on_clip_menu:
+            self._on_clip_menu(hit["kind"], hit["index"], event.x_root, event.y_root)
 
     def _on_motion(self, event):
         drag = self._drag
