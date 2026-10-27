@@ -75,33 +75,28 @@ jobs:
           test -d "dist/VideoKidnapper.app"
 
       - name: Bundle FFmpeg (static GPL builds)
-        # Source differs per arch — evermeet.cx ships **Intel-only**
-        # binaries despite the "macOS" label, so up to 1.8.0 the arm64
-        # DMG carried an x86_64 ffmpeg that needed Rosetta to run at all.
-        # Apple Silicon takes eugeneware/ffmpeg-static, which publishes
-        # genuine darwin-arm64 builds. GPL either way — source linked in
-        # the release notes, same policy as the Linux/Windows builds.
+        # Both arches take eugeneware/ffmpeg-static's per-arch builds.
+        # Intel used to come from evermeet.cx, whose download links now
+        # answer 410 Gone (v1.9.2's Intel build failed on it); evermeet
+        # was also Intel-only despite its "macOS" label, so up to 1.8.0
+        # the arm64 DMG carried an x86_64 ffmpeg that needed Rosetta.
+        # GPL either way — source linked in the release notes, same
+        # policy as the Linux/Windows builds.
         env:
           FFMPEG_STATIC_TAG: b6.1.1
         run: |
           set -euo pipefail
           mkdir -p ffbin
           case "${{ matrix.arch }}" in
-            x86_64)
-              for bin in ffmpeg ffprobe; do
-                curl -fsSL -o "$bin.zip" "https://evermeet.cx/ffmpeg/getrelease/$bin/zip"
-                unzip -o "$bin.zip" -d ffbin
-              done
-              ;;
-            arm64)
-              base="https://github.com/eugeneware/ffmpeg-static/releases/download/${FFMPEG_STATIC_TAG}"
-              for bin in ffmpeg ffprobe; do
-                curl -fsSL -o "ffbin/$bin" "$base/$bin-darwin-arm64"
-              done
-              ;;
+            x86_64) suffix=darwin-x64 ;;
+            arm64)  suffix=darwin-arm64 ;;
             *)
               echo "::error::unhandled arch ${{ matrix.arch }}"; exit 1 ;;
           esac
+          base="https://github.com/eugeneware/ffmpeg-static/releases/download/${FFMPEG_STATIC_TAG}"
+          for bin in ffmpeg ffprobe; do
+            curl -fsSL -o "ffbin/$bin" "$base/$bin-$suffix"
+          done
           RES="dist/VideoKidnapper.app/Contents/Resources/assets/ffmpeg/bin"
           mkdir -p "$RES"
           cp ffbin/ffmpeg ffbin/ffprobe "$RES/"

@@ -240,6 +240,12 @@ jobs:
 
       - name: Add package + regenerate signed indexes
         run: |
+          # apt-ftparchive (apt-utils) is no longer on the runner image;
+          # v1.9.2's publish failed with "command not found".
+          command -v apt-ftparchive >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends apt-utils
+          }
           cd apt-repo
           mkdir -p pool/main/v/videokidnapper dists/stable/main/binary-amd64
           cp ../dist/videokidnapper_*_amd64.deb pool/main/v/videokidnapper/
