@@ -21,7 +21,11 @@ moves, and the Stop button all behave the same regardless of which
 path started the playback.
 """
 
+import math
+import sys
+import threading
 import tkinter as tk
+from collections import OrderedDict, namedtuple
 
 import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageFont, ImageTk
@@ -30,14 +34,47 @@ from videokidnapper.utils.text_wrap import drawtext_layout
 
 from videokidnapper.utils.coerce import coerce_float, coerce_int
 from videokidnapper.core import playback
-from videokidnapper.core.preview import get_frame_at
+from videokidnapper.core.preview import get_frame_at, peek_frame
 from videokidnapper.ui import theme as T
 from videokidnapper.utils.snap import apply_snap, build_targets
+
+# How often the Tk thread checks for a frame the scrub worker fetched.
+_FRAME_POLL_MS = 15
+
+# Where the layout frame (captions' and stickers' pixel space) lands on
+# the shrunk picture: its top-left (ox, oy) and size (lw, lh) in
+# full-size pixels of the picture shown, and the scale (sx, sy) from
+# those to screen pixels.
+_View = namedtuple("_View", "ox oy lw lh sx sy")
+
+# An animated sticker whose frames are still being decoded.
+_LOADING = object()
+_MISSING = object()
+
+
+def _fit(image, size, box=None):
+    """Resize ``image`` (or its ``box`` region) to ``size`` for the screen.
+
+    Shrinking reduces by whole steps first, then filters: as sharp as
+    LANCZOS here and about half the time, which was most of a 1080p or
+    4K frame's budget while playing. Enlarging keeps LANCZOS.
+    """
+    if box is None:
+        if image.size == size:
+            return image
+        span = image.width
+    else:
+        span = box[2] - box[0]
+    if size[0] < span:
+        return image.resize(size, Image.BILINEAR, box=box, reducing_gap=2.0)
+    return image.resize(size, Image.LANCZOS, box=box)
 
 
 class VideoPlayer(ctk.CTkFrame):
     _PLAY_FPS = 8
     _PLAY_MS = int(1000 / _PLAY_FPS)
+    # How often the Tk thread collects frames during A/V playback.
+    _AV_PUMP_MS = 15
 
     def __init__(self, master, on_empty_click=None, on_file_dropped=None,
                  canvas_bg=None, inset=10, **kwargs):
@@ -63,15 +100,40 @@ class VideoPlayer(ctk.CTkFrame):
         # None once a path is known to be a still. Decoding every
         # frame is done once per file, not once per preview tick.
         self._image_anim_cache = {}
+        # Animations decoded by a worker, waiting for the Tk thread.
+        self._anims_ready = []
+        self._anim_poll_id = None
+        # (path, frame, size, opacity) → the overlay ready to composite,
+        # newest last (see _scaled_sticker).
+        self._image_scaled_cache = OrderedDict()
+        self._resize_after_id = None
+        # The last frame drawn and its picture shrunk to the canvas, kept
+        # for redraws of the same frame (see _render_frame), and the
+        # video's own size, which playback frames are decoded below.
+        self._base = None
+        self._source_size = None
         # Zero-arg callable → (brightness, contrast, saturation, gamma) so
         # the preview shows the same color grade the export applies.
         self._color_provider = None
         self._playing = False
         self._play_after_id = None
+        # Scrubbing fetches frames on one background worker (see
+        # request_frame). Guarded by _frame_lock: what is wanted next,
+        # what has arrived, and whether the worker is still running.
+        self._frame_lock = threading.Lock()
+        self._frame_wanted = None
+        self._frame_ready = None
+        self._frame_worker_running = False
+        self._frame_poll_id = None
         self._play_end = None
-        # Real-time A/V player (None until play() creates one).
+        # Real-time A/V player (None until play() creates one). The
+        # decode threads leave the newest frame and the end-of-clip
+        # reason in the two slots below for the Tk thread to collect.
         self._av_player = None
         self._av_time_after_id = None
+        self._av_session = None
+        self._av_frame = None
+        self._av_finished = None
 
         # Crop state: a rect in SOURCE pixel coords, or None when disabled.
         self._crop_mode = False
@@ -142,7 +204,7 @@ class VideoPlayer(ctk.CTkFrame):
 
     def _on_drop(self, event):
         from videokidnapper.utils.dnd import parse_dnd_files
-        paths = parse_dnd_files(event.data or "")
+        paths = parse_dnd_files(event.data or "", splitlist=self.tk.splitlist)
         if paths and self._on_file_dropped:
             self._on_file_dropped(paths[0])
 
@@ -165,17 +227,6 @@ class VideoPlayer(ctk.CTkFrame):
     def set_color_provider(self, provider):
         """`provider` returns ``(brightness, contrast, saturation, gamma)``."""
         self._color_provider = provider
-
-    def _apply_color(self, image):
-        """Grade the bare frame like the export's ``eq=`` pass (which runs
-        before drawtext and overlays, so captions keep their colors)."""
-        if not self._color_provider:
-            return image
-        try:
-            from videokidnapper.utils.color_preview import apply_grade
-            return apply_grade(image, *self._color_provider())
-        except Exception:
-            return image
 
     def get_text_source_bbox(self, index):
         """Source-pixel ``(x1, y1, x2, y2)`` of a text layer as last
@@ -207,8 +258,11 @@ class VideoPlayer(ctk.CTkFrame):
                 options = dict(self._export_options_provider() or {})
             except Exception:
                 options = {}
-        # The live crop rect: settings only learn it on mouse release.
-        options["crop"] = self._crop_rect if self._crop_mode else None
+        # The player's own crop rect: settings only learn a new one on
+        # mouse release. It applies outside crop mode too. Dropping it
+        # there laid captions out on the whole frame while the export
+        # placed them inside the crop.
+        options["crop"] = self._crop_rect
         if self._crop_mode:
             # The crop tool is drawn on the unrotated source, so show that.
             options["rotate"] = 0
@@ -371,89 +425,261 @@ class VideoPlayer(ctk.CTkFrame):
         self.canvas.configure(cursor="fleur" if hit else "crosshair")
 
     def _on_resize(self, _event=None):
-        if self.video_path:
-            self.show_frame(self.current_time)
-        else:
+        if not self.video_path:
             self._draw_placeholder()
+            return
+        # Dragging the window's edge fires this for every pixel, and each
+        # one re-rendered the frame (16-75 ms). Render once it settles.
+        if self._resize_after_id is not None:
+            try:
+                self.after_cancel(self._resize_after_id)
+            except Exception:
+                pass
+        self._resize_after_id = self.after(60, self._resized)
+
+    def _resized(self):
+        self._resize_after_id = None
+        # While playing, the next frame is drawn at the new size anyway.
+        if self.video_path and not self._playing:
+            self.request_frame(self.current_time)
 
     # ------------------------------------------------------------------
     # Video API
     # ------------------------------------------------------------------
+    def forget_images(self, keep_paths=()):
+        """Drop cached stickers no layer uses, and failed loads to retry.
+
+        The caches used to be cleared on every sticker change, a drag
+        step included, so each step reloaded and resized the file. And
+        nothing ever dropped an animated sticker's frames (up to ~160 MB)
+        once its layer was gone.
+        """
+        keep = set(keep_paths)
+        for cache in (self._image_cache, self._image_anim_cache):
+            for path in [p for p, v in cache.items() if p not in keep or
+                         (cache is self._image_cache and v is None)]:
+                del cache[path]
+        for key in [k for k in self._image_scaled_cache if k[0] not in keep]:
+            del self._image_scaled_cache[key]
+
     def load_video(self, video_path, duration):
         self.stop()
+        self.forget_images()
         self.video_path = video_path
         self.duration = duration
         self.current_time = 0
+        self._base = None
+        self._source_size = None
         for item in self._placeholder_ids:
             self.canvas.delete(item)
         self._placeholder_ids.clear()
         self.canvas.configure(cursor="crosshair")
-        self.show_frame(0)
+        self.request_frame(0)
 
     def show_frame(self, timestamp):
+        """Show the frame at ``timestamp`` now, waiting for ffmpeg if needed.
+
+        For redraws of the frame already on screen (an overlay edit, a
+        resize), which the cache answers at once. Moving to a new time goes
+        through :meth:`request_frame`, which never blocks the window.
+        """
         if not self.video_path:
             return
         self.current_time = timestamp
         frame = get_frame_at(self.video_path, timestamp)
         if frame is None:
             return
-        frame = self._apply_color(frame)
+        self._render_frame(frame, timestamp)
 
+    def request_frame(self, timestamp):
+        """Show the frame at ``timestamp`` without freezing the window.
+
+        Fetching an uncached frame starts ffmpeg, 0.1–0.2 s a time, and
+        scrubbing did that on the Tk thread for every position, so the
+        whole window stuttered while dragging. A cached frame still shows
+        at once. Otherwise one worker fetches the newest position asked
+        for, skipping any it has not reached yet, and each frame shows as
+        it arrives.
+        """
+        if not self.video_path:
+            return
+        self.current_time = timestamp
+        cached = peek_frame(self.video_path, timestamp)
+        if cached is not None:
+            self._render_frame(cached, timestamp)
+            return
+        with self._frame_lock:
+            self._frame_wanted = (self.video_path, timestamp)
+            start = not self._frame_worker_running
+            self._frame_worker_running = True
+        if start:
+            threading.Thread(target=self._fetch_frames, daemon=True,
+                             name="preview-frames").start()
+        if self._frame_poll_id is None:
+            self._frame_poll_id = self.after(_FRAME_POLL_MS, self._poll_frames)
+
+    def _fetch_frames(self):
+        """Worker: fetch the newest wanted frame until nothing is wanted.
+
+        Touches no widgets; results go through ``_frame_ready``.
+        """
+        while True:
+            with self._frame_lock:
+                wanted = self._frame_wanted
+                self._frame_wanted = None
+                if wanted is None:
+                    # Decided under the lock, so a request made from now
+                    # on starts a new worker instead of being missed.
+                    self._frame_worker_running = False
+                    return
+            path, timestamp = wanted
+            try:
+                frame = get_frame_at(path, timestamp)
+                if frame is not None:
+                    # Decode here rather than on the Tk thread.
+                    frame.load()
+            except Exception:
+                frame = None
+            with self._frame_lock:
+                self._frame_ready = (path, timestamp, frame)
+
+    def _poll_frames(self):
+        self._frame_poll_id = None
+        with self._frame_lock:
+            ready, self._frame_ready = self._frame_ready, None
+            busy = self._frame_worker_running
+        if ready is not None:
+            path, timestamp, frame = ready
+            # A frame from a video that has since been replaced, or one
+            # arriving after playback started, is dropped.
+            if frame is not None and path == self.video_path and not self._playing:
+                self._render_frame(frame, timestamp)
+        if busy:
+            self._frame_poll_id = self.after(_FRAME_POLL_MS, self._poll_frames)
+
+    def _render_frame(self, frame, timestamp, source_size=None):
+        """Show a ``frame`` of the video as the export will produce it.
+
+        Scrubbing and playback both come through here, so a playing clip
+        shows the same rotation, frame shape, crop, blur fill and image
+        overlays as a paused one. ``source_size`` is the video's own size
+        when ``frame`` was decoded smaller, as playback does.
+
+        The picture is shrunk to the canvas once and kept: redrawing the
+        same frame (each keystroke in a caption, each step of a sticker
+        drag) only draws the overlays again. Those are still laid out in
+        the export's layout frame, but each is drawn as a patch the size
+        of its own box and shrunk into place, not on a full-size copy of
+        the frame (24 ms a 1080p frame, 59 ms 4K, per keystroke).
+        """
         cw = self.canvas.winfo_width()
         ch = self.canvas.winfo_height()
         if cw < 10 or ch < 10:
             return
+        if source_size is None:
+            source_size = frame.size
+            self._source_size = frame.size
 
-        # Draw text + image overlays onto the LAYOUT frame (the export's
-        # frame before its final downscale), then resize the composite
-        # for display. That is what ffmpeg does at export time, so the
-        # preview matches the export regardless of aspect preset, crop,
-        # blur fill, rotation or quality preset. Ordering matters —
-        # overlays run AFTER drawtext at export time, so images sit on
-        # top. We mirror that order here.
-        geom = self._current_geometry(frame.size)
+        geom = self._current_geometry(source_size)
         self._geometry = geom
-        if geom.is_subrect:
-            # Context view: show the whole source, compose the kept
-            # window in place, and dim what the export throws away.
-            region = geom.crop_source(frame)
-            region = self._apply_text_overlay(region, timestamp)
-            region = self._apply_image_overlay(region, timestamp)
-            if region.size == frame.size:
-                composited = region
-            else:
-                composited = frame.convert("RGB")
-                composited.paste(region, geom.offset)
-            self._layout_offset = geom.offset
-            self._layout_size = region.size
+        grade = self._grade()
+        key = (geom, grade, cw, ch)
+        cached = self._base
+        if cached is not None and cached[0] is frame and cached[1] == key:
+            base, view, full = cached[2:]
         else:
-            # Output view: rotation or blur fill reshapes the frame, so
-            # show the exported frame itself.
-            composited = geom.render(frame.convert("RGB"))
-            composited = self._apply_text_overlay(composited, timestamp)
-            composited = self._apply_image_overlay(composited, timestamp)
-            self._layout_offset = (0, 0)
-            self._layout_size = composited.size
+            base, view, full = self._compose_base(frame, geom, grade, cw, ch)
+            self._base = (frame, key, base, view, full)
+        self._layout_offset = (view.ox, view.oy)
+        self._layout_size = (view.lw, view.lh)
 
-        fw, fh = composited.size
-        scale = min(cw / fw, ch / fh)
-        new_w = max(1, int(fw * scale))
-        new_h = max(1, int(fh * scale))
-        rendered = composited.resize((new_w, new_h), Image.LANCZOS)
+        # Overlays run after drawtext at export time, so stickers sit on
+        # top of captions. The same order here.
+        shown = base.convert("RGBA")
+        drew = self._draw_text_layers(shown, view, timestamp)
+        drew = self._draw_image_layers(shown, view, timestamp) or drew
+        if not drew:
+            shown = base
 
-        self._photo = ImageTk.PhotoImage(rendered)
+        new_w, new_h = base.size
+        self._photo = ImageTk.PhotoImage(shown)
         self.canvas.delete("frame")
         self.canvas.create_image(cw // 2, ch // 2, image=self._photo, tags="frame")
 
         # Record the mapping so click→source-pixel conversions stay accurate.
         self._last_frame_rect = (
-            cw // 2 - new_w // 2, ch // 2 - new_h // 2, new_w, new_h, fw, fh,
+            cw // 2 - new_w // 2, ch // 2 - new_h // 2, new_w, new_h, *full,
         )
         self._draw_layout_dim()
         self._draw_crop_overlay()
 
+    def _compose_base(self, frame, geom, grade, cw, ch):
+        """The graded picture under the overlays, shrunk to fit the canvas.
+
+        Returns ``(image, view, full)``: ``full`` is the full-size picture
+        it shows (the source in the context view, the layout frame in the
+        output view) and ``view`` places the layout frame on it.
+        """
+        if geom.is_subrect:
+            # Context view: show the whole source; the part the export
+            # throws away is dimmed around it (_draw_layout_dim).
+            full = (geom.src_w, geom.src_h)
+            ox, oy = geom.offset
+        else:
+            # Output view: rotation or blur fill reshapes the frame, so
+            # show the exported frame itself.
+            full = geom.size
+            ox, oy = 0, 0
+        fw, fh = full
+        scale = min(cw / fw, ch / fh)
+        size = (max(1, int(fw * scale)), max(1, int(fh * scale)))
+        picture = frame if frame.mode == "RGB" else frame.convert("RGB")
+        if not geom.is_subrect:
+            # Reshape a frame already shrunk to the screen's scale: blur
+            # fill on a full-size 4K frame took ~70 ms. The geometry works
+            # at whatever scale the frame is (FrameGeometry.render).
+            want = (max(1, int(geom.src_w * scale)),
+                    max(1, int(geom.src_h * scale)))
+            if want[0] < picture.width:
+                picture = _fit(picture, want)
+            picture = geom.render(picture)
+            # Rounding can leave it a pixel off the size worked out above.
+            # Show it as it is rather than resample it again (a visible
+            # blur), as long as it still fits the canvas.
+            pw, ph = picture.size
+            if (abs(pw - size[0]) <= 2 and abs(ph - size[1]) <= 2
+                    and pw <= cw and ph <= ch):
+                size = picture.size
+        base = _fit(picture, size)
+        # Graded once shrunk: the grade works pixel by pixel, so it looks
+        # the same, for a fraction of the cost (it was +43 ms a 4K frame).
+        base = self._apply_grade(base, grade)
+        lw, lh = geom.size
+        return base, _View(ox, oy, lw, lh, size[0] / fw, size[1] / fh), full
+
+    def _grade(self):
+        """The colour grade the export applies, or None."""
+        if not self._color_provider:
+            return None
+        try:
+            return tuple(self._color_provider())
+        except Exception:
+            return None
+
+    @staticmethod
+    def _apply_grade(image, grade):
+        """Grade the bare frame like the export's ``eq=`` pass (which runs
+        before drawtext and overlays, so captions keep their colors)."""
+        if not grade:
+            return image
+        try:
+            from videokidnapper.utils.color_preview import apply_grade
+            return apply_grade(image, *grade)
+        except Exception:
+            return image
+
     def _draw_layout_dim(self):
-        """Dim the parts of the source an aspect-preset crop discards."""
+        """Dim the parts of the source an aspect preset or crop discards."""
         self.canvas.delete("layoutdim")
         if self._crop_mode or not self._last_frame_rect:
             return  # the crop tool draws its own dimming
@@ -482,29 +708,49 @@ class VideoPlayer(ctk.CTkFrame):
         )
 
     def _apply_text_overlay(self, image, timestamp):
-        """Render drawtext layers onto ``image`` at its native resolution.
+        """``image``, a full-size layout frame, with its captions drawn on.
 
-        This is called with the source-sized frame so fontsize, position
-        expressions, and box padding all use the same pixel space ffmpeg
-        uses at export time. The caller resizes the composite for display
-        — no scale-then-draw-then-scale math that desyncs preview/export.
+        The same drawing the screen gets, before it is shrunk; the parity
+        tests compare it with the exported file.
         """
-        if not self._text_layers_provider:
+        out = image.convert("RGBA")
+        if not self._draw_text_layers(out, _View(0, 0, *image.size, 1.0, 1.0),
+                                      timestamp):
             return image
+        return out.convert("RGB")
+
+    def _apply_image_overlay(self, image, timestamp):
+        """``image``, a full-size layout frame, with its stickers on."""
+        out = image.convert("RGBA")
+        if not self._draw_image_layers(out, _View(0, 0, *image.size, 1.0, 1.0),
+                                       timestamp):
+            return image
+        return out.convert("RGB")
+
+    def _draw_text_layers(self, out, view, timestamp):
+        """Draw the captions showing at ``timestamp`` onto ``out``.
+
+        Each caption is laid out in the layout frame (``view.lw`` x
+        ``view.lh``), the pixel space ffmpeg's drawtext uses, so font
+        size, position expressions, wrapping and box padding all match
+        the export; :meth:`_paint_patch` then puts it on screen. Returns
+        True when anything was drawn.
+        """
+        # Rebuild the bbox table every time so hit-testing stays in sync
+        # with whatever's actually on screen, an empty list included.
+        self._text_bboxes = []
+        if not self._text_layers_provider:
+            return False
         try:
             layers = self._text_layers_provider() or []
         except Exception:
-            return image
+            return False
         if not layers:
-            return image
+            return False
 
-        overlay = image.convert("RGBA")
-        measure = ImageDraw.Draw(overlay)
-        w, h = overlay.size
-
-        # Rebuild the bbox table every time so hit-testing stays in sync with
-        # whatever's actually on screen.
-        self._text_bboxes = []
+        measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+        w, h = view.lw, view.lh
+        drew = False
 
         for idx, layer in enumerate(layers):
             text = (layer.get("text") or "").strip()
@@ -567,12 +813,16 @@ class VideoPlayer(ctk.CTkFrame):
                 th = layout[2]
 
             keyframes = layer.get("keyframes") or []
+            path_xy = None
             if keyframes:
                 # Motion path: the SAME interpolation the export compiles
                 # into drawtext expressions, evaluated at this frame time.
+                # None when no keyframe is usable (a damaged project), and
+                # then the static position applies, as in the export.
                 from videokidnapper.utils.keyframes import position_at
-                kx, ky = position_at(keyframes, timestamp)
-                x, y = int(round(kx)), int(round(ky))
+                path_xy = position_at(keyframes, timestamp)
+            if path_xy is not None:
+                x, y = int(round(path_xy[0])), int(round(path_xy[1]))
             else:
                 x, y = _resolve_position(
                     layer.get("position", ""), w, h, tw, th, pad=20,
@@ -583,24 +833,6 @@ class VideoPlayer(ctk.CTkFrame):
             x = min(max(x, m), max(m, w - tw - m))
             y = min(max(y, m), max(m, h - th - m))
 
-            # Each layer renders on its own transparent scratch image that
-            # is alpha-composited onto the frame. Drawing translucent fills
-            # straight onto the frame does NOT blend — PIL's ImageDraw
-            # overwrites pixels — so the box / shadow / `white@0.5`
-            # watermark would preview opaque while exporting translucent.
-            scratch = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-            draw = ImageDraw.Draw(scratch)
-
-            # Draw order mirrors ffmpeg's drawtext: box, then shadow,
-            # then bordered glyphs.
-            if layer.get("box"):
-                # Match ffmpeg drawtext's boxborderw=8 default for Subtitle.
-                pad = coerce_int(layer.get("boxborderw", 8), 8)
-                draw.rectangle(
-                    (x - pad, y - pad, x + tw + pad, y + th + pad),
-                    fill=(0, 0, 0, 160),
-                )
-
             color = _parse_color_rgba(layer.get("fontcolor", "white"))
             try:
                 sx = coerce_int(layer.get("shadowx", 0))
@@ -608,67 +840,135 @@ class VideoPlayer(ctk.CTkFrame):
                 borderw = max(0, coerce_int(layer.get("borderw", 0)))
             except (TypeError, ValueError):
                 sx = sy = borderw = 0
+            box_pad = coerce_int(layer.get("boxborderw", 8), 8) if layer.get("box") else 0
 
-            def paint(dx, dy, fill, **kw):
-                if layout:
-                    first_baseline, line_h, _th = layout
-                    for i, line in enumerate(lines):
-                        draw.text(
-                            (x + dx - ink_dx, y + dy + first_baseline + i * line_h),
-                            line, fill=fill, font=font, anchor="ls", **kw,
-                        )
-                else:
-                    draw.multiline_text(
-                        (x + dx - ink_dx, y + dy - ink_dy), text,
-                        fill=fill, font=font, spacing=0, **kw,
+            def draw_caption(draw, px, py):
+                # Draw order mirrors ffmpeg's drawtext: box, then shadow,
+                # then bordered glyphs. (px, py) moves layout pixels into
+                # the patch being drawn.
+                if layer.get("box"):
+                    # Match ffmpeg drawtext's boxborderw=8 default for Subtitle.
+                    draw.rectangle(
+                        (x + px - box_pad, y + py - box_pad,
+                         x + px + tw + box_pad, y + py + th + box_pad),
+                        fill=(0, 0, 0, 160),
                     )
 
-            if sx or sy:
-                paint(sx, sy, _parse_color_rgba(
-                    layer.get("shadowcolor", "black@0.7")))
+                def paint(dx, dy, fill, **kw):
+                    if layout:
+                        first_baseline, line_h, _th = layout
+                        for i, line in enumerate(lines):
+                            draw.text(
+                                (x + px + dx - ink_dx,
+                                 y + py + dy + first_baseline + i * line_h),
+                                line, fill=fill, font=font, anchor="ls", **kw,
+                            )
+                    else:
+                        draw.multiline_text(
+                            (x + px + dx - ink_dx, y + py + dy - ink_dy), text,
+                            fill=fill, font=font, spacing=0, **kw,
+                        )
 
-            if borderw:
-                paint(0, 0, color, stroke_width=borderw,
-                      stroke_fill=_parse_color_rgba(
-                          layer.get("bordercolor", "black")))
-            else:
-                paint(0, 0, color)
+                if sx or sy:
+                    paint(sx, sy, _parse_color_rgba(
+                        layer.get("shadowcolor", "black@0.7")))
 
-            overlay = Image.alpha_composite(overlay, scratch)
+                if borderw:
+                    paint(0, 0, color, stroke_width=borderw,
+                          stroke_fill=_parse_color_rgba(
+                              layer.get("bordercolor", "black")))
+                else:
+                    paint(0, 0, color)
 
-            # Record the hit-test bbox in source-pixel space; include the
+            # Everything the caption paints: its box, its shadow and
+            # outline, and room for glyphs that reach past the ink box.
+            reach = borderw + max(abs(sx), abs(sy)) + fontsize // 2 + 4
+            self._paint_patch(out, view, (
+                x - box_pad - reach, y - box_pad - reach,
+                x + tw + box_pad + reach, y + th + box_pad + reach,
+            ), draw_caption)
+            drew = True
+
+            # Record the hit-test bbox in layout-pixel space; include the
             # box border so users can grab the edge comfortably.
-            pad = coerce_int(layer.get("boxborderw", 8), 8) if layer.get("box") else 2
+            pad = box_pad if layer.get("box") else 2
             self._text_bboxes.append(
                 (idx, x - pad, y - pad, x + tw + pad, y + th + pad),
             )
 
-        return overlay.convert("RGB")
+        return drew
 
-    def _apply_image_overlay(self, image, timestamp):
-        """Composite image-overlay layers onto ``image`` at native resolution.
+    @staticmethod
+    def _paint_patch(out, view, extent, paint):
+        """Draw part of the layout frame at full size and put it on ``out``.
+
+        ``extent`` is the layout-pixel rectangle ``paint(draw, px, py)``
+        covers. Only that patch is drawn full size (in its own
+        transparent image, so translucent boxes and shadows blend as they
+        do in the export), then shrunk with the frame's own scale over
+        exactly the screen pixels it covers, so it lines up with the
+        picture under it.
+        """
+        x1, y1, x2, y2 = extent
+        # Nothing outside the layout frame is exported.
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(view.lw, x2), min(view.lh, y2)
+        if x2 <= x1 or y2 <= y1:
+            return
+        # The whole screen pixels it covers, and the exact part of the
+        # layout frame those pixels show (a screen pixel on the frame's
+        # edge shows a little of what is outside it).
+        dx1 = max(0, math.floor((view.ox + x1) * view.sx))
+        dy1 = max(0, math.floor((view.oy + y1) * view.sy))
+        dx2 = min(out.width, math.ceil((view.ox + x2) * view.sx))
+        dy2 = min(out.height, math.ceil((view.oy + y2) * view.sy))
+        if dx2 <= dx1 or dy2 <= dy1:
+            return
+        rx1, ry1 = dx1 / view.sx - view.ox, dy1 / view.sy - view.oy
+        rx2, ry2 = dx2 / view.sx - view.ox, dy2 / view.sy - view.oy
+        ix1, iy1 = math.floor(rx1), math.floor(ry1)
+        ix2, iy2 = math.ceil(rx2), math.ceil(ry2)
+        patch = Image.new("RGBA", (ix2 - ix1, iy2 - iy1), (0, 0, 0, 0))
+        paint(ImageDraw.Draw(patch), -ix1, -iy1)
+        # Drawing on the layout frame itself clipped at its edges.
+        inside = (max(0, -ix1), max(0, -iy1),
+                  min(patch.width, view.lw - ix1), min(patch.height, view.lh - iy1))
+        if inside != (0, 0, *patch.size):
+            clipped = Image.new("RGBA", patch.size, (0, 0, 0, 0))
+            clipped.paste(patch.crop(inside), inside[:2])
+            patch = clipped
+        size = (dx2 - dx1, dy2 - dy1)
+        box = (rx1 - ix1, ry1 - iy1, rx2 - ix1, ry2 - iy1)
+        if size != patch.size or box != (0, 0, *patch.size):
+            patch = _fit(patch, size, box)
+        out.alpha_composite(patch, dest=(dx1, dy1))
+
+    def _draw_image_layers(self, out, view, timestamp):
+        """Composite the stickers showing at ``timestamp`` onto ``out``.
 
         Mirrors what ``ffmpeg_backend._build_image_overlay_chain`` does
         at export time: for each layer, load the file (memoized by path),
         scale it by ``scale`` relative to the IMAGE'S OWN width (same as
         ffmpeg — the scale filter can't see the main video's width from
         inside the overlay input chain), apply opacity via alpha
-        multiplication, then paste at the anchored position.
+        multiplication, then paste at the anchored position in the
+        layout frame. Each sticker is resized once, straight to its size
+        on screen.
 
         Layers with an empty / missing path or an unreadable file are
         silently skipped. Timing obeys ``start`` / ``end`` the same way
-        text layers do.
+        text layers do. Returns True when anything was drawn.
         """
         # Reset hit-test table before any early exit so a previous
         # frame's bboxes don't stick around once the layer list empties.
         self._image_bboxes = []
 
         if not self._image_layers_provider:
-            return image
+            return False
         try:
             layers = self._image_layers_provider() or []
         except Exception:
-            return image
+            return False
         # Filter to layers that are (a) renderable now and (b) have a real path.
         # ``idx`` is carried through so the drag-callback can address the
         # correct row in the source list even when some layers are
@@ -683,60 +983,30 @@ class VideoPlayer(ctk.CTkFrame):
                 continue
             visible.append((idx, L))
         if not visible:
-            return image
+            return False
 
-        composite = image.convert("RGBA")
-        W, H = composite.size
+        W, H = view.lw, view.lh
+        # The layout frame on screen; stickers are clipped to it, as the
+        # export's overlay clips them to the frame.
+        left = max(0, round(view.ox * view.sx))
+        top = max(0, round(view.oy * view.sy))
+        right = min(out.width, round((view.ox + W) * view.sx))
+        bottom = min(out.height, round((view.oy + H) * view.sy))
+        drew = False
 
         for idx, layer in visible:
             path = layer.get("path")
-            # Cache hit? Use it. Cache miss: load once and remember.
-            # Animated sticker? Pick the frame the export would show at
-            # this instant. ffmpeg loops the overlay continuously from
-            # the start of the encode, so the frame follows the timeline
-            # position modulo the loop length — see frame_index_at.
-            # Without this the preview sat on frame 0 while the exported
-            # file moved, the one place preview/export parity did not
-            # hold.
-            if path not in self._image_anim_cache:
-                from videokidnapper.utils.animated_media import (
-                    load_animation_frames,
-                )
-                self._image_anim_cache[path] = load_animation_frames(path)
-            animation = self._image_anim_cache[path]
-
-            if animation is not None:
-                from videokidnapper.utils.animated_media import frame_index_at
-
-                frames, durations = animation
-                src = frames[frame_index_at(durations, timestamp)]
-            else:
-                src = self._image_cache.get(path)
-                if src is None:
-                    try:
-                        src = Image.open(path).convert("RGBA")
-                    except Exception:
-                        # Bad path / unreadable file — cache the failure
-                        # as None so we don't retry every frame tick.
-                        self._image_cache[path] = None
-                        continue
-                    self._image_cache[path] = src
-                elif src is None:
-                    continue  # previously-failed load
+            src = self._sticker_frame(path, timestamp)
+            if src is None:
+                continue  # unreadable file
 
             # Scale relative to the image's own width (matches ffmpeg).
             scale = max(0.01, min(1.0, coerce_float(layer.get("scale", 0.25), 0.25)))
             sw, sh = src.size
             new_w = max(1, int(sw * scale))
             new_h = max(1, int(sh * scale))
-            scaled = src.resize((new_w, new_h), Image.LANCZOS)
-
             # Opacity: pre-multiply alpha into the overlay's alpha band.
             opacity = max(0.0, min(1.0, coerce_float(layer.get("opacity", 1.0), 1.0)))
-            if opacity < 0.999:
-                alpha = scaled.split()[3]
-                alpha = alpha.point(lambda v, o=opacity: int(v * o))
-                scaled.putalpha(alpha)
 
             # Position — drag-override wins when present; otherwise
             # use the anchor, same way the ffmpeg overlay filter does.
@@ -750,21 +1020,122 @@ class VideoPlayer(ctk.CTkFrame):
                     layer.get("position", "top_right"), W, H, new_w, new_h,
                 )
 
-            composite.alpha_composite(scaled, dest=(x, y))
-
-            # Record bbox in source-pixel space so clicks on this
+            # Record bbox in layout-pixel space so clicks on this
             # overlay in subsequent frames can be hit-tested.
             self._image_bboxes.append(
                 (idx, x, y, x + new_w, y + new_h),
             )
 
-        return composite.convert("RGB")
+            dx = round((view.ox + x) * view.sx)
+            dy = round((view.oy + y) * view.sy)
+            size = (max(1, round(new_w * view.sx)), max(1, round(new_h * view.sy)))
+            scaled = self._scaled_sticker(path, src, size, opacity)
+            cx1, cy1 = max(dx, left), max(dy, top)
+            cx2, cy2 = min(dx + size[0], right), min(dy + size[1], bottom)
+            if cx2 <= cx1 or cy2 <= cy1:
+                continue
+            if (cx1, cy1, cx2, cy2) != (dx, dy, dx + size[0], dy + size[1]):
+                scaled = scaled.crop((cx1 - dx, cy1 - dy, cx2 - dx, cy2 - dy))
+            out.alpha_composite(scaled, dest=(cx1, cy1))
+            drew = True
+
+        return drew
+
+    def _sticker_frame(self, path, timestamp):
+        """The sticker's picture at ``timestamp``, or None if unreadable.
+
+        Animated sticker? The frame the export would show at this
+        instant. ffmpeg loops the overlay continuously from the start of
+        the encode, so the frame follows the timeline position modulo
+        the loop length — see frame_index_at. Until its frames are
+        decoded (on a worker, see _load_animation) it shows its first.
+        """
+        if path not in self._image_anim_cache:
+            self._load_animation(path)
+        animation = self._image_anim_cache.get(path)
+        if animation is not None and animation is not _LOADING:
+            from videokidnapper.utils.animated_media import frame_index_at
+
+            frames, durations = animation
+            return frames[frame_index_at(durations, timestamp)]
+        src = self._image_cache.get(path, _MISSING)
+        if src is _MISSING:
+            try:
+                src = Image.open(path).convert("RGBA")
+            except Exception:
+                # Bad path / unreadable file — cache the failure as None
+                # so we don't retry every frame tick.
+                src = None
+            self._image_cache[path] = src
+        return src
+
+    def _scaled_sticker(self, path, src, size, opacity):
+        """``src`` at ``size`` with ``opacity`` applied, cached.
+
+        Resizing and fading a large sticker cost ~15 ms on every render
+        (each keystroke, each drag step) though it rarely changes.
+        """
+        key = (path, id(src), size, round(opacity, 3))
+        cache = self._image_scaled_cache
+        scaled = cache.get(key)
+        if scaled is not None:
+            cache.move_to_end(key)
+            return scaled
+        scaled = src.resize(size, Image.LANCZOS)
+        if opacity < 0.999:
+            alpha = scaled.split()[3]
+            alpha = alpha.point(lambda v, o=opacity: int(v * o))
+            scaled.putalpha(alpha)
+        cache[key] = scaled
+        # Enough for every frame of an animated sticker or two.
+        while len(cache) > 256:
+            cache.popitem(last=False)
+        return scaled
+
+    def _load_animation(self, path):
+        """Decode an animated sticker's frames on a worker thread.
+
+        A 170-frame GIF took 184 ms on the window's thread the first time
+        it was previewed. The still first frame shows meanwhile, and the
+        preview redraws once the frames are in.
+        """
+        self._image_anim_cache[path] = _LOADING
+
+        def work():
+            try:
+                from videokidnapper.utils.animated_media import load_animation_frames
+                result = load_animation_frames(path)
+            except Exception:
+                result = None
+            with self._frame_lock:
+                self._anims_ready.append((path, result))
+
+        threading.Thread(target=work, daemon=True, name="sticker-frames").start()
+        if self._anim_poll_id is None:
+            self._anim_poll_id = self.after(50, self._collect_animations)
+
+    def _collect_animations(self):
+        self._anim_poll_id = None
+        with self._frame_lock:
+            ready, self._anims_ready = self._anims_ready, []
+        animated = False
+        for path, result in ready:
+            # Dropped meanwhile (forget_images): not wanted any more.
+            if self._image_anim_cache.get(path) is _LOADING:
+                self._image_anim_cache[path] = result
+                animated = animated or result is not None
+        if any(v is _LOADING for v in self._image_anim_cache.values()):
+            self._anim_poll_id = self.after(50, self._collect_animations)
+        if animated and not self._playing:
+            self.refresh_overlay()
 
     def clear(self):
         self.stop()
         self.video_path = None
         self.duration = 0
         self._photo = None
+        self._base = None
+        self._source_size = None
         self.canvas.delete("frame")
         self.canvas.configure(cursor="hand2" if self._on_empty_click else "crosshair")
         self._draw_placeholder()
@@ -794,7 +1165,9 @@ class VideoPlayer(ctk.CTkFrame):
         else:
             self._tick()
 
-    def stop(self):
+    def stop(self, wait=0.0):
+        """Stop playback. ``wait`` seconds is passed to the A/V player for
+        callers about to exit (see :meth:`AudioVideoPlayer.stop`)."""
         self._playing = False
         if self._play_after_id is not None:
             try:
@@ -803,12 +1176,13 @@ class VideoPlayer(ctk.CTkFrame):
                 pass
             self._play_after_id = None
         # A/V player cleanup — safe to call even when one isn't running.
-        if self._av_player is not None:
+        player, self._av_player = self._av_player, None
+        self._av_session = None
+        if player is not None:
             try:
-                self._av_player.stop()
+                player.stop(wait=wait)
             except Exception:
                 pass
-            self._av_player = None
         if self._av_time_after_id is not None:
             try:
                 self.after_cancel(self._av_time_after_id)
@@ -816,82 +1190,136 @@ class VideoPlayer(ctk.CTkFrame):
                 pass
             self._av_time_after_id = None
 
+    def destroy(self):
+        # Closing the window mid-playback: stop the player and give its
+        # audio thread a moment to close the sound device. Left running,
+        # the sound carried on after the window was gone, and the
+        # process crashed on exit when the sound library shut down
+        # underneath the still-open stream.
+        self.stop(wait=1.0)
+        # Sessions paused just before can still be closing their sound.
+        try:
+            playback.wait_for_sound(1.0)
+        except Exception:
+            pass
+        if self._anim_poll_id is not None:
+            try:
+                self.after_cancel(self._anim_poll_id)
+            except Exception:
+                pass
+            self._anim_poll_id = None
+        super().destroy()
+
     # ------------------------------------------------------------------
     # Real-time A/V playback branch
     # ------------------------------------------------------------------
     def _start_av_playback(self, start, end):
         """Launch an AudioVideoPlayer and wire its frame output to the canvas."""
+        # Both callbacks run on the player's worker threads, so they only
+        # hand data over; _av_pump picks it up on the Tk thread. Calling
+        # Tk from those threads (even winfo_exists or after) blocks them
+        # on the UI thread and fails outright once the window closes.
+        # ``session`` ties the hand-over to this play, so a frame from a
+        # player being torn down cannot land in the next one.
+        session = object()
+        self._av_session = session
+        self._av_frame = None
+        self._av_finished = None
+        self._av_render_failed = False
+
         def on_frame(img, ts):
-            # Called from the video decode thread — marshal to Tk main.
-            if not self.winfo_exists():
-                return
-            self.after(0, self._av_render_frame, img, ts)
+            if self._av_session is session:
+                self._av_frame = (img, ts)
 
         def on_finished(reason):
-            if not self.winfo_exists():
-                return
-            self.after(0, self._av_on_finished, reason)
+            if self._av_session is session:
+                self._av_finished = reason
 
         try:
             self._av_player = playback.AudioVideoPlayer(
                 self.video_path,
                 render_callback=on_frame,
                 on_finished=on_finished,
+                frame_size=self._playback_frame_size(),
             )
             self._av_player.play(start=start, end=end)
         except Exception:
             # Construction failed (bad path, missing deps at runtime).
             # Fall back to the scrub loop so the Play button still works.
             self._av_player = None
+            self._av_session = None
             self._tick()
             return
-        # Poll the A/V clock a few times a second so ``current_time``
-        # stays in sync — keyboard-nudge / slider-mark reads it, and we
-        # don't want those reading a stale value while playback runs.
-        self._av_poll_time()
+        self._av_pump()
+
+    def _av_pump(self):
+        """Tk-thread side of A/V playback: show the newest decoded frame,
+        keep ``current_time`` in step (keyboard nudges and marks read it)
+        and notice the end of the clip."""
+        self._av_time_after_id = None
+        if self._av_player is None or not self._playing:
+            return
+        frame, self._av_frame = self._av_frame, None
+        try:
+            if frame is not None:
+                self._av_render_frame(*frame)
+            else:
+                self.current_time = self._av_player.current_time()
+        except Exception as exc:
+            # One frame that fails to draw (an overlay, say) must not end
+            # the pump: the sound played on over a frozen picture, the end
+            # of the clip went unnoticed and the button stayed on Pause.
+            if not getattr(self, "_av_render_failed", False):
+                self._av_render_failed = True
+                print(f"Preview: a playback frame failed to draw: {exc!r}",
+                      file=sys.stderr)
+        if self._av_finished is not None:
+            reason, self._av_finished = self._av_finished, None
+            self._av_on_finished(reason)
+            return
+        self._av_time_after_id = self.after(self._AV_PUMP_MS, self._av_pump)
 
     def _av_render_frame(self, img, ts):
         """Main-thread render path for a frame produced by AudioVideoPlayer."""
         if not self._playing or self._av_player is None:
             return
         self.current_time = ts
+        self._render_frame(img, ts, source_size=self._source_size or img.size)
+
+    def _playback_frame_size(self):
+        """The size playback should decode frames at: about as shown.
+
+        Full-size 4K frames piped over as RGB (25 MB each) arrived only
+        27 times a second, and shrinking each for the canvas took the
+        window's thread another 15-35 ms, so the picture fell behind the
+        sound and the window lagged. None decodes at full size: the
+        video is small enough already, or its size isn't known yet.
+        """
+        src = self._source_size
         cw = self.canvas.winfo_width()
         ch = self.canvas.winfo_height()
-        if cw < 10 or ch < 10:
-            return
-        fw, fh = img.size
+        if not src or cw < 10 or ch < 10:
+            return None
+        geom = self._current_geometry(src)
+        fw, fh = (geom.src_w, geom.src_h) if geom.is_subrect else geom.size
         scale = min(cw / fw, ch / fh)
-        new_w = max(1, int(fw * scale))
-        new_h = max(1, int(fh * scale))
-        # Match the scrub path: composite overlays onto the source-sized
-        # frame, then resize. Keeps preview-matches-export alignment.
-        composited = self._apply_text_overlay(self._apply_color(img), ts)
-        rendered = composited.resize((new_w, new_h), Image.LANCZOS)
-        self._photo = ImageTk.PhotoImage(rendered)
-        self.canvas.delete("frame")
-        self.canvas.create_image(
-            cw // 2, ch // 2, image=self._photo, tags="frame",
-        )
-        self._last_frame_rect = (
-            cw // 2 - new_w // 2, ch // 2 - new_h // 2, new_w, new_h, fw, fh,
-        )
-        self._draw_crop_overlay()
-
-    def _av_poll_time(self):
-        """Mirror the A/V player's clock into ``self.current_time``."""
-        if self._av_player is None or not self._playing:
-            return
-        try:
-            self.current_time = self._av_player.current_time()
-        except Exception:
-            pass
-        # 80ms keeps the timeline playhead moving smoothly during playback.
-        self._av_time_after_id = self.after(80, self._av_poll_time)
+        if scale >= 0.9:
+            return None
+        return (max(2, int(src[0] * scale) // 2 * 2),
+                max(2, int(src[1] * scale) // 2 * 2))
 
     def _av_on_finished(self, reason):
         """Tear down when the A/V player reports end-of-clip or stop."""
         self._playing = False
-        self._av_player = None
+        player, self._av_player = self._av_player, None
+        self._av_session = None
+        if player is not None:
+            # Already finished; this just makes sure no decoder outlives
+            # the session.
+            try:
+                player.stop()
+            except Exception:
+                pass
         if self._av_time_after_id is not None:
             try:
                 self.after_cancel(self._av_time_after_id)
@@ -1103,7 +1531,11 @@ class VideoPlayer(ctk.CTkFrame):
 
     def set_crop(self, crop_rect):
         """Programmatic crop update; `crop_rect` is source-pixel dict or None."""
+        changed = crop_rect != self._crop_rect
         self._crop_rect = crop_rect
+        if changed and not self._playing:
+            # The crop reshapes the layout frame, so redraw the frame.
+            self.refresh_overlay()
         self._draw_crop_overlay()
 
     def get_crop(self):
@@ -1173,7 +1605,10 @@ class VideoPlayer(ctk.CTkFrame):
 
     def _draw_crop_overlay(self):
         self.canvas.delete("crop")
-        if not self._crop_rect or not self._last_frame_rect:
+        # Only the crop tool draws the rectangle. Outside it the frame
+        # itself shows the crop (dimmed edges, or the cropped output when
+        # rotated), and source coordinates no longer match the display.
+        if not self._crop_mode or not self._crop_rect or not self._last_frame_rect:
             return
         cr = self._crop_rect
         x1, y1 = self._source_to_canvas(cr["x"], cr["y"])

@@ -23,7 +23,7 @@ Grab a video from the web, cut the part you want, caption it, and export a clean
 - **Export for the platform.** Tune GIFs (dither, palette, loop) or export hardware-encoded MP4s. Reframe 16:9 to 9:16 for Shorts, Reels, and TikTok with a blurred-background fill. Speed, rotate, mute, audio-only, and colour adjustment are built in.
 - **Record your screen** straight into the editor.
 - **Save real projects.** `.vidkid` project files preserve the source link, trim ranges, crop, captions, overlays, and export choices. Autosave recovery protects work after an interrupted session, and recent projects stay one click away.
-- **Updates that fit the install.** Store installs update through the Microsoft Store; Setup, winget and portable installs open the GitHub release; pip, APT, AppImage, macOS and source installs each get the route that fits them.
+- **One-click updates on Windows.** Setup, winget and portable installs download the new version from GitHub, restart and install it themselves. Store installs update through the Microsoft Store; pip, APT, AppImage, macOS and source installs each get the route that fits them.
 - **Runs fully offline.** No upload, no account, no watermark. Open source, FFmpeg included.
 
 The app is three steps across the top of the window: **Import** brings a clip in (a file, a screen recording, or a link), **Edit** is where you trim, caption, crop and color it, and **Export** makes the MP4, GIF or MP3. Edit fits on one screen with no scrolling. VideoKidnapper also has undo and redo, project save and recovery, batch export, an export history, keyboard shortcuts (`Ctrl+S` project, `Space` play, `J`/`L` step, `I`/`O` in-out, `Q` save range, `Ctrl+E` export; `⌘` on a Mac), five themes, a CLI mode, and a [plugin API](docs/PLUGINS.md). See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what is next.
@@ -77,15 +77,17 @@ Every successful export, from Edit or Batch, is persisted to `~/.videokidnapper_
 
 ### Projects and recovery
 
-![Project save and recent-file hub](assets/screenshots/projects.png)
+![Recent projects in Import, with the bar offering to recover unsaved work](assets/screenshots/projects.png)
 
-Press `Ctrl+S` to save a `.vidkid` project, `Ctrl+Shift+S` to save a copy, or `Ctrl+Shift+O` to open one. Project files keep the source video reference, trim and queued ranges, crop, text and image layers, plus export choices. Relative media paths travel with a project folder when possible. Unsaved edits are written atomically to a recovery file, and the next launch offers to recover it after an interrupted session.
+Press `Ctrl+S` to save a `.vidkid` project, `Ctrl+Shift+S` to save a copy, or `Ctrl+Shift+O` to open one. The same actions, plus your recent projects, are in the menu under the project's name in the header, and **Import** lists recent projects with an **Open** button each. Project files keep the source video reference, trim and queued ranges, crop, text and image layers, plus export choices. Relative media paths travel with a project folder when possible. Unsaved edits are written atomically to a recovery file. After an interrupted session, a bar at the top of the window offers to **Recover** or **Discard** it; close the bar with ✕ to be asked again next time.
+
+Questions like this never open a separate window. Saving before you close, stopping an export that is still running, and restarting after a theme change are all asked in that same bar.
 
 ### App updates
 
 ![Install-aware update prompt](assets/screenshots/updates.png)
 
-When a release is available, an **Update** chip appears in the header (or use **Check for updates** in the settings menu). Microsoft Store installs update through the Store. Setup and winget installs open the GitHub release, whose Setup installer updates them in place and keeps your settings. pip and APT installs use their package manager. Portable, AppImage, macOS, and source installs open the matching release instead of replacing a running executable in place.
+When a release is available, an **Update** chip appears in the header (or use **Check for updates** in the settings menu). On Windows Setup, winget and portable installs, **Restart to update** downloads the new version from the GitHub release with a progress bar, checks it against the SHA-256 checksum GitHub publishes, asks you to save your project, then closes, installs and reopens the app. Setup and winget installs upgrade in place, in the same per-user or all-users scope they were installed with; the portable build swaps its own .exe. Microsoft Store installs update through the Store. pip and APT installs use their package manager. AppImage, macOS, and source installs open the matching release.
 
 ### Debug log
 
@@ -97,21 +99,17 @@ Captures `stdout` + `stderr` with level-colored tags: `INFO` accent-blue, `WARN`
 
 ### Setup
 
-![First-run welcome](assets/screenshots/onboarding.png)
+![Setup and components page](assets/screenshots/setup.png)
 
-New installs start with a short three-step welcome and direct actions for opening a local video or using a web link. Editing stays on the computer, with no account or upload required.
+A page inside the window, opened from **Setup and components…** in the settings (gear) menu; **Back** or **Esc** returns to what you were doing. When FFmpeg is missing on first run, a setup screen explains the source, destination, and integrity check before asking permission to install, and its **Review details** opens this same page in its place. Each row describes a prerequisite and the feature it unlocks; everything missing is ticked, and you untick what you don't want. **Select all missing** toggles every installable row.
 
-![Setup dialog](assets/screenshots/setup.png)
+- **Install missing now** runs in the background, with its output in the console beside the list: FFmpeg is pulled as a portable build (gyan.dev on Windows, checked against the publisher's SHA-256 digest; on macOS the same static build the Mac app bundles, checked against digests pinned in the source), staged, and then placed in `assets/ffmpeg/bin/` (the app's fallback lookup path). Python packages use `python -m pip install --user`; no admin access is needed.
+- **Advanced: admin terminal** launches an elevated shell pre-populated with the right commands for your OS: `winget install Gyan.FFmpeg` on Windows (via PowerShell `Start-Process -Verb RunAs`), `brew install ffmpeg` on macOS (via Terminal + `osascript`), `sudo apt-get install ffmpeg` on Linux. If no terminal is available, commands are copied to the clipboard as a fallback.
+- **Relaunch to apply** restarts the current process so newly-installed prerequisites are picked up.
 
-Opened from **Setup and components…** in the settings (gear) menu. When FFmpeg is missing on first run, a setup screen explains the source, destination, and integrity check before asking permission to install. Each row describes a prerequisite and the feature it unlocks; required items are pre-checked, optional ones wait for opt-in. **Select all missing** toggles every installable row.
+### Share (under the Export button)
 
-- **Install Selected** runs in a background thread: FFmpeg is pulled as a portable build (gyan.dev on Windows, checked against the publisher's SHA-256 digest; on macOS the same static build the Mac app bundles, checked against digests pinned in the source), staged, and then placed in `assets/ffmpeg/bin/` (the app's fallback lookup path). Python packages use `python -m pip install --user`; no admin access is needed.
-- **Open Admin Terminal** launches an elevated shell pre-populated with the right commands for your OS: `winget install Gyan.FFmpeg` on Windows (via PowerShell `Start-Process -Verb RunAs`), `brew install ffmpeg` on macOS (via Terminal + `osascript`), `sudo apt-get install ffmpeg` on Linux. If no terminal is available, commands are copied to the clipboard as a fallback.
-- **Relaunch** restarts the current process so newly-installed prerequisites are picked up.
-
-### Share (inside the Export dialog)
-
-After a successful export, the Export dialog reveals a share panel with a caption entry and one button per supported platform. Clicking a button:
+After a successful export, the Export workspace shows the result right under the Export button: **Open file**, **Show in folder**, and a share panel with a caption entry and one button per supported platform. Clicking a platform button:
 
 1. Copies the exported file to the OS clipboard (Windows: PowerShell `Set-Clipboard -Path`; macOS: `pbcopy`; Linux: `xclip`)
 2. Opens the platform's compose / upload page in your browser (pre-filled with your caption on X, Reddit, and Facebook's sharer)
@@ -126,7 +124,7 @@ After a successful export, the Export dialog reveals a share panel with a captio
 Each caption is a clip on the timeline's Text track. Select one on the timeline (or with the arrows in the Inspector) and the **Text** tab edits it:
 
 - **Style presets** — Subtitle (white-on-black box), Caption (white with black outline, the social-standard look), Title (large centered), Watermark (small corner), Custom
-- Font (system fonts), size, color (8 presets + **Custom…** color picker), position (7 anchors, or drag it in the preview)
+- Font (system fonts), size, color (8 preset swatches, or any hex code such as `#FF8800`), position (7 anchors, or drag it in the preview)
 - **Bold / italic** toggles, resolved to real font-variant files (`arialbd.ttf`, `ariali.ttf`, ...) with graceful fallback when a variant is missing
 - **Outline**, **Shadow** and **Box** toggles, compiled to drawtext `borderw` / `shadowx` / `box` and mirrored exactly in the preview
 - **Multiline captions:** the text box wraps, and embedded newlines export as real line breaks
@@ -166,6 +164,7 @@ When a hardware encoder is available, CRF maps to the right flag per encoder (`-
 | **Ctrl+E** | Export with the current settings |
 | **Ctrl+O** | Open video file |
 | **Ctrl+V** | Paste — a video/GIF link opens Import from anywhere; a clipboard image becomes an overlay in Edit |
+| **?** | Show or hide every shortcut, on a page in the window (**Esc** goes back) |
 
 Entry fields swallow shortcuts so typing into them doesn't scrub the video.
 
@@ -242,9 +241,9 @@ pip install -r requirements.txt
 
 ### 3. FFmpeg
 
-Three options — the Setup dialog handles all of them:
+Three options — the Setup page handles all of them:
 
-- **Auto-install (Windows and macOS)**: open **Setup and components…** from the settings menu → check FFmpeg → **Install Selected**. Pulls a verified build into `assets/ffmpeg/bin/`: gyan.dev essentials on Windows, the static build the Mac app bundles on macOS.
+- **Auto-install (Windows and macOS)**: open **Setup and components…** from the settings menu → check FFmpeg → **Install missing now**. Pulls a verified build into `assets/ffmpeg/bin/`: gyan.dev essentials on Windows, the static build the Mac app bundles on macOS.
 - **Manual portable**: drop `ffmpeg.exe` and `ffprobe.exe` into `assets/ffmpeg/bin/` yourself.
 - **System install**: `winget install Gyan.FFmpeg` (Windows) / `brew install ffmpeg` (macOS) / `sudo apt install ffmpeg` (Linux).
 

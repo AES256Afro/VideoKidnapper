@@ -1,5 +1,7 @@
 # SPDX-FileCopyrightText: 2026 AES256Afro <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
+import pytest
+
 from videokidnapper.utils import github_update
 from videokidnapper.utils.github_update import (
     build_update_plan, detect_install_channel, is_newer,
@@ -77,3 +79,32 @@ def test_pip_still_uses_package_manager():
     plan = build_update_plan("pip", "https://example.test/release")
     assert plan.action == "run"
     assert plan.command[1:4] == ("-m", "pip", "install")
+
+
+def test_git_repo_above_site_packages_is_not_a_source_checkout(tmp_path):
+    # A pip install inside a venv that lives in some git repository.
+    (tmp_path / ".git").mkdir()
+    module = (tmp_path / "venv" / "Lib" / "site-packages" / "videokidnapper"
+              / "utils" / "github_update.py")
+    module.parent.mkdir(parents=True)
+    assert detect_install_channel(
+        platform_name="linux", frozen=False, env={}, module_path=module,
+    ) == "pip"
+
+
+@pytest.mark.parametrize("fetched,outcome,notified", [
+    (None, "failed", False),
+    (("v1.0.0", "https://x"), "current", False),
+    (("v99.0.0", "https://x"), "newer", True),
+])
+def test_check_reports_how_it_went(monkeypatch, fetched, outcome, notified):
+    import threading
+    monkeypatch.setattr(github_update, "fetch_latest", lambda repo: fetched)
+    done = threading.Event()
+    seen = {}
+    github_update.check_async(
+        "1.0.0", lambda tag, link: seen.setdefault("update", tag),
+        on_done=lambda result: (seen.setdefault("outcome", result), done.set()))
+    assert done.wait(5)
+    assert seen["outcome"] == outcome
+    assert ("update" in seen) == notified

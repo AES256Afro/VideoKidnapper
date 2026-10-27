@@ -14,6 +14,7 @@ and color have exactly one home.
 """
 
 from videokidnapper.utils import settings
+from videokidnapper.utils.coerce import coerce_float, coerce_int
 from videokidnapper.utils.file_naming import (
     LABEL_TO_STYLE, NAMING_STYLES, build_base_name, current_style,
 )
@@ -102,11 +103,29 @@ def _speed_label(value):
     return min(SPEED_CHOICES, key=lambda label: abs(_speed_to_float(label) - value))
 
 
+def _choice(mapping, key, default):
+    """``mapping[key]``, or ``default`` for a missing or unhashable key.
+
+    Settings and project files are user-editable JSON, so a value can be
+    a list or an object, and ``dict.get`` raises on those.
+    """
+    try:
+        return mapping.get(key, default)
+    except TypeError:
+        return default
+
+
 def _rotate_to_int(label):
     try:
         return int(label.rstrip("°"))
     except ValueError:
         return 0
+
+
+def _rotate_label(value):
+    """"90°" for a stored 90; "0°" for anything that is not a quarter turn."""
+    label = f"{coerce_int(value, 0) % 360}°"
+    return label if label in ROTATE_CHOICES else "0°"
 
 
 def _fade_to_seconds(label):
@@ -172,41 +191,46 @@ class EditorOptions:
         self.output_folder_var = ctk.StringVar(value=settings.get("output_folder"))
         self.naming_var = ctk.StringVar(value=NAMING_STYLES[current_style()][0])
         self.speed_var  = ctk.StringVar(value=_speed_label(settings.get("speed", 1.0)))
-        self.rotate_var = ctk.StringVar(value=f"{settings.get('rotate', 0)}°")
+        self.rotate_var = ctk.StringVar(value=_rotate_label(settings.get("rotate", 0)))
         self.mute_var   = ctk.BooleanVar(value=settings.get("mute_audio", False))
         self.audio_only_var = ctk.BooleanVar(value=settings.get("audio_only", False))
         self.aspect_var = ctk.StringVar(value=settings.get("aspect_preset", "Source"))
         self.concat_var = ctk.BooleanVar(value=settings.get("concat_ranges", False))
-        self.fade_var   = ctk.StringVar(value=_seconds_to_fade_label(settings.get("text_fade", 0.0)))
+        self.fade_var   = ctk.StringVar(
+            value=_seconds_to_fade_label(coerce_float(settings.get("text_fade", 0.0))))
         self.hw_var     = ctk.StringVar(value=settings.get("hw_encoder", "auto"))
         # Color grade — persisted as floats, rendered as sliders.
-        self.brightness_var = ctk.DoubleVar(value=float(settings.get("color_brightness", 0.0)))
-        self.contrast_var   = ctk.DoubleVar(value=float(settings.get("color_contrast", 1.0)))
-        self.saturation_var = ctk.DoubleVar(value=float(settings.get("color_saturation", 1.0)))
-        self.gamma_var      = ctk.DoubleVar(value=float(settings.get("color_gamma", 1.0)))
+        self.brightness_var = ctk.DoubleVar(
+            value=coerce_float(settings.get("color_brightness", 0.0), 0.0))
+        self.contrast_var   = ctk.DoubleVar(
+            value=coerce_float(settings.get("color_contrast", 1.0), 1.0))
+        self.saturation_var = ctk.DoubleVar(
+            value=coerce_float(settings.get("color_saturation", 1.0), 1.0))
+        self.gamma_var      = ctk.DoubleVar(
+            value=coerce_float(settings.get("color_gamma", 1.0), 1.0))
         # Concat transition between queued ranges (ignored unless concat=on).
         self.transition_var = ctk.StringVar(
-            value=TRANSITION_KEY_TO_LABEL.get(settings.get("concat_transition", "cut"), "Cut"),
+            value=_choice(TRANSITION_KEY_TO_LABEL, settings.get("concat_transition", "cut"), "Cut"),
         )
         self.transition_duration_var = ctk.DoubleVar(
-            value=float(settings.get("concat_transition_duration", 0.5)),
+            value=coerce_float(settings.get("concat_transition_duration", 0.5), 0.5),
         )
         # GIF palette options — persisted as backend keys, shown as labels.
         self.gif_dither_var = ctk.StringVar(
-            value=GIF_DITHER_KEY_TO_LABEL.get(
-                settings.get("gif_dither", "bayer"), GIF_DITHER_CHOICES[0][0]),
+            value=_choice(GIF_DITHER_KEY_TO_LABEL,
+                          settings.get("gif_dither", "bayer"), GIF_DITHER_CHOICES[0][0]),
         )
         self.gif_stats_var = ctk.StringVar(
-            value=GIF_STATS_KEY_TO_LABEL.get(
-                settings.get("gif_stats_mode", "full"), GIF_STATS_CHOICES[0][0]),
+            value=_choice(GIF_STATS_KEY_TO_LABEL,
+                          settings.get("gif_stats_mode", "full"), GIF_STATS_CHOICES[0][0]),
         )
         self.gif_loop_var = ctk.StringVar(
-            value=GIF_LOOP_KEY_TO_LABEL.get(
-                settings.get("gif_loop", 0), GIF_LOOP_CHOICES[0][0]),
+            value=_choice(GIF_LOOP_KEY_TO_LABEL,
+                          settings.get("gif_loop", 0), GIF_LOOP_CHOICES[0][0]),
         )
         self.aspect_fill_var = ctk.StringVar(
-            value=ASPECT_FILL_KEY_TO_LABEL.get(
-                settings.get("aspect_fill_mode", "crop"), ASPECT_FILL_CHOICES[0][0]),
+            value=_choice(ASPECT_FILL_KEY_TO_LABEL,
+                          settings.get("aspect_fill_mode", "crop"), ASPECT_FILL_CHOICES[0][0]),
         )
 
         if autosave:
@@ -338,31 +362,33 @@ class EditorOptions:
             if data.get("output_folder"):
                 self.output_folder_var.set(str(data["output_folder"]))
             self.speed_var.set(_speed_label(data.get("speed", 1.0)))
-            rotate = int(data.get("rotate", 0)) % 360
-            self.rotate_var.set(f"{rotate}°" if f"{rotate}°" in ROTATE_CHOICES else "0°")
+            self.rotate_var.set(_rotate_label(data.get("rotate", 0)))
             self.mute_var.set(bool(data.get("mute", False)))
             self.audio_only_var.set(bool(data.get("audio_only", False)))
             aspect = str(data.get("aspect_preset", "Source"))
             self.aspect_var.set(aspect if aspect in ASPECT_CHOICES else "Source")
             self.concat_var.set(bool(data.get("concat", False)))
-            self.fade_var.set(_seconds_to_fade_label(float(data.get("text_fade", 0.0))))
+            self.fade_var.set(_seconds_to_fade_label(coerce_float(data.get("text_fade", 0.0))))
             self.hw_var.set(str(data.get("hw_encoder", "auto")))
             for key, _label, default, var in self.color_vars():
-                var.set(float(data.get(key, default)))
+                var.set(coerce_float(data.get(key, default), default))
             transition = str(data.get("concat_transition", "cut"))
             self.transition_var.set(TRANSITION_KEY_TO_LABEL.get(transition, "Cut"))
             self.transition_duration_var.set(
-                float(data.get("concat_transition_duration", 0.5)))
-            self.gif_dither_var.set(GIF_DITHER_KEY_TO_LABEL.get(
+                coerce_float(data.get("concat_transition_duration", 0.5), 0.5))
+            self.gif_dither_var.set(_choice(
+                GIF_DITHER_KEY_TO_LABEL,
                 data.get("gif_dither", "bayer"), GIF_DITHER_CHOICES[0][0],
             ))
-            self.gif_stats_var.set(GIF_STATS_KEY_TO_LABEL.get(
+            self.gif_stats_var.set(_choice(
+                GIF_STATS_KEY_TO_LABEL,
                 data.get("gif_stats_mode", "full"), GIF_STATS_CHOICES[0][0],
             ))
-            self.gif_loop_var.set(GIF_LOOP_KEY_TO_LABEL.get(
-                data.get("gif_loop", 0), GIF_LOOP_CHOICES[0][0],
+            self.gif_loop_var.set(_choice(
+                GIF_LOOP_KEY_TO_LABEL, data.get("gif_loop", 0), GIF_LOOP_CHOICES[0][0],
             ))
-            self.aspect_fill_var.set(ASPECT_FILL_KEY_TO_LABEL.get(
+            self.aspect_fill_var.set(_choice(
+                ASPECT_FILL_KEY_TO_LABEL,
                 data.get("aspect_fill_mode", "crop"), ASPECT_FILL_CHOICES[0][0],
             ))
         finally:
