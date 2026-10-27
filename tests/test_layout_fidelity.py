@@ -288,3 +288,21 @@ def test_caption_too_tall_for_the_frame_is_shrunk():
     lines = text.split("\n")
     assert drawtext_layout(font, text)[2] <= 1080 - 40
     assert max(font.getlength(line) for line in lines) <= 1920 - 40
+
+
+def test_export_page_says_when_the_frame_shape_cuts_the_picture():
+    """A platform preset sets the frame shape too; "YouTube 1080p" on a
+    vertical clip cut most of it away without a word on Export."""
+    from videokidnapper.core.frame_geometry import frame_change_note
+
+    vertical = {"width": 1080, "height": 1920}
+    assert frame_change_note(vertical, {"aspect_preset": "16:9"}) == (
+        "Frame 16:9: cuts off the top and bottom, keeping 32% of the picture.")
+    assert "cuts off the sides" in frame_change_note(HD, {"aspect_preset": "9:16"})
+    assert "blurred" in frame_change_note(
+        HD, {"aspect_preset": "9:16", "aspect_fill_mode": "blur"})
+    # Nothing to say: same shape, no preset, or a manual crop wins.
+    assert frame_change_note(HD, {"aspect_preset": "16:9"}) is None
+    assert frame_change_note(HD, {"aspect_preset": "Source"}) is None
+    assert frame_change_note(HD, {"aspect_preset": "9:16",
+                                  "crop": {"x": 0, "y": 0, "w": 500, "h": 500}}) is None

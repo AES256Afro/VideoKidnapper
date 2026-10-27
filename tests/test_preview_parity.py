@@ -8,6 +8,8 @@ frame (see ``core.frame_geometry``), so what it shows, where a drag
 lands, and how a caption wraps all match the exported file.
 """
 
+import sys
+
 import pytest
 
 ctk = pytest.importorskip("customtkinter")
@@ -22,7 +24,12 @@ def root():
         r = ctk.CTk()
     except Exception as exc:  # noqa: BLE001 - headless CI
         pytest.skip(f"no usable display: {type(exc).__name__}")
-    r.geometry("1000x700")
+    # Mapped, so widgets get real sizes, but invisible: transparent, off
+    # screen and off the taskbar. Running the tests must not flash windows.
+    r.attributes("-alpha", 0.0)
+    if sys.platform == "win32":
+        r.attributes("-toolwindow", True)
+    r.geometry("1000x700+-4000+-4000")
     yield r
     r.destroy()
 

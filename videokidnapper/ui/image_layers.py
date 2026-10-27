@@ -28,6 +28,7 @@ import customtkinter as ctk
 
 from videokidnapper.ui import theme as T
 from videokidnapper.ui.widgets import RangeSlider
+from videokidnapper.utils.coerce import coerce_float, coerce_int
 
 
 POSITION_ANCHORS = [
@@ -261,13 +262,21 @@ class ImageLayerWidget(ctk.CTkFrame):
         moves the overlay. Setting the vars triggers the panel's
         ``trace_add`` wiring, so the preview refreshes live.
         """
-        self.x_var.set(max(0, int(source_x)))
-        self.y_var.set(max(0, int(source_y)))
+        self._set_xy(max(0, int(source_x)), max(0, int(source_y)))
 
     def _clear_drag_position(self):
         """Reset drag override so the overlay snaps back to the anchor."""
-        self.x_var.set(-1)
-        self.y_var.set(-1)
+        self._set_xy(-1, -1)
+
+    def _set_xy(self, x, y):
+        # One change, not two: each fired the whole chain (timeline,
+        # inspector, preview, undo) on every mouse move of a drag.
+        self._quiet = True
+        try:
+            self.x_var.set(x)
+        finally:
+            self._quiet = False
+        self.y_var.set(y)
 
     def get_layer_data(self):
         """Return the dict ffmpeg_backend.trim_to_video consumes.
@@ -293,19 +302,26 @@ class ImageLayerWidget(ctk.CTkFrame):
         return data
 
     def load_from_dict(self, data):
-        """Restore a serialized overlay without depending on widget internals."""
-        self.path_var.set(str(data.get("path") or ""))
+        """Restore a serialized overlay without depending on widget internals.
+
+        Values from a project file may be the wrong type or missing; odd
+        ones fall back to the defaults (see utils.coerce).
+        """
+        path = data.get("path")
+        self.path_var.set(path if isinstance(path, str) else "")
+        position = data.get("position")
         self.position_var.set(
-            _KEY_TO_DISPLAY.get(data.get("position"), "Top Right"),
+            _KEY_TO_DISPLAY.get(position, "Top Right")
+            if isinstance(position, str) else "Top Right",
         )
-        self.scale_var.set(float(data.get("scale", 0.25)))
-        self.opacity_var.set(float(data.get("opacity", 1.0)))
+        self.scale_var.set(coerce_float(data.get("scale", 0.25), 0.25))
+        self.opacity_var.set(coerce_float(data.get("opacity", 1.0), 1.0))
         self.scale_label.configure(text=f"{int(self.scale_var.get() * 100)}%")
         self.opacity_label.configure(text=f"{int(self.opacity_var.get() * 100)}%")
-        self.x_var.set(int(data.get("x", -1)))
-        self.y_var.set(int(data.get("y", -1)))
-        start = float(data.get("start", 0.0))
-        end = float(data.get("end", self.video_duration))
+        self.x_var.set(coerce_int(data.get("x", -1), -1))
+        self.y_var.set(coerce_int(data.get("y", -1), -1))
+        start = coerce_float(data.get("start", 0.0), 0.0)
+        end = coerce_float(data.get("end", self.video_duration), self.video_duration)
         self.time_slider.set_values(start, end)
         self._on_time_change(start, end)
 
@@ -465,7 +481,8 @@ class ImageLayersPanel(ctk.CTkFrame):
         bypass ``on_change``. Traces on the Tk vars catch every mutation.
         """
         def fire(*_):
-            self._notify_change()
+            if not getattr(layer, "_quiet", False):
+                self._notify_change()
         layer.path_var.trace_add("write", fire)
         layer.position_var.trace_add("write", fire)
         layer.scale_var.trace_add("write", fire)

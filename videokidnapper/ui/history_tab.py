@@ -180,7 +180,10 @@ class HistoryTab(ctk.CTkFrame):
                 if gen != self._thumb_gen:
                     return
                 try:
-                    frame = extract_frame(path, 0.5)
+                    # Asked for at about tile height: a full 4K frame per
+                    # entry, just to show a 96x54 tile, held up whatever
+                    # came after an export.
+                    frame = extract_frame(path, 0.5, max_height=_THUMB_SIZE[1] * 2)
                     if frame is not None:
                         frame = frame.convert("RGB")
                         frame.thumbnail(_THUMB_SIZE)

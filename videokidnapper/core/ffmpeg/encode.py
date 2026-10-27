@@ -29,10 +29,12 @@ from videokidnapper.core.ffmpeg._internals import (
 from videokidnapper.core.ffmpeg import color as _color
 from videokidnapper.core.ffmpeg.color import OUTPUT_COLOR_ARGS, TAG_WORKING_FILTER
 from videokidnapper.core.ffmpeg.filters import (
-    _assemble_video_filters, _build_audio_speed, _build_final_scale,
-    _build_image_overlay_chain, _build_palettegen_filter,
+    _assemble_video_filters, _build_audio_speed, _build_even_size,
+    _build_final_scale, _build_image_overlay_chain, _build_palettegen_filter,
     _build_paletteuse_filter, _build_scale_filter, _gif_loop_flag,
+    coerce_speed,
 )
+from videokidnapper.core.ffmpeg.layer_timing import layers_for_range
 from videokidnapper.core.ffmpeg.probe import get_video_info
 from videokidnapper.utils.animated_media import (
     cleanup_transcode, resolve_overlay_inputs,
@@ -42,6 +44,54 @@ from videokidnapper.utils.animated_media import (
 # ---------------------------------------------------------------------------
 # Trim entry points — the app's primary export paths
 # ---------------------------------------------------------------------------
+
+class NoVideoTrackError(ValueError):
+    """The source has sound but no picture, and a video export was asked for."""
+
+
+def _ts(seconds):
+    """A time for ffmpeg's argv. ``str()`` writes 1e-05, which it rejects."""
+    return f"{float(seconds):.6f}"
+
+
+def _output_duration(start, end, speed):
+    """How long the exported file is: the range, sped up or slowed down.
+
+    The speed change (``setpts``/``atempo``) runs before the output's
+    ``-t``, so ``-t`` measures the output. Given the range length instead,
+    a 2x export ran on past the end of the range and a 0.5x export
+    stopped halfway through it.
+    """
+    return max(0.001, (end - start) / coerce_speed(speed))
+
+
+def _palette_pass(cmd, duration, progress_callback, cancel_event):
+    """Run a GIF's first pass (palettegen) with progress and Stop.
+
+    It used to be a blocking ``subprocess.run`` with a 180 s timeout: Stop
+    did nothing until the pass finished, and a long or high-resolution
+    GIF hit the timeout and failed with a raw TimeoutExpired. Its share
+    of the progress bar is the first 30 %. A failure is left for the
+    second pass to report, as before; it fails without a palette.
+    """
+    def progress(p):
+        if progress_callback:
+            progress_callback(p * 0.3)
+
+    process = subprocess.Popen(
+        cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL,
+        text=True, encoding="utf-8", errors="replace", **_run_kwargs(),
+    )
+    _parse_progress(process, duration, progress, cancel_event)
+    process.wait()
+
+
+def _discard(path):
+    """Remove what a failed or cancelled ffmpeg left at ``path``."""
+    try:
+        Path(path).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 def _encoder_preference(preset_name, options):
     """Encoder preference for an export: ``"auto"`` means speed, mostly.
@@ -63,20 +113,20 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
                   progress_callback=None, cancel_event=None,
                   options=None):
     preset = PRESETS[preset_name]
-    duration = max(0.001, end - start)
     info = get_video_info(input_path)
     options = options or {}
 
     audio_only = bool(options.get("audio_only"))
     mute_audio = bool(options.get("mute"))
-    speed = options.get("speed", 1.0)
+    speed = coerce_speed(options.get("speed", 1.0))
+    out_duration = _output_duration(start, end, speed)
 
     if audio_only:
         cmd = [
             _get_ffmpeg(), "-y",
-            "-ss", str(start),
+            "-ss", _ts(start),
             "-i", str(input_path),
-            "-t", str(duration),
+            "-t", _ts(out_duration),
             "-vn",
             "-c:a", "libmp3lame",
             "-b:a", "192k",
@@ -86,30 +136,47 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
             cmd += ["-filter:a", audio_tempo]
         cmd += [str(output_path)]
         process = subprocess.Popen(
-            cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,
+            cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
             **_run_kwargs(),
         )
-        tail = _parse_progress(process, duration, progress_callback, cancel_event)
+        tail = _parse_progress(process, out_duration, progress_callback, cancel_event)
         process.wait()
         if process.returncode != 0:
             # A user Stop kills ffmpeg (rc -9); that is not a failure
             # worth dumping a full error report for.
             if not was_cancelled(cancel_event):
                 _log_ffmpeg_failure(cmd, process.returncode, tail)
+            _discard(output_path)
             return None
         return output_path
+
+    if not info.get("has_video", True):
+        raise NoVideoTrackError(
+            "This file has sound but no picture. Turn on Audio only to "
+            "export it as an MP3.")
+
+    # Layers are timed on the source clock; ffmpeg's filters run on the
+    # output clock (see core.ffmpeg.layer_timing). New names, so the
+    # tone-map retry below starts again from the caller's layers.
+    timed_text = layers_for_range(text_layers, start, end, speed)
+    valid_images = layers_for_range(
+        [L for L in (image_layers or []) if (L or {}).get("path")],
+        start, end, speed,
+    )
 
     # If there are image overlays we switch from -vf to -filter_complex
     # and add one -i per image. The existing video filter chain becomes
     # the first stage; the overlay chain composes on top of its output,
     # and the final downscale runs last, after the overlays.
-    valid_images = [L for L in (image_layers or []) if (L or {}).get("path")]
-    filters = _assemble_video_filters(preset_name, info, text_layers, options)
+    filters = _assemble_video_filters(preset_name, info, timed_text, options)
+    # An odd-sized frame (a manual crop with no downscale after it) would
+    # make the encoder refuse the whole export.
+    even_size = _build_even_size(preset_name, info, options)
 
     encoder = pick_video_encoder(_encoder_preference(preset_name, options))
     cmd = [
         _get_ffmpeg(), "-y",
-        "-ss", str(start),
+        "-ss", _ts(start),
         "-i", str(input_path),
     ]
     # Image overlay inputs land after the main video input. They're NOT
@@ -123,12 +190,23 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
     # need `-stream_loop -1` instead, and animated WebP additionally
     # needs transcoding because ffmpeg cannot decode it. resolve_overlay_
     # inputs() sorts all of that out; see utils/animated_media.py.
+    #
+    # The overlay chain is built first: when it comes out empty, the
+    # images are not added as inputs at all. Unmapped, an extra input
+    # could be the stream ffmpeg picks as "the" video.
+    overlay_chain = final_label = None
+    if valid_images:
+        overlay_chain, final_label, _inputs = _build_image_overlay_chain(
+            valid_images, base_label="vbase", video_dur=out_duration,
+        )
+    if not overlay_chain:
+        valid_images = []
     overlay_media, overlay_temps = resolve_overlay_inputs(valid_images)
     for media in overlay_media:
         cmd += media.input_args() + ["-i", media.path]
 
     cmd += [
-        "-t", str(duration),
+        "-t", _ts(out_duration),
         "-r", str(preset["fps"]),
         "-c:v", encoder,
     ]
@@ -153,47 +231,38 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
         # scale (the old order) a sticker came out up to 4x larger
         # relative to the frame at the Low preset.
         pre_scale = _assemble_video_filters(
-            preset_name, info, text_layers, options, include_scale=False,
+            preset_name, info, timed_text, options, include_scale=False,
         )
         final_scale = _build_final_scale(preset_name, info, options)
         base_chain = ",".join(pre_scale) if pre_scale else "null"
-        overlay_chain, final_label, _inputs = _build_image_overlay_chain(
-            valid_images, base_label="vbase", video_dur=duration,
-        )
-        if overlay_chain:
-            fc = f"[0:v]{base_chain}[vbase];{overlay_chain}"
-            # Final scale, then label the frames as the working colour
-            # space (see the -vf branch below for why).
-            tail = [final_scale] if final_scale else []
-            fc += f";[{final_label}]{','.join(tail + [TAG_WORKING_FILTER])}[vout]"
-            final_label = "vout"
-            cmd += [
-                "-filter_complex", fc,
-                "-map", f"[{final_label}]",
-            ]
-            # Explicitly map audio from input 0 (optional — ``?`` lets
-            # ffmpeg skip when the source has no audio).
-            cmd += ["-map", "0:a?"]
-        elif filters:
-            # Every overlay layer had invalid timing and was dropped, so
-            # there's nothing to compose. Don't emit a filter_complex with
-            # a dangling ``;`` (ffmpeg rejects it) — fall back to -vf.
-            cmd += ["-vf", ",".join(filters + [TAG_WORKING_FILTER])]
+        fc = f"[0:v]{base_chain}[vbase];{overlay_chain}"
+        # Final scale, then label the frames as the working colour
+        # space (see the -vf branch below for why).
+        tail = [f for f in (final_scale, even_size) if f]
+        fc += f";[{final_label}]{','.join(tail + [TAG_WORKING_FILTER])}[vout]"
+        cmd += [
+            "-filter_complex", fc,
+            "-map", "[vout]",
+        ]
+        # Explicitly map audio from input 0 (optional — ``?`` lets
+        # ffmpeg skip when the source has no audio).
+        cmd += ["-map", "0:a?"]
     else:
         # Label the frames as BT.709 limited. ffmpeg 7 and later take the
         # file's colour tags from the frames and ignore -colorspace and
         # friends when the frames say "unspecified", which left SDR
         # exports untagged. The output flags stay for older versions.
-        cmd += ["-vf", ",".join(filters + [TAG_WORKING_FILTER])]
+        tail = [even_size] if even_size else []
+        cmd += ["-vf", ",".join(filters + tail + [TAG_WORKING_FILTER])]
     cmd += ["-movflags", "+faststart", str(output_path)]
 
     retry = False
     try:
         process = subprocess.Popen(
-            cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,
+            cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
             **_run_kwargs(),
         )
-        tail = _parse_progress(process, duration, progress_callback, cancel_event)
+        tail = _parse_progress(process, out_duration, progress_callback, cancel_event)
         process.wait()
         if process.returncode != 0:
             # A user Stop kills ffmpeg (rc -9); that is not a failure
@@ -206,6 +275,7 @@ def trim_to_video(input_path, start, end, preset_name, output_path,
                     # than hand the user nothing.
                     retry = True
             if not retry:
+                _discard(output_path)
                 return None
         else:
             return output_path
@@ -227,9 +297,10 @@ def trim_to_gif(input_path, start, end, preset_name, output_path,
                 progress_callback=None, cancel_event=None,
                 options=None):
     preset = PRESETS[preset_name]
-    duration = max(0.001, end - start)
     info = get_video_info(input_path)
     options = options or {}
+    speed = coerce_speed(options.get("speed", 1.0))
+    out_duration = _output_duration(start, end, speed)
 
     # Image overlays → filter_complex. The GIF two-pass (palettegen +
     # paletteuse) already does a ton of filter-graph wrangling, and
@@ -267,7 +338,9 @@ def trim_to_gif(input_path, start, end, preset_name, output_path,
 
             # Now GIF-encode the intermediate. Re-invoke trim_to_gif
             # without image_layers and pointing at the new input. Text
-            # layers are already baked in, so skip them too.
+            # layers are already baked in, so skip them too. The
+            # intermediate is already sped up, so it is out_duration
+            # long and the GIF pass runs at normal speed.
             def gif_half_progress(p):
                 if progress_callback:
                     progress_callback(0.5 + p * 0.5)
@@ -275,7 +348,7 @@ def trim_to_gif(input_path, start, end, preset_name, output_path,
             return trim_to_gif(
                 str(intermediate),
                 start=0.0,
-                end=duration,
+                end=out_duration,
                 preset_name=preset_name,
                 output_path=output_path,
                 text_layers=None,
@@ -297,9 +370,13 @@ def trim_to_gif(input_path, start, end, preset_name, output_path,
 
     palette_path = _mkstemp_path(".png")
 
+    if not info.get("has_video", True):
+        raise NoVideoTrackError("This file has sound but no picture, so it cannot become a GIF.")
+
     filters = [f"fps={preset['fps']}"]
     filters.extend(_assemble_video_filters(
-        preset_name, info, text_layers, options, include_scale=False,
+        preset_name, info, layers_for_range(text_layers, start, end, speed),
+        options, include_scale=False,
     ))
     # Label the frames with their real colour space before the final
     # scale, which is where ffmpeg converts to RGB for the palette.
@@ -318,13 +395,13 @@ def trim_to_gif(input_path, start, end, preset_name, output_path,
     try:
         cmd1 = [
             _get_ffmpeg(), "-y",
-            "-ss", str(start),
+            "-ss", _ts(start),
             "-i", str(input_path),
-            "-t", str(duration),
+            "-t", _ts(out_duration),
             "-vf", f"{filter_str},{palettegen}",
             str(palette_path),
         ]
-        subprocess.run(cmd1, capture_output=True, timeout=180, **_run_kwargs())
+        _palette_pass(cmd1, out_duration, progress_callback, cancel_event)
 
         if cancel_event and cancel_event.is_set():
             return None
@@ -334,16 +411,16 @@ def trim_to_gif(input_path, start, end, preset_name, output_path,
 
         cmd2 = [
             _get_ffmpeg(), "-y",
-            "-ss", str(start),
+            "-ss", _ts(start),
             "-i", str(input_path),
             "-i", str(palette_path),
-            "-t", str(duration),
+            "-t", _ts(out_duration),
             "-lavfi", f"{filter_str} [x]; [x][1:v] {paletteuse}",
             "-loop", str(_gif_loop_flag(options.get("gif_loop", 0))),
             str(output_path),
         ]
         process = subprocess.Popen(
-            cmd2, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,
+            cmd2, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
             **_run_kwargs(),
         )
 
@@ -351,15 +428,17 @@ def trim_to_gif(input_path, start, end, preset_name, output_path,
             if progress_callback:
                 progress_callback(0.3 + p * 0.7)
 
-        tail = _parse_progress(process, duration, gif_progress, cancel_event)
+        tail = _parse_progress(process, out_duration, gif_progress, cancel_event)
         process.wait()
         if process.returncode != 0:
             # A user Stop kills ffmpeg (rc -9); that is not a failure
             # worth dumping a full error report for.
             if was_cancelled(cancel_event):
+                _discard(output_path)
                 return None
             _log_ffmpeg_failure(cmd2, process.returncode, tail)
             if not (_color.uses_tonemap(filter_str) and _color.disable_tonemap()):
+                _discard(output_path)
                 return None
             # This ffmpeg's zscale rejected the HDR conversion: retry
             # with the plain conversion (see color.disable_tonemap).
@@ -414,7 +493,7 @@ def frames_to_video(frame_dir, fps, preset_name, output_path,
     cmd += ["-movflags", "+faststart", str(output_path)]
 
     process = subprocess.Popen(
-        cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,
+        cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
         **_run_kwargs(),
     )
     tail = _parse_progress(process, duration, progress_callback, cancel_event)
@@ -459,7 +538,7 @@ def frames_to_gif(frame_dir, fps, preset_name, output_path,
             "-vf", f"{filter_str},{palettegen}",
             str(palette_path),
         ]
-        subprocess.run(cmd1, capture_output=True, timeout=180, **_run_kwargs())
+        _palette_pass(cmd1, duration, progress_callback, cancel_event)
 
         if cancel_event and cancel_event.is_set():
             return None
@@ -477,7 +556,7 @@ def frames_to_gif(frame_dir, fps, preset_name, output_path,
             str(output_path),
         ]
         process = subprocess.Popen(
-            cmd2, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,
+            cmd2, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
             **_run_kwargs(),
         )
 

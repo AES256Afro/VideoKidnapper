@@ -20,6 +20,21 @@ GITHUB_REPO = "AES256Afro/VideoKidnapper"
 _TIMEOUT_S = 4
 WINGET_PACKAGE_ID = "AES256Afro.VideoKidnapper"
 STORE_PRODUCT_ID = "9N4BMTK8Q7KG"
+_INNO_UNINSTALL_KEY = (
+    "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"
+    "{8C8E1A2F-5D4B-4E6A-9F32-7C1A5B2D6E84}_is1"
+)
+
+#: Channels that download and install the update themselves (see
+#: utils/self_update.py) when running as the built Windows app.
+SELF_UPDATE_CHANNELS = ("setup", "winget", "portable")
+
+
+def can_self_update(channel, platform_name=None, frozen=None):
+    """True when ``channel`` can be updated in place on this machine."""
+    platform_name = platform_name or sys.platform
+    frozen = getattr(sys, "frozen", False) if frozen is None else frozen
+    return platform_name == "win32" and bool(frozen) and channel in SELF_UPDATE_CHANNELS
 
 
 @dataclass(frozen=True)
@@ -54,10 +69,7 @@ def _windows_installer_channel():
         import winreg
     except ImportError:
         return None
-    key_name = (
-        "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\"
-        "{8C8E1A2F-5D4B-4E6A-9F32-7C1A5B2D6E84}_is1"
-    )
+    key_name = _INNO_UNINSTALL_KEY
     for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
         for access in (
             winreg.KEY_READ,
@@ -80,9 +92,42 @@ def _windows_installer_channel():
     return None
 
 
+def installer_scope():
+    """"user" or "machine": where the Setup install is registered.
+
+    A silent upgrade has to run in the same scope, or it lands beside the
+    existing install instead of on top of it. Defaults to "user", the
+    installer's own default.
+    """
+    try:
+        import winreg
+    except ImportError:
+        return "user"
+    for root, scope in ((winreg.HKEY_CURRENT_USER, "user"),
+                        (winreg.HKEY_LOCAL_MACHINE, "machine")):
+        for access in (
+            winreg.KEY_READ,
+            winreg.KEY_READ | getattr(winreg, "KEY_WOW64_64KEY", 0),
+        ):
+            try:
+                with winreg.OpenKey(root, _INNO_UNINSTALL_KEY, 0, access):
+                    return scope
+            except OSError:
+                continue
+    return "user"
+
+
 def _inside_source_checkout(module_path):
-    path = Path(module_path).resolve()
-    return any((parent / ".git").exists() for parent in (path, *path.parents))
+    """True when the package is running from a git clone of this repo.
+
+    Only the repo root counts: the folder holding the ``videokidnapper``
+    package. Looking further up called a pip install a source checkout
+    whenever site-packages happened to sit inside some git repository (a
+    venv in a project folder, a home directory kept in git), and then
+    told the user to update with Git.
+    """
+    package_dir = Path(module_path).resolve().parent.parent
+    return (package_dir.parent / ".git").exists()
 
 
 def detect_install_channel(
@@ -113,9 +158,16 @@ def detect_install_channel(
     return "pip"
 
 
-def build_update_plan(channel=None, release_url=None):
+def build_update_plan(channel=None, release_url=None, platform_name=None, frozen=None):
     channel = channel or detect_install_channel()
     release_url = release_url or f"https://github.com/{GITHUB_REPO}/releases/latest"
+    if can_self_update(channel, platform_name, frozen):
+        return UpdatePlan(
+            channel, "Automatic update",
+            "VideoKidnapper downloads the new version, closes, installs it and "
+            "opens again. You'll be asked to save your project first.",
+            "install", "Restart to update", copy_text=release_url,
+        )
     if channel == "store":
         return UpdatePlan(
             channel, "Microsoft Store",
@@ -195,22 +247,39 @@ def fetch_latest(repo=GITHUB_REPO):
     return None
 
 
-def check_async(current_version, on_update_available, repo=GITHUB_REPO):
+def check_async(current_version, on_update_available, repo=GITHUB_REPO,
+                on_done=None):
     """Run ``fetch_latest`` in a thread; call callback only when newer.
 
     ``on_update_available(latest_tag, html_url)`` runs on the background
     thread — callers must marshal back to the UI thread themselves.
+
+    ``on_done(outcome)``, when given, runs last with ``"newer"``,
+    ``"current"`` or ``"failed"``, also on the background thread. A
+    manual check needs it to tell "you are up to date" from "could not
+    reach GitHub"; it used to call silence after five seconds success.
     """
+
+    def finish(outcome):
+        if on_done is not None:
+            try:
+                on_done(outcome)
+            except Exception:
+                pass
 
     def worker():
         result = fetch_latest(repo)
         if not result:
+            finish("failed")
             return
         tag, link = result
-        if is_newer(tag, current_version):
-            try:
-                on_update_available(tag, link)
-            except Exception:
-                pass
+        if not is_newer(tag, current_version):
+            finish("current")
+            return
+        try:
+            on_update_available(tag, link)
+        except Exception:
+            pass
+        finish("newer")
 
     threading.Thread(target=worker, daemon=True).start()
