@@ -11,7 +11,7 @@ Apple Silicon, macos-15-intel = Intel — PyInstaller can't cross-compile a
 `.app`, so each architecture builds on its own runner):
 
 1. `packaging/videokidnapper-macos.spec` → `dist/VideoKidnapper.app` (PyInstaller `BUNDLE`, `.icns` icon).
-2. Static **ffmpeg/ffprobe** (per-arch: [evermeet.cx](https://evermeet.cx/ffmpeg/) is Intel-only, so Apple Silicon uses [eugeneware/ffmpeg-static](https://github.com/eugeneware/ffmpeg-static)) drop into `Contents/Resources/assets/ffmpeg/bin` — a `.app` has no reliable PATH, so the app's resolver (`videokidnapper/utils/ffmpeg_check.py`, frozen branch) looks next to the executable / in Resources.
+2. Static **ffmpeg/ffprobe** (per-arch builds from [eugeneware/ffmpeg-static](https://github.com/eugeneware/ffmpeg-static); Intel used [evermeet.cx](https://evermeet.cx/ffmpeg/) until its downloads went away in October 2026) drop into `Contents/Resources/assets/ffmpeg/bin` — a `.app` has no reliable PATH, so the app's resolver (`videokidnapper/utils/ffmpeg_check.py`, frozen branch) looks next to the executable / in Resources.
 3. `create-dmg` wraps it with an Applications drop-link (falls back to `hdiutil` if unavailable).
 
 ## Signing and notarization
