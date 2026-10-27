@@ -2,7 +2,9 @@
 
 All notable changes to this project are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.9.2] — 2026-10-26
+
+> **Everything in one window, easier trimming, and a steadier player.** Typing in a caption no longer fires shortcuts, Play no longer opens a console window or crashes, the preview keeps up with 4K, and on Windows updates now install themselves.
 
 ### Added
 
