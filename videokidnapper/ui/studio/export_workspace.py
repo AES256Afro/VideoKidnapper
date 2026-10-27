@@ -18,13 +18,15 @@ from tkinter import filedialog
 import customtkinter as ctk
 
 from videokidnapper.config import PRESETS
+from videokidnapper.core.frame_geometry import frame_change_note
 from videokidnapper.ui import theme as T
 from videokidnapper.ui.editor_options import (
     GIF_DITHER_CHOICES, GIF_LOOP_CHOICES, GIF_STATS_CHOICES, HW_CHOICES,
     TRANSITION_CHOICES,
 )
-from videokidnapper.ui.platform_presets import PLATFORM_CHOICES
+from videokidnapper.ui.platform_presets import PLATFORM_CHOICES, size_warning
 from videokidnapper.ui.studio import controls as C
+from videokidnapper.ui.studio.export_progress import ExportProgress
 from videokidnapper.ui.theme import button
 from videokidnapper.utils.file_naming import NAMING_STYLES
 from videokidnapper.utils.time_format import seconds_to_hms
@@ -229,10 +231,23 @@ class ExportWorkspace(ctk.CTkFrame):
         self.summary_label = ctk.CTkLabel(go, text="", font=T.font(T.SIZE_LG),
                                           text_color=T.TEXT, justify="left", anchor="w")
         self.summary_label.pack(fill="x", padx=18)
-        self.export_btn = button(go, "Export", variant="primary", height=44,
-                                 font=T.font(T.SIZE_LG, "bold"),
-                                 command=self.editor._export)
-        self.export_btn.pack(fill="x", padx=18, pady=(14, 18))
+        # What the frame shape does to the picture. Presets set it too,
+        # and it only showed on the Edit preview.
+        self.frame_row = ctk.CTkFrame(go, fg_color="transparent")
+        self.frame_label = ctk.CTkLabel(self.frame_row, text="", font=T.font(T.SIZE_MD),
+                                        text_color=T.TEXT_MUTED, justify="left",
+                                        anchor="w", wraplength=330)
+        self.frame_label.pack(side="left", fill="x", expand=True)
+        self.keep_shape_btn = button(self.frame_row, "Keep its shape", variant="ghost",
+                                     height=26, font=T.font(T.SIZE_SM),
+                                     command=self._keep_shape)
+        self.keep_shape_btn.pack(side="right")
+        # The button and the run's progress and result, right under it.
+        # The editor reports each export here (see TrimTab._export).
+        self.progress = ExportProgress(go, on_export=self.editor._export)
+        self.progress.pack(fill="x", padx=18, pady=(14, 18))
+        self.export_btn = self.progress.button
+        self.editor.export_progress = self.progress
         return page
 
     def _more_row(self, parent, label, widget):
@@ -250,6 +265,12 @@ class ExportWorkspace(ctk.CTkFrame):
         else:
             self.more.pack_forget()
             self.more_btn.configure(text="▸  More options")
+
+    def _keep_shape(self):
+        """Back to the video's own frame shape; the preset becomes Custom."""
+        self.editor.options.set_aspect("Source")
+        self.editor._mark_platform_custom()
+        self.refresh()
 
     # ------------------------------------------------------------------
     def _format_picked(self, value):
@@ -290,6 +311,14 @@ class ExportWorkspace(ctk.CTkFrame):
     # ------------------------------------------------------------------
     def refresh(self):
         if self.current != "project" or not self.winfo_exists():
+            return
+        # The editor calls this on every selection change, including each
+        # motion event of an in/out drag, and the range list is rebuilt
+        # from new widgets every time: about 0.1 s per saved range, per
+        # event, while nobody could see the page. Switching to Export
+        # refreshes it (App._on_workspace_switched).
+        workspaces = getattr(self.app, "workspaces", None)
+        if workspaces is not None and workspaces.get() != "export":
             return
         ed = self.editor
         opts = ed.options
@@ -364,9 +393,29 @@ class ExportWorkspace(ctk.CTkFrame):
         color = opts.color_summary()
         if color:
             lines.append(color)
+        warning = None
+        if has_video and files == "1 file":
+            warning = size_warning(ed.platform_var.get(),
+                                   getattr(ed, "size_estimate_bytes", 0))
+        if warning:
+            lines.append(warning)
         self.summary_label.configure(text="\n".join(lines) if has_video
-                                     else "Open a video to export.")
-        self.export_btn.configure(
-            state="normal" if has_video else "disabled",
-            text=f"Export {files}" if has_video else "Export",
-        )
+                                     else "Open a video to export.",
+                                     text_color=T.WARN if warning else T.TEXT)
+        note = None
+        if has_video and fmt != "MP3":
+            note = frame_change_note(ed.video_info, opts.get_options())
+        if note:
+            cuts = "cuts off" in note
+            self.frame_label.configure(text=note,
+                                       text_color=T.WARN if cuts else T.TEXT_MUTED)
+            if cuts:
+                self.keep_shape_btn.pack(side="right")
+            else:
+                self.keep_shape_btn.pack_forget()
+            self.frame_row.pack(fill="x", padx=18, pady=(4, 0), after=self.summary_label)
+        else:
+            self.frame_row.pack_forget()
+        # While an export runs the button is Stop; this is what it says
+        # again afterwards.
+        self.progress.set_ready(f"Export {files}" if has_video else "Export", has_video)

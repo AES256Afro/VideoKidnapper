@@ -9,6 +9,7 @@ uses. Contains the URL entry + platform detection, cookies selection,
 yt-dlp self-update, download progress, and the batch queue.
 """
 import threading
+import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog
 
@@ -45,6 +46,9 @@ class DownloadBar(ctk.CTkFrame):
         self._on_video_ready = on_video_ready
         self._notify_cb = notify
         self._download_cancel = threading.Event()
+        # One download at a time. The link box stays editable meanwhile,
+        # so a link pasted during a download is kept, not dropped.
+        self._downloading = False
         self._platform_chips = {}
         self._build_ui()
 
@@ -97,6 +101,12 @@ class DownloadBar(ctk.CTkFrame):
             width=140, height=34, command=self._download,
         )
         self.download_btn.pack(side="left")
+
+        self.cancel_btn = button(
+            input_row, "Cancel", variant="secondary",
+            width=80, height=34, command=self.cancel_download, state="disabled",
+        )
+        self.cancel_btn.pack(side="left", padx=(6, 0))
 
         cookie_row = ctk.CTkFrame(self, fg_color="transparent")
         cookie_row.pack(fill="x", pady=(6, 0))
@@ -182,13 +192,21 @@ class DownloadBar(ctk.CTkFrame):
     # ------------------------------------------------------------------
     # URL entry
     # ------------------------------------------------------------------
+    def busy(self):
+        """True while a download runs."""
+        return self._downloading
+
     def receive_url(self, url):
         """Fill the entry (app-level Ctrl+V router or any other source)."""
         self.url_entry.delete(0, "end")
         self.url_entry.insert(0, url)
         self.url_entry.focus_set()
         self._on_url_typed(None)
-        self._notify("Link pasted — press Enter or click Download", "info")
+        if self._downloading:
+            self._notify("Link pasted. Press Download when the current "
+                         "download finishes, or Cancel it.", "info")
+        else:
+            self._notify("Link pasted — press Enter or click Download", "info")
 
     def _paste_from_clipboard(self):
         try:
@@ -214,16 +232,29 @@ class DownloadBar(ctk.CTkFrame):
     # Download
     # ------------------------------------------------------------------
     def _download(self):
+        """Start downloading the link in the box. Returns True if it started.
+
+        The box used to be disabled during a download, which made Tk
+        ignore any link pasted into it, and nothing stopped a second
+        start: the Edit page's "Get" button re-downloaded the old link and
+        dropped the new one. Now one download runs at a time and the
+        link waits in the box.
+        """
+        if self._downloading:
+            self._notify("A download is already running. Cancel it or wait, "
+                         "then press Download.", "warn")
+            return False
         url = self.url_entry.get().strip()
         if not url:
             self.status_label.configure(text="Paste a link first", text_color=T.DANGER)
             self._notify("No URL provided", "warn")
-            return
+            return False
 
         platform = detect_platform(url)
+        self._downloading = True
         self._download_cancel.clear()
         self.download_btn.configure(state="disabled", text="  Downloading...")
-        self.url_entry.configure(state="disabled")
+        self.cancel_btn.configure(state="normal")
         label = f"Fetching {platform} video..." if platform else "Fetching video..."
         self.status_label.configure(text=label, text_color=T.TEXT_MUTED)
         self.download_progress.set(0)
@@ -233,19 +264,39 @@ class DownloadBar(ctk.CTkFrame):
 
         def run_download():
             def progress_cb(value, text=""):
-                if self.winfo_exists():
-                    self.after(0, self._update_download_progress, value, text)
+                self._post(self._update_download_progress, value, text)
 
-            result = download_video(
-                url,
-                progress_callback=progress_cb,
-                cancel_event=self._download_cancel,
-                cookies=cookies,
-            )
-            if self.winfo_exists():
-                self.after(0, self._on_download_complete, result)
+            try:
+                result = download_video(
+                    url,
+                    progress_callback=progress_cb,
+                    cancel_event=self._download_cancel,
+                    cookies=cookies,
+                )
+            except Exception as exc:  # noqa: BLE001 - reported to the user
+                # Anything download_video does not catch itself would
+                # otherwise leave the bar "Downloading..." for good.
+                result = {"path": None, "error": str(exc) or type(exc).__name__}
+            self._post(self._on_download_complete, result)
 
         threading.Thread(target=run_download, daemon=True).start()
+        return True
+
+    def cancel_download(self):
+        if not self._downloading:
+            return
+        self._download_cancel.set()
+        self.cancel_btn.configure(state="disabled")
+        self.status_label.configure(text="Cancelling…", text_color=T.TEXT_MUTED)
+
+    def _post(self, fn, *args):
+        """Run ``fn(*args)`` on the Tk thread; the one Tk call a worker
+        makes. It fails once the window is closing, which a late worker
+        has no reason to report."""
+        try:
+            self.after(0, fn, *args)
+        except (RuntimeError, tk.TclError):
+            pass
 
     def _update_download_progress(self, value, text):
         self.download_progress.set(value)
@@ -253,8 +304,9 @@ class DownloadBar(ctk.CTkFrame):
             self.status_label.configure(text=text, text_color=T.TEXT_MUTED)
 
     def _on_download_complete(self, result):
+        self._downloading = False
         self.download_btn.configure(state="normal", text="Download")
-        self.url_entry.configure(state="normal")
+        self.cancel_btn.configure(state="disabled")
 
         if result.get("error"):
             if result["error"] == "cancelled":
@@ -295,8 +347,7 @@ class DownloadBar(ctk.CTkFrame):
 
         def worker():
             ok, msg = ytdlp_update.update_via_pip()
-            if self.winfo_exists():
-                self.after(0, self._on_ytdlp_updated, ok, msg)
+            self._post(self._on_ytdlp_updated, ok, msg)
 
         threading.Thread(target=worker, daemon=True).start()
 

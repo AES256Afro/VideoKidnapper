@@ -89,6 +89,7 @@ class ThumbnailStrip(ctk.CTkFrame):
             try:
                 frames = extract_thumbnail_strip(
                     video_path, self._duration, count=self._COUNT,
+                    height=self._THUMB_H,
                 )
             except Exception:
                 frames = []

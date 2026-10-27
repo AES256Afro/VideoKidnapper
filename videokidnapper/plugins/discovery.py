@@ -94,9 +94,13 @@ def _load_one(ep, app_version):
     name = getattr(ep, "name", "<unknown>")
     dist_name, dist_version = _distribution_info(ep)
 
+    # A plugin is someone else's code: one that calls sys.exit() while
+    # loading must not take the app down with it. Only Ctrl+C passes.
     try:
         obj = ep.load()
-    except Exception as exc:
+    except KeyboardInterrupt:
+        raise
+    except BaseException as exc:
         logger.warning("Plugin %r failed to load: %s", name, exc)
         return DiscoveredPlugin(
             name=name,
@@ -108,7 +112,9 @@ def _load_one(ep, app_version):
 
     try:
         instance = obj() if isinstance(obj, type) else obj
-    except Exception as exc:
+    except KeyboardInterrupt:
+        raise
+    except BaseException as exc:
         logger.warning("Plugin %r failed to instantiate: %s", name, exc)
         return DiscoveredPlugin(
             name=name,
@@ -118,7 +124,10 @@ def _load_one(ep, app_version):
             error=f"init error: {exc}",
         )
 
-    incompatible = _version_mismatch(instance, app_version)
+    try:
+        incompatible = _version_mismatch(instance, app_version)
+    except Exception as exc:
+        incompatible = f"unreadable version range: {exc}"
     if incompatible:
         return DiscoveredPlugin(
             name=name,
@@ -183,6 +192,7 @@ def _version_mismatch(plugin, app_version):
 
 
 def _tuple_version(s):
-    head = s.split("-", 1)[0].split("+", 1)[0]
+    # str(): a plugin may well write min_app_version = 1.8.
+    head = str(s).split("-", 1)[0].split("+", 1)[0]
     parts = head.split(".")
     return tuple(int(p) for p in parts)

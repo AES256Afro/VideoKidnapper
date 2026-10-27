@@ -37,6 +37,16 @@ def _cli_main(args):
     if not args.url and not args.file:
         print("error: --url or --file is required", file=sys.stderr)
         return 2
+    gif = args.format.upper() == "GIF"
+    if gif and args.audio_only:
+        print("error: --audio-only writes an MP3; it cannot be combined with --format GIF",
+              file=sys.stderr)
+        return 2
+    # The editor offers 0.25x to 4x; the encoder would quietly treat 0 or
+    # a negative number as normal speed.
+    if not 0.25 <= args.speed <= 4.0:
+        print("error: --speed must be between 0.25 and 4", file=sys.stderr)
+        return 2
 
     src_path = args.file
     if args.url:
@@ -51,13 +61,18 @@ def _cli_main(args):
         print(f"error: file not found: {src_path}", file=sys.stderr)
         return 1
 
-    info = get_video_info(src_path)
+    from videokidnapper.core.ffmpeg.probe import ProbeError
+    try:
+        info = get_video_info(src_path)
+    except ProbeError as exc:
+        print(f"error: cannot read {src_path}: {exc}", file=sys.stderr)
+        return 1
     start = args.start if args.start is not None else 0.0
     end = args.end if args.end is not None else info["duration"]
 
     out = args.out
     if not out:
-        ext = "gif" if args.format.upper() == "GIF" else "mp4"
+        ext = "gif" if gif else ("mp3" if args.audio_only else "mp4")
         out = str(generate_export_path("cli", ext))
 
     options = {
@@ -76,12 +91,17 @@ def _cli_main(args):
         pct = int(p * 100)
         print(f"  {pct:3d}%", end="\r", flush=True)
 
-    if args.format.upper() == "GIF":
-        result = trim_to_gif(src_path, start, end, args.quality, out,
-                             progress_callback=progress, options=options)
-    else:
-        result = trim_to_video(src_path, start, end, args.quality, out,
-                               progress_callback=progress, options=options)
+    from videokidnapper.core.ffmpeg.encode import NoVideoTrackError
+    try:
+        if gif:
+            result = trim_to_gif(src_path, start, end, args.quality, out,
+                                 progress_callback=progress, options=options)
+        else:
+            result = trim_to_video(src_path, start, end, args.quality, out,
+                                   progress_callback=progress, options=options)
+    except NoVideoTrackError as exc:
+        print(f"\nerror: {exc}", file=sys.stderr)
+        return 1
     print()
     if not result:
         print("error: encoding failed", file=sys.stderr)
@@ -170,8 +190,23 @@ def main():
             sys.exit(_selftest())
         sys.exit(_cli_main(args))
 
+    # A crash to the desktop used to leave nothing behind: the Debug log
+    # lives in memory. This file survives it; see utils.crash_log.
+    from videokidnapper import __version__
+    from videokidnapper.utils import crash_log
+    crash_log.start(__version__)
+    crash_log.install_thread_hook()
+
     from videokidnapper.app import App
-    App().mainloop()
+    try:
+        App().mainloop()
+    except SystemExit:
+        crash_log.finish()
+        raise
+    except BaseException:
+        crash_log.record_exception(*sys.exc_info(), where="the main loop")
+        raise
+    crash_log.finish()
 
 
 if __name__ == "__main__":

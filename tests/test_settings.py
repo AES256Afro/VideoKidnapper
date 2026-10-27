@@ -154,3 +154,53 @@ def test_recent_projects_are_deduplicated_and_capped(fresh_settings, tmp_path):
     assert len(recent) == 8
     assert recent[0] == str(paths[5].resolve())
     assert len({item.lower() for item in recent}) == len(recent)
+
+
+# -- hand-edited settings never stop the app ------------------------------------
+
+@pytest.mark.parametrize("content", [
+    b"\xff\xfe\x00 not utf-8",
+    b'{"_version": "8", "quality": "High"}',
+    b'{"_version": null, "quality": "High"}',
+])
+def test_odd_files_still_load(fresh_settings, content):
+    fresh_settings._SETTINGS_PATH.write_bytes(content)
+    assert fresh_settings.get("format") == "GIF"
+
+
+@pytest.mark.parametrize("key,bad", [
+    ("theme", ["dark"]), ("color_contrast", None), ("text_fade", "0.5"),
+    ("gif_loop", [1]), ("recent_projects", 5), ("history", 5),
+    ("mute_audio", "yes"), ("rotate", 90.5), ("speed", True),
+])
+def test_values_of_the_wrong_type_fall_back_to_defaults(fresh_settings, key, bad):
+    import json
+    fresh_settings._SETTINGS_PATH.write_text(
+        json.dumps({"_version": 8, key: bad, "quality": "High"}), encoding="utf-8")
+    assert fresh_settings.get(key) == fresh_settings._DEFAULTS[key]
+    assert fresh_settings.get("quality") == "High"
+
+
+def test_whole_numbers_are_fine_where_decimals_are_expected(fresh_settings):
+    fresh_settings.set("speed", 2)
+    fresh_settings.set("color_gamma", 1)
+    assert fresh_settings.get("speed") == 2 and fresh_settings.get("color_gamma") == 1
+
+
+def test_write_retries_while_another_reader_has_the_file(fresh_settings, monkeypatch):
+    import os
+    fresh_settings.set("quality", "Low")
+    calls = {"n": 0}
+    real_replace = os.replace
+
+    def flaky(src, dst):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise PermissionError(13, "The process cannot access the file")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(fresh_settings.os, "replace", flaky)
+    monkeypatch.setattr(fresh_settings, "_RETRY_DELAYS", (0, 0, 0, 0, 0))
+    fresh_settings.set("quality", "Ultra")
+    assert fresh_settings.get("quality") == "Ultra"
+    assert calls["n"] == 3

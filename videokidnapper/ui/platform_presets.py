@@ -41,6 +41,25 @@ PLATFORM_PRESETS: dict[str, Optional[PlatformPreset]] = {
 
 PLATFORM_CHOICES: list[str] = list(PLATFORM_PRESETS.keys())
 
+# Upload limits, in megabytes. A preset only sets the quality, so a long
+# clip still came out bigger than Discord takes and the upload failed.
+SIZE_LIMITS_MB: dict[str, int] = {
+    "Discord (8 MB)": 8,
+    "Discord (25 MB)": 25,
+}
+
+
+def size_warning(name: str, estimated_bytes: float) -> Optional[str]:
+    """What to say when the estimate is over ``name``'s upload limit, else None."""
+    limit = SIZE_LIMITS_MB.get(name)
+    if not limit or not estimated_bytes:
+        return None
+    if estimated_bytes <= limit * 1024 * 1024:
+        return None
+    site = name.split(" (")[0]
+    return (f"Probably over {site}'s {limit} MB limit. Choose a shorter part "
+            f"or a lower quality.")
+
 
 def get_preset(name: str) -> Optional[PlatformPreset]:
     """Return the preset dict for ``name``, or ``None`` for Custom / unknown.

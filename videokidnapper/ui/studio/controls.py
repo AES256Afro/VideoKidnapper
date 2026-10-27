@@ -123,25 +123,46 @@ class TimeField(ctk.CTkFrame):
     editor code that drives it didn't have to change.
     """
 
-    def __init__(self, master, label, command=None, width=118, **kwargs):
+    def __init__(self, master, label, command=None, width=118, inline=False, **kwargs):
         super().__init__(master, fg_color="transparent", **kwargs)
         self.command = command
-        ctk.CTkLabel(
+        label_widget = ctk.CTkLabel(
             self, text=label, font=T.font(T.SIZE_SM), text_color=T.TEXT_MUTED,
             anchor="w",
-        ).pack(anchor="w")
+        )
         self.var = ctk.StringVar(value="00:00:00.000")
         self.entry = entry(self, textvariable=self.var, width=width, mono=True)
-        self.entry.pack(anchor="w", pady=(2, 0))
+        if inline:
+            # Label beside the box: one row instead of two, for panels
+            # that must fit without scrolling.
+            label_widget.pack(side="left", padx=(0, 6))
+            self.entry.pack(side="left")
+        else:
+            label_widget.pack(anchor="w")
+            self.entry.pack(anchor="w", pady=(2, 0))
         self.entry.bind("<Return>", self._fire)
         self.entry.bind("<FocusOut>", self._fire)
+        self.entry.bind("<KeyRelease>", lambda _e: self._check())
 
     def _fire(self, _event=None):
         if self.command:
             self.command(self.var.get())
+        self._check()
+
+    def _check(self):
+        """Red border while the box holds something that isn't a time,
+        as the hex colour box does, instead of quietly ignoring it."""
+        from videokidnapper.utils.time_format import hms_to_seconds
+        try:
+            hms_to_seconds(self.var.get())
+            ok = True
+        except ValueError:
+            ok = False
+        self.entry.configure(border_color=T.BORDER_STRONG if ok else T.DANGER)
 
     def set_value(self, value):
         self.var.set(value)
+        self.entry.configure(border_color=T.BORDER_STRONG)
 
     def get_value(self):
         return self.var.get()

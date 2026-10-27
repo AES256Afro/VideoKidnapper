@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 AES256Afro <https://github.com/AES256Afro>
 # SPDX-License-Identifier: Apache-2.0
-"""Share panel shown inside ExportDialog after a successful export.
+"""Share panel shown under the Export button after a successful export.
 
 For platforms that accept a caption via query param (Facebook sharer, X
 intent/tweet, Reddit submit) the typed caption is prefilled. Other
@@ -27,7 +27,12 @@ CAPTION_QUERY = {
 
 
 class SharePanel(ctk.CTkFrame):
-    def __init__(self, master, file_path, on_instruction=None, **kwargs):
+    def __init__(self, master, file_path, on_instruction=None, columns=None,
+                 wrap=380, **kwargs):
+        """``columns`` lays the platform buttons out in a grid that many
+        wide, for narrow places; by default they sit in a single row. The
+        grid version also keeps the hint line hidden until there is an
+        instruction to show, to stay short."""
         super().__init__(master, fg_color="transparent", **kwargs)
         self._file_path = file_path
         self._on_instruction = on_instruction
@@ -54,8 +59,16 @@ class SharePanel(ctk.CTkFrame):
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
         btn_row.pack(fill="x")
 
-        for platform in PLATFORM_ORDER:
-            self._make_button(btn_row, platform).pack(side="left", padx=2)
+        for i, platform in enumerate(PLATFORM_ORDER):
+            btn = self._make_button(btn_row, platform, compact=bool(columns))
+            if columns:
+                btn.grid(row=i // columns, column=i % columns, sticky="ew",
+                         padx=2, pady=2)
+            else:
+                btn.pack(side="left", padx=2)
+        if columns:
+            btn_row.grid_columnconfigure(tuple(range(columns)), weight=1,
+                                         uniform="share")
 
         self.hint_label = ctk.CTkLabel(
             self,
@@ -64,16 +77,20 @@ class SharePanel(ctk.CTkFrame):
             text_color=T.TEXT_DIM,
             anchor="w",
             justify="left",
-            wraplength=380,
+            wraplength=wrap,
         )
-        self.hint_label.pack(anchor="w", pady=(6, 0), fill="x")
+        if not columns:
+            self.hint_label.pack(anchor="w", pady=(6, 0), fill="x")
 
-    def _make_button(self, parent, platform):
+    def _make_button(self, parent, platform, compact=False):
         color = T.PLATFORM_COLORS.get(platform, T.ACCENT)
         glyph = T.PLATFORM_GLYPHS.get(platform, "●")
+        # Compact buttons stretch to their grid cell instead of asking
+        # for CTkButton's default 140 px, which would widen the card.
+        size = dict(width=10, height=28) if compact else dict(height=30)
         return ctk.CTkButton(
             parent,
-            text=f"  {glyph}  {platform}  ",
+            text=f"{glyph} {platform}" if compact else f"  {glyph}  {platform}  ",
             font=T.font(T.SIZE_SM, "bold"),
             fg_color=T.BG_RAISED,
             hover_color=color,
@@ -81,7 +98,7 @@ class SharePanel(ctk.CTkFrame):
             border_width=1,
             text_color=T.TEXT,
             corner_radius=14,
-            height=30,
+            **size,
             command=lambda p=platform: self._share(p),
         )
 
@@ -97,6 +114,8 @@ class SharePanel(ctk.CTkFrame):
             text=f"{platform}: {instructions}",
             text_color=T.TEXT,
         )
+        if not self.hint_label.winfo_manager():
+            self.hint_label.pack(anchor="w", pady=(6, 0), fill="x")
         if self._on_instruction:
             self._on_instruction(platform, instructions)
 

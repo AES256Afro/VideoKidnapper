@@ -47,11 +47,15 @@ Record your screen straight into the editor. Choose from five looks, from a clea
 ### What's new in this version (Store field: "What's new in this version")
 
 User-facing changes only, no repo/doc housekeeping. Update this each
-release. For 1.9.1:
+release. For 1.9.2:
 
 ```
-- A new logo: the balaclava in a retro stamp, on the app, the taskbar and the Start menu.
-- The play controls no longer cover the time readout on smaller windows.
+- Typing in a caption no longer triggers shortcuts. With Num Lock on, an "s" no longer saves or opens Save As.
+- Pressing Play no longer opens a black console window, and pausing and playing quickly no longer closes the app.
+- Easier trimming: bold handles you can grab, the parts being cut are faded, the arrow keys step one frame, and the timeline says exactly what will be kept.
+- Everything happens in one window. Saving, exporting, setup and the shortcuts list no longer open popups.
+- Smoother preview and playback, 4K included, and every installed font now works for captions.
+- Many fixes to exports, projects, subtitle import and downloads.
 ```
 
 ### Product features (Store field: "Product features", one per line)

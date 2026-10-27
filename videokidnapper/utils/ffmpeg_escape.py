@@ -29,7 +29,9 @@ _DRAWTEXT_ESCAPES = {
     "'":  "\u2019",      # curly-quote substitute; ffmpeg's escape story for
                           # single quotes inside single-quoted strings is messy,
                           # and the curly quote looks identical to users.
-    "%":  "\\%",
+    # No "%" entry: the drawtext builder sets expansion=none, so % is
+    # plain text. With expansion on, "\%" still printed "100% done" wrong
+    # and "%{pts}" came out as a timestamp.
     "[":  "\\[",
     "]":  "\\]",
     ",":  "\\,",

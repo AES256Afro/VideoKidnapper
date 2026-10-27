@@ -9,14 +9,20 @@ free of ffprobe plumbing.
 
 import json
 import subprocess
+import threading
 
 from videokidnapper.core.ffmpeg._internals import (
     _get_ffmpeg, _get_ffprobe, _run_kwargs,
 )
+from videokidnapper.utils.coerce import coerce_int
 
 
 class ProbeError(RuntimeError):
     """ffprobe failed to read the file (missing binary, bad media, timeout)."""
+
+
+_info_cache = {}
+_info_lock = threading.Lock()
 
 
 def get_video_info(input_path):
@@ -26,7 +32,34 @@ def get_video_info(input_path):
     can't read the file — callers (TrimTab._load_path, CLI) already
     catch the old generic-Exception path, so this is wire-compatible
     while giving the error funnel something actionable to surface.
+
+    Results are cached per file version (path, size, modification time):
+    loading one clip asked ffprobe about it eight times, about 45 ms each,
+    from the editor, the preview colour filter, the waveform and the
+    export. Each caller gets its own copy.
     """
+    import os
+
+    try:
+        st = os.stat(input_path)
+        key = (os.path.abspath(str(input_path)), st.st_size, st.st_mtime_ns)
+    except (OSError, TypeError, ValueError):
+        key = None
+    if key is not None:
+        with _info_lock:
+            cached = _info_cache.get(key)
+        if cached is not None:
+            return dict(cached)
+    info = _probe(input_path)
+    if key is not None:
+        with _info_lock:
+            if len(_info_cache) >= 64:
+                _info_cache.clear()
+            _info_cache[key] = dict(info)
+    return info
+
+
+def _probe(input_path):
     cmd = [
         _get_ffprobe(),
         "-v", "quiet",
@@ -40,10 +73,13 @@ def get_video_info(input_path):
     # every failure mode in ProbeError with a short, human-readable reason.
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=10, **_run_kwargs(),
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, **_run_kwargs(),
         )
     except FileNotFoundError as exc:
         raise ProbeError(f"ffprobe not found on PATH: {exc}") from exc
+    except OSError as exc:
+        # Blocked by antivirus, no permission to run it, and the like.
+        raise ProbeError(f"ffprobe could not run: {exc}") from exc
     except subprocess.TimeoutExpired as exc:
         raise ProbeError(
             f"ffprobe timed out after 10s reading {input_path!r}",
@@ -59,9 +95,13 @@ def get_video_info(input_path):
         raise ProbeError(
             f"ffprobe returned non-JSON output for {input_path!r}: {exc}",
         ) from exc
+    if not isinstance(data, dict):
+        raise ProbeError(f"ffprobe returned no media details for {input_path!r}")
     video_stream = None
     audio_stream = None
-    for s in data.get("streams", []):
+    for s in data.get("streams") or []:
+        if not isinstance(s, dict):
+            continue
         # Embedded cover art (an MP3/M4A thumbnail, a podcast's episode
         # image) is reported as a video stream, and some files list it
         # first. Taking it would describe a 600x600 still instead of the
@@ -77,11 +117,13 @@ def get_video_info(input_path):
     # naked ValueError that escapes the ProbeError funnel this function
     # promises. Fall back to 0.0 instead.
     try:
-        duration = float(data.get("format", {}).get("duration", 0))
-    except (TypeError, ValueError):
+        duration = float((data.get("format") or {}).get("duration", 0))
+    except (TypeError, ValueError, AttributeError):
         duration = 0.0
-    width = int(video_stream.get("width", 0)) if video_stream else 0
-    height = int(video_stream.get("height", 0)) if video_stream else 0
+    if duration != duration or duration in (float("inf"), float("-inf")):
+        duration = 0.0
+    width = coerce_int(video_stream.get("width"), 0) if video_stream else 0
+    height = coerce_int(video_stream.get("height"), 0) if video_stream else 0
     # Phone footage is usually stored landscape with a Display Matrix
     # telling players to rotate it. ffmpeg honours that on decode (so the
     # preview and the export frames come out portrait), but the raw
@@ -95,9 +137,11 @@ def get_video_info(input_path):
         width, height = height, width
     fps_str = video_stream.get("r_frame_rate", "30/1") if video_stream else "30/1"
     try:
-        num, den = fps_str.split("/")
+        num, den = str(fps_str).split("/")
         fps = float(num) / float(den)
     except (ValueError, ZeroDivisionError):
+        fps = 30.0
+    if not (0 < fps < 1000):
         fps = 30.0
     return {
         "duration": duration,
@@ -105,6 +149,7 @@ def get_video_info(input_path):
         "height": height,
         "fps": fps,
         "has_audio": audio_stream is not None,
+        "has_video": video_stream is not None,
         # Colour description of the source, consumed by
         # videokidnapper.core.ffmpeg.color. Absent or "unknown" values
         # are normal (plenty of files are untagged) and handled there.
@@ -134,6 +179,8 @@ def _display_rotation(stream):
     """
     rotation = None
     for side in stream.get("side_data_list") or []:
+        if not isinstance(side, dict):
+            continue
         if side.get("side_data_type") == "Display Matrix" and "rotation" in side:
             rotation = side["rotation"]
             break
@@ -141,27 +188,33 @@ def _display_rotation(stream):
         rotation = (stream.get("tags") or {}).get("rotate")
     try:
         return int(round(float(rotation))) % 360 if rotation is not None else 0
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
 
 
-def extract_frame(input_path, timestamp_seconds):
+def extract_frame(input_path, timestamp_seconds, max_height=None):
     """Pull a single PNG-encoded frame at ``timestamp_seconds``.
 
     Used by the preview cache and thumbnail strip. Returns a PIL
     ``Image`` or ``None`` on failure. No exception on missing frames —
     the caller just shows a placeholder.
+
+    ``max_height`` scales the frame down inside ffmpeg (never up), for
+    thumbnails: a 4K frame is 25 MB decoded, a filmstrip cell a few KB.
     """
     from PIL import Image
     import io
 
     cmd = [
         _get_ffmpeg(),
-        "-ss", str(timestamp_seconds),
+        "-ss", f"{max(0.0, float(timestamp_seconds)):.3f}",
         "-i", str(input_path),
         "-vframes", "1",
     ]
     vf = preview_color_filter(input_path)
+    if max_height:
+        shrink = f"scale=-2:'min({int(max_height)},ih)':flags=bilinear"
+        vf = f"{vf},{shrink}" if vf else shrink
     if vf:
         cmd += ["-vf", vf]
     cmd += [
@@ -176,7 +229,7 @@ def extract_frame(input_path, timestamp_seconds):
             # zscale rejected the HDR conversion on this ffmpeg build;
             # show the frame with the plain conversion instead of none.
             _preview_filter_cache.clear()
-            return extract_frame(input_path, timestamp_seconds)
+            return extract_frame(input_path, timestamp_seconds, max_height)
     if result.returncode != 0 or not result.stdout:
         return None
     return Image.open(io.BytesIO(result.stdout))
@@ -215,13 +268,26 @@ def extract_waveform(input_path, buckets=400, duration=None):
     if result.returncode != 0 or not result.stdout:
         return []
 
-    import struct
-    raw = result.stdout
-    total_samples = len(raw) // 2
+    return _peaks(result.stdout, buckets)
+
+
+def _peaks(raw, buckets):
+    """Peak level per bucket of signed 16-bit little-endian samples.
+
+    ``array`` plus the built-in ``max``/``min`` keep the scan in C. The
+    old per-sample generator took seconds for an hour of audio (14
+    million samples at 4 kHz) on the thread that feeds the timeline.
+    """
+    import sys
+    from array import array
+
+    samples = array("h")
+    samples.frombytes(raw[: len(raw) - len(raw) % 2])
+    if sys.byteorder != "little":
+        samples.byteswap()
+    total_samples = len(samples)
     if total_samples < buckets:
         return []
-
-    samples = struct.unpack(f"<{total_samples}h", raw)
     window = total_samples // buckets
     peaks = []
     for i in range(buckets):
@@ -229,7 +295,8 @@ def extract_waveform(input_path, buckets=400, duration=None):
         if not chunk:
             peaks.append(0.0)
             continue
-        peak = max(abs(s) for s in chunk) / 32767.0
+        # -32768 has no positive twin in 16 bits; the min() caps it.
+        peak = max(max(chunk), -min(chunk)) / 32767.0
         peaks.append(min(1.0, peak))
     return peaks
 

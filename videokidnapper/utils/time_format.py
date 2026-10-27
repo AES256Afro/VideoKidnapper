@@ -20,15 +20,20 @@ def seconds_to_hms(seconds: float) -> str:
 
 
 def hms_to_seconds(hms: str) -> float:
-    """Parse an ``HH:MM:SS[.mmm]`` string into float seconds.
+    """Parse a typed time into float seconds.
 
-    Raises ``ValueError`` for inputs that don't match the expected
-    shape — callers (entry widgets) catch this to ignore typos.
+    Takes ``HH:MM:SS[.mmm]`` as the boxes show it, and the short forms
+    people type: ``M:SS``, plain seconds, a comma for the decimal point.
+    "1:30" used to be refused and quietly put back to the old time.
+
+    Raises ``ValueError`` for anything else — callers (entry widgets)
+    catch this to ignore typos.
     """
-    match = re.match(r"(\d+):(\d+):(\d+)(?:\.(\d+))?", hms.strip())
+    match = re.fullmatch(r"(?:(?:(\d+):)?(\d+):)?(\d+)(?:[.,](\d*))?",
+                         str(hms).strip())
     if not match:
         raise ValueError(f"Invalid time format: {hms}")
-    h, m, s = int(match.group(1)), int(match.group(2)), int(match.group(3))
+    h, m, s = (int(g) if g else 0 for g in match.group(1, 2, 3))
     ms = int(match.group(4).ljust(3, "0")[:3]) if match.group(4) else 0
     return h * 3600 + m * 60 + s + ms / 1000
 
