@@ -25,7 +25,7 @@ def test_links_are_recognized(text):
     "hello world",
     "check this out: https://youtu.be/abc",        # sentence, not a bare link
     "https://a.com\nhttps://b.com",                # multi-line clipboard
-    "C:\\Users\\user\\video.mp4",                 # file path
+    "C:\\Users\\me\\video.mp4",                 # file path
     "ftp://example.com/file",                      # not a web link
     "youtube.com/watch?v=abc",                     # no scheme, no www
 ])
