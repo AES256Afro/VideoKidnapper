@@ -52,7 +52,7 @@ dependencies = [
     "yt-dlp>=2024.0.0",
     # Root certificates for Pythons that ship none (python.org on macOS);
     # see videokidnapper/utils/certs.py. yt-dlp also uses it when present.
-    "certifi>=2024.2.2",
+    "certifi>=2026.10.18",
 ]
 
 [project.optional-dependencies]
